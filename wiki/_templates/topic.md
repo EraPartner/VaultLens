@@ -1,35 +1,58 @@
 ---
-title: 
+title: <% tp.file.title %>
 type: topic
 status: active
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
-summary: One sentence synthesis of this topic.
+created: <% tp.date.now("YYYY-MM-DD") %>
+updated: <% tp.date.now("YYYY-MM-DD") %>
+summary: 
+domain: 
+tags: []
 ---
 
-# {{title}}
+# <% tp.file.title %>
 
 ## Synthesis
 
-[High-level synthesis bringing together multiple concepts/sources]
+<% tp.file.cursor(1) %>
 
 ## Key Components
 
 ### Concepts
-- [[concepts/...]]
+
+```dataview
+LIST summary
+FROM "wiki/concepts"
+WHERE contains(file.outlinks, this.file.link)
+SORT file.name ASC
+```
 
 ### Entities
-- [[entities/...]]
+
+```dataview
+LIST summary
+FROM "wiki/entities"
+WHERE contains(file.outlinks, this.file.link)
+SORT file.name ASC
+```
 
 ## Sources
 
-- [[sources/...]]
-- [[syntheses/...]]
+```dataview
+TABLE source_type, ingested_on
+FROM "wiki/sources"
+WHERE contains(file.outlinks, this.file.link)
+SORT ingested_on DESC
+```
 
 ## Open Questions
 
-- [Unanswered questions in this topic]
+- 
 
 ## Related Topics
 
-- [[topics/...]]
+```dataview
+LIST
+FROM "wiki/topics"
+WHERE contains(file.outlinks, this.file.link) AND file.name != this.file.name
+SORT file.name ASC
+```

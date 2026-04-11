@@ -1,36 +1,58 @@
 ---
-title: 
+title: <% tp.file.title %>
 type: concept
 status: active
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
-summary: One sentence definition of this concept.
+created: <% tp.date.now("YYYY-MM-DD") %>
+updated: <% tp.date.now("YYYY-MM-DD") %>
+summary: 
 aliases: []
+domain: 
+tags: []
 ---
 
-# {{title}}
+# <% tp.file.title %>
 
 ## Definition
 
-[Clear, concise definition]
+<% tp.file.cursor(1) %>
 
 ## Key Properties
 
-- **Property 1**: [Description]
-- **Property 2**: [Description]
+- **Property 1**: 
+- **Property 2**: 
 
 ## Related Concepts
 
-- [Related concepts]
+```dataview
+LIST
+FROM "wiki/concepts"
+WHERE contains(file.outlinks, this.file.link) AND file.name != this.file.name
+SORT file.name ASC
+```
 
 ## Related Entities
 
-- [Related entities]
+```dataview
+LIST
+FROM "wiki/entities"
+WHERE contains(file.outlinks, this.file.link)
+SORT file.name ASC
+```
 
 ## Topics
 
-- [Related topics]
+```dataview
+LIST
+FROM "wiki/topics"
+WHERE contains(file.outlinks, this.file.link)
+SORT file.name ASC
+```
 
 ## Sources
 
-- [Sources covering this concept]
+```dataview
+TABLE summary, ingested_on
+FROM "wiki/sources"
+WHERE contains(file.outlinks, this.file.link)
+SORT ingested_on DESC
+```

@@ -1,27 +1,39 @@
 ---
-title: 
+title: <% tp.file.title %>
 type: query
 status: active
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
-summary: One sentence answer to this question.
-query: The original question that prompted this artifact.
+created: <% tp.date.now("YYYY-MM-DD") %>
+updated: <% tp.date.now("YYYY-MM-DD") %>
+summary: 
+query: 
+domain: 
+tags: []
 ---
 
-# {{title}}
+# <% tp.file.title %>
 
 ## Answer
 
-[Synthesized answer with citations]
+<% tp.file.cursor(1) %>
 
 ## Reasoning
 
-[Step-by-step reasoning, if applicable]
+
 
 ## Sources
 
-- [Relevant sources]
+```dataview
+LIST
+FROM "wiki"
+WHERE contains(file.outlinks, this.file.link) AND file.name != this.file.name
+SORT file.name ASC
+```
 
 ## Related Queries
 
-- [Related queries]
+```dataview
+LIST
+FROM "wiki/queries"
+WHERE file.name != this.file.name
+SORT file.name ASC
+```

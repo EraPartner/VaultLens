@@ -1,35 +1,54 @@
 ---
-title: 
+title: <% tp.file.title %>
 type: entity
 status: active
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
-summary: One sentence description of this entity.
-entity_type: person|organization|tool|place|artifact
+created: <% tp.date.now("YYYY-MM-DD") %>
+updated: <% tp.date.now("YYYY-MM-DD") %>
+summary: 
+entity_type: <%* const etype = await tp.system.suggester(["person","organization","tool","place","artifact"], ["person","organization","tool","place","artifact"]); tR += etype; %>
 aliases: []
+domain: 
+tags: []
 ---
 
-# {{title}}
+# <% tp.file.title %>
 
 ## Overview
 
-[Brief description of this entity]
+<% tp.file.cursor(1) %>
 
 ## Properties
 
 | Property | Value |
 |----------|-------|
-| Type | {{entity_type}} |
-| Created | {{created}} |
-| Status | {{status}} |
+| Type | <% etype %> |
+| Status | active |
 
 ## Connections
 
 ### Related Concepts
-- [Related concepts]
+
+```dataview
+LIST
+FROM "wiki/concepts"
+WHERE contains(file.outlinks, this.file.link)
+SORT file.name ASC
+```
 
 ### Related Topics
-- [Related topics]
 
-### Sources
-- [Sources that reference this entity]
+```dataview
+LIST
+FROM "wiki/topics"
+WHERE contains(file.outlinks, this.file.link)
+SORT file.name ASC
+```
+
+### Mentioned In Sources
+
+```dataview
+TABLE source_type, ingested_on
+FROM "wiki/sources"
+WHERE contains(file.outlinks, this.file.link)
+SORT ingested_on DESC
+```

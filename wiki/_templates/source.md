@@ -1,32 +1,43 @@
 ---
-title: 
+title: <% tp.file.title %>
 type: source
 status: draft
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
-summary: One sentence summary of this source.
-source_id: src-YYYY-MM-NNN
-source_type: article|paper|book|video|podcast|dataset|note|other
+created: <% tp.date.now("YYYY-MM-DD") %>
+updated: <% tp.date.now("YYYY-MM-DD") %>
+summary: 
+source_id: <% tp.user ? tp.user.next_id : "src-" + tp.date.now("YYYY-MM-DD") + "-001" %>
+source_type: <%* const stype = await tp.system.suggester(["article","paper","book","pdf","video","podcast","dataset","note","other"], ["article","paper","book","pdf","video","podcast","dataset","note","other"]); tR += stype; %>
 origin: 
-ingested_on: YYYY-MM-DD
+ingested_on: <% tp.date.now("YYYY-MM-DD") %>
+domain: 
+tags: []
 ---
 
-# {{title}}
+# <% tp.file.title %>
 
 ## Overview
 
-[Brief overview of what this source covers]
+<% tp.file.cursor(1) %>
 
 ## Key Claims
 
-- **Claim 1**: [Falsifiable claim]
-- **Claim 2**: [Falsifiable claim]
-- **Claim 3**: [Falsifiable claim]
+- **Claim 1**: 
+- **Claim 2**: 
+- **Claim 3**: 
 
 ## Notes
 
-[Additional observations, quotes, or context]
+
+
+## Pages Referencing This Source
+
+```dataview
+LIST
+FROM "wiki"
+WHERE contains(file.outlinks, this.file.link)
+SORT file.name ASC
+```
 
 ## Sources
 
-- [Origin URL] or reference
+- 

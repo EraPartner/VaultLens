@@ -1,0 +1,1 @@
+../../tools/agents/wiki-ingest.agent.md

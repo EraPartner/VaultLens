@@ -23,6 +23,56 @@ This wiki implements the [LLM Wiki pattern](https://gist.github.com/karpathy/442
 - [[index|Catalog]] - All wiki pages
 - [[log|Activity Log]] - Chronological history
 - [[system/schema|Schema]] - Operating conventions
+- [[SETUP|Setup Guide]] - Installation and configuration
+
+## Dashboard
+
+### Recent Sources
+
+```dataview
+TABLE source_type AS "Type", origin AS "Origin", ingested_on AS "Ingested"
+FROM "wiki/sources"
+SORT ingested_on DESC
+LIMIT 10
+```
+
+### Draft Pages (Needs Review)
+
+```dataview
+LIST summary
+FROM "wiki"
+WHERE status = "draft"
+SORT file.mtime DESC
+```
+
+### Pages by Domain
+
+```dataview
+TABLE length(rows) AS "Pages"
+FROM "wiki"
+WHERE domain != null AND domain != ""
+GROUP BY domain
+SORT length(rows) DESC
+```
+
+### Stale Pages (Not Updated in 6+ Months)
+
+```dataview
+TABLE updated AS "Last Updated", type AS "Type"
+FROM "wiki"
+WHERE updated != null AND date(updated) < date(today) - dur(180 days) AND type != "page"
+SORT updated ASC
+```
+
+### Wiki Stats
+
+```dataview
+TABLE length(rows) AS "Count"
+FROM "wiki"
+WHERE type != null
+GROUP BY type
+SORT length(rows) DESC
+```
 
 ## The Pattern
 
@@ -36,24 +86,12 @@ The wiki is a **compounding artifact** - cross-references, contradictions, and s
 
 ## PDF Support
 
-Yes! PDFs are fully supported:
-
-1. Drop PDF in `raw/sources/` or `raw/inbox/`
-2. Tell agent to ingest
-3. Agent extracts key claims and creates source page
+Drop PDFs in `raw/sources/` or `raw/inbox/`, tell the agent to ingest. Agent extracts key claims and creates a source page.
 
 ## Multi-Topic Support
 
-Yes! This is designed as a **Second Brain** for any topic:
+This is a **Second Brain** for any topic. Use `domain` frontmatter or subdirectories:
 
-**Subdirectories** (recommended for distinct domains):
-```
-raw/sources/course-materials/  # Course notes
-raw/sources/research/         # Research papers
-raw/sources/personal/         # Personal info
-```
-
-**Or use frontmatter domains:**
 ```yaml
 domain: learning
 tags: [machine-learning, course]
@@ -74,21 +112,22 @@ Second Brain/
 │   └── inbox/             # Pending ingestion
 ├── wiki/                   # LLM-maintained knowledge base
 │   ├── sources/           # Per-source summary pages
-│   ├── entities/         # People, orgs, tools, places
-│   ├── concepts/        # Methods, theories, ideas
-│   ├── topics/          # Thematic syntheses
-│   ├── syntheses/      # Cross-topic analyses
-│   ├── comparisons/   # Side-by-side comparisons
-│   ├── queries/       # Preserved Q&A artifacts
-│   ├── reports/       # Lint/audit outputs
-│   ├── system/        # Schema docs
-│   ├── _templates/   # Page templates
-│   ├── index.md     # Generated catalog
-│   └── log.md      # Append-only activity log
-└── tools/                    # Wiki maintenance utilities
-    ├── wiki.py              # Core CLI (index, lint, search, log)
-    ├── wiki_extra.py         # Extra utilities
-    └── scripts/            # Setup scripts
+│   ├── entities/          # People, orgs, tools, places
+│   ├── concepts/          # Methods, theories, ideas
+│   ├── topics/            # Thematic syntheses
+│   ├── syntheses/         # Cross-topic analyses
+│   ├── comparisons/       # Side-by-side comparisons
+│   ├── queries/           # Preserved Q&A artifacts
+│   ├── reports/           # Lint/audit outputs
+│   ├── system/            # Schema docs
+│   ├── _templates/        # Templater page templates
+│   ├── index.md           # Generated catalog
+│   └── log.md             # Append-only activity log
+└── tools/                  # Wiki maintenance utilities
+    ├── wiki.py            # Core CLI (index, lint, search, log)
+    ├── wiki_extra.py      # Extra utilities (qmd, stats, IDs)
+    ├── agents/            # Agent definitions + wrapper
+    └── scripts/           # Setup scripts
 ```
 
 ## Commands
@@ -97,20 +136,19 @@ Second Brain/
 
 ```bash
 python3 tools/wiki.py build-index          # Regenerate catalog
-python3 tools/wiki.py lint              # Health check
-python3 tools/wiki.py lint --strict      # Include orphan check
-python3 tools/wiki.py search "term"      # Search wiki content
-python3 tools/wiki.py append-log ...   # Add log entry
+python3 tools/wiki.py lint                 # Health check
+python3 tools/wiki.py lint --strict        # Include orphan check
+python3 tools/wiki.py search "term"        # Search wiki content
+python3 tools/wiki.py validate-log         # Check log format
+python3 tools/wiki.py append-log ...       # Add log entry
 ```
 
 ### Extra Utilities
 
 ```bash
-python3 tools/wiki_extra.py next-id        # Generate next source ID
+python3 tools/wiki_extra.py next-id         # Generate next source ID
 python3 tools/wiki_extra.py qmd-search "q"  # Search with QMD
-python3 tools/wiki_extra.py suggest-links    # Link suggestions
-python3 tools/wiki_extra.py orphans        # Find orphan pages
-python3 tools/wiki_extra.py stats         # Wiki statistics
+python3 tools/wiki_extra.py stats           # Wiki statistics
 ```
 
 ### QMD Search (optional)
@@ -122,8 +160,8 @@ python3 tools/wiki_extra.py stats         # Wiki statistics
 # Search modes
 qmd search "query"         # BM25 (fast, keyword)
 qmd vsearch "query"        # Vector (semantic)
-qmd query "query"         # Hybrid (best quality)
-qmd query "query" --json  # For LLM context
+qmd query "query"          # Hybrid (best quality)
+qmd query "query" --json   # For LLM context
 ```
 
 ## Workflows
@@ -151,13 +189,17 @@ qmd query "query" --json  # For LLM context
 3. Fix issues
 4. Rebuild index
 
-## Tips
+## Graph View
 
-- **Obsidian Web Clipper** - Clip web articles as markdown
-- **Local images** - Configure Obsidian to save to `raw/assets/`
-- **Graph view** - See wiki structure and connections
-- **Dataview** - Query frontmatter for dynamic tables
-- **Marp** - Generate slide decks from markdown
+Graph is color-coded by page type:
+- **Blue** - Sources
+- **Green** - Entities
+- **Purple** - Concepts
+- **Orange** - Topics
+- **Magenta** - Syntheses
+- **Yellow** - Comparisons
+- **Cyan** - Queries
+- **Gray** - Reports
 
 ## Why This Works
 

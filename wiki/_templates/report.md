@@ -1,25 +1,34 @@
 ---
-title: 
+title: <% tp.file.title %>
 type: report
 status: active
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
-summary: One sentence description.
-report_type: lint|audit|other
+created: <% tp.date.now("YYYY-MM-DD") %>
+updated: <% tp.date.now("YYYY-MM-DD") %>
+summary: 
+report_type: <%* const rtype = await tp.system.suggester(["lint","audit","quality","contradiction","other"], ["lint","audit","quality","contradiction","other"]); tR += rtype; %>
+domain: 
+tags: []
 ---
 
-# {{title}}
+# <% tp.file.title %>
 
 ## Summary
 
-[Brief summary of the report]
+<% tp.file.cursor(1) %>
 
 ## Findings
 
-- Finding 1
-- Finding 2
+- 
 
 ## Actions
 
-- [ ] Action item 1
-- [ ] Action item 2
+- [ ] 
+
+## Pages Reviewed
+
+```dataview
+LIST
+FROM "wiki"
+WHERE contains(file.outlinks, this.file.link) AND file.name != this.file.name
+SORT file.name ASC
+```

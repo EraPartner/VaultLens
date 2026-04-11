@@ -227,6 +227,56 @@ def normalize_link_target(target: str) -> str:
     return value
 
 
+STALENESS_DAYS = 180
+
+
+def check_staleness(pages: list[Page]) -> list[str]:
+    stale: list[str] = []
+    today = dt.date.today()
+    for page in pages:
+        if page.category in {"system", "root"}:
+            continue
+        raw = page.frontmatter.get("updated", "").strip()
+        if not raw:
+            continue
+        try:
+            updated = dt.date.fromisoformat(raw)
+        except ValueError:
+            continue
+        age = (today - updated).days
+        if age > STALENESS_DAYS:
+            stale.append(f"{page.rel.as_posix()}: last updated {raw} ({age} days ago)")
+    return stale
+
+
+def validate_log() -> int:
+    log_path = WIKI_DIR / "log.md"
+    if not log_path.exists():
+        print("No log.md found")
+        return 1
+
+    text = log_path.read_text(encoding="utf-8")
+    entry_re = re.compile(r"^## \[\d{4}-\d{2}-\d{2}\] \w+ \| .+$")
+    entries = 0
+    malformed: list[str] = []
+
+    for i, line in enumerate(text.splitlines(), 1):
+        if line.startswith("## ["):
+            entries += 1
+            if not entry_re.match(line):
+                malformed.append(f"line {i}: {line}")
+        elif line.startswith("## ") and "[" not in line and i > 3:
+            malformed.append(f"line {i}: heading missing date format: {line}")
+
+    print(f"Log entries: {entries}")
+    print(f"Malformed entries: {len(malformed)}")
+    if malformed:
+        print("\nMalformed:")
+        for row in malformed:
+            print(f"- {row}")
+    return 1 if malformed else 0
+
+
 def lint(strict: bool) -> int:
     pages = list_content_pages()
     canonical = {page.rel.with_suffix("").as_posix(): page for page in pages}
@@ -293,11 +343,14 @@ def lint(strict: bool) -> int:
         if inbound.get(key, 0) == 0:
             orphan_pages.append(page.rel.as_posix())
 
+    stale_pages = check_staleness(pages)
+
     print(f"Pages checked: {len(pages)}")
     print(f"Missing frontmatter fields: {len(missing_fields)}")
     print(f"Broken links: {len(broken_links)}")
     print(f"Ambiguous links: {len(ambiguous_links)}")
     print(f"Orphans: {len(orphan_pages)}")
+    print(f"Stale pages (>{STALENESS_DAYS} days): {len(stale_pages)}")
 
     if missing_fields:
         print("\nMissing fields:")
@@ -318,6 +371,18 @@ def lint(strict: bool) -> int:
         print("\nOrphan pages:")
         for row in orphan_pages:
             print(f"- {row}")
+
+    if stale_pages:
+        print("\nStale pages:")
+        for row in stale_pages:
+            print(f"- {row}")
+
+    print(
+        "\nNote: Contradiction and semantic quality checks require agent review."
+    )
+    print(
+        "Run: python3 tools/agents/wiki-agent.py contradict"
+    )
 
     has_errors = bool(missing_fields or broken_links or ambiguous_links)
     if strict:
@@ -384,7 +449,7 @@ def append_log_entry(
     rows.append("")
 
     with log_path.open("a", encoding="utf-8") as handle:
-        handle.write("\n".join(rows))
+        handle.write("\n\n" + "\n".join(rows))
 
     print(f"Appended log entry to {log_path}")
     return 0
@@ -406,6 +471,8 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser = sub.add_parser("search", help="Search wiki content")
     search_parser.add_argument("query", help="Search query")
     search_parser.add_argument("--limit", type=int, default=10, help="Max results")
+
+    sub.add_parser("validate-log", help="Check log.md entry format")
 
     log_parser = sub.add_parser("append-log", help="Append entry to wiki/log.md")
     log_parser.add_argument(
@@ -432,6 +499,8 @@ def main(argv: list[str] | None = None) -> int:
         return lint(strict=args.strict)
     if args.command == "search":
         return search(args.query, args.limit)
+    if args.command == "validate-log":
+        return validate_log()
     if args.command == "append-log":
         return append_log_entry(
             operation=args.operation,

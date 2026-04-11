@@ -1,37 +1,44 @@
 ---
-title: 
+title: <% tp.file.title %>
 type: comparison
 status: draft
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
-summary: One sentence comparison summary.
+created: <% tp.date.now("YYYY-MM-DD") %>
+updated: <% tp.date.now("YYYY-MM-DD") %>
+summary: 
 comparisons:
   - item_a
   - item_b
+domain: 
+tags: []
 ---
 
-# {{title}}
+# <% tp.file.title %>
 
 ## Summary
 
-[Brief comparison overview]
+<% tp.file.cursor(1) %>
 
 ## Dimensions
 
 | Dimension | Item A | Item B |
-|-----------|-------|-------|
-| Dimension 1 | Value | Value |
-| Dimension 2 | Value | Value |
-| Dimension 3 | Value | Value |
+|-----------|--------|--------|
+| | | |
+| | | |
+| | | |
 
 ## Analysis
 
-[Analysis of the differences]
+
 
 ## Verdict
 
-[Which is better for what use case]
+
 
 ## Sources
 
-- [[sources/...]]
+```dataview
+TABLE summary, source_type
+FROM "wiki/sources"
+WHERE contains(file.outlinks, this.file.link)
+SORT ingested_on DESC
+```

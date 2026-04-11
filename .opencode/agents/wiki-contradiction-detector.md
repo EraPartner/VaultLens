@@ -1,0 +1,1 @@
+../../tools/agents/wiki-contradiction-detector.agent.md

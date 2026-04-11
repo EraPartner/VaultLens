@@ -1,36 +1,50 @@
 ---
-title: 
+title: <% tp.file.title %>
 type: synthesis
 status: draft
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
-summary: One sentence thesis or analysis.
+created: <% tp.date.now("YYYY-MM-DD") %>
+updated: <% tp.date.now("YYYY-MM-DD") %>
+summary: 
+domain: 
+tags: []
 ---
 
-# {{title}}
+# <% tp.file.title %>
 
 ## Thesis
 
-[Clear statement of what this synthesis argues]
+<% tp.file.cursor(1) %>
 
 ## Evidence
 
 ### Supporting
-- Evidence point 1
-- Evidence point 2
+- 
 
 ### Contradicting
-- Point of tension or opposition
+- 
 
 ## Analysis
 
-[Reasoning connecting the evidence]
+
 
 ## Implications
 
-[What this synthesis suggests or implies]
+
 
 ## Sources
 
-- [[sources/...]]
-- [[topics/...]]
+```dataview
+TABLE summary, source_type
+FROM "wiki/sources"
+WHERE contains(file.outlinks, this.file.link)
+SORT ingested_on DESC
+```
+
+## Related
+
+```dataview
+LIST
+FROM "wiki"
+WHERE contains(file.outlinks, this.file.link) AND file.name != this.file.name
+SORT file.name ASC
+```

@@ -38,6 +38,8 @@ Maintain a durable wiki in `wiki/` from immutable source material in `raw/`.
 - `tools/wiki.py` - core maintenance utility
 - `tools/wiki_extra.py` - additional utilities
 - `tools/scripts/` - setup and helper scripts
+- `tools/agents/` - agent system prompts (source of truth)
+- `.opencode/agents/` - opencode agent symlinks → `tools/agents/`
 
 ## Required page metadata
 
@@ -134,14 +136,93 @@ ln -s /path/to/existing/file.pdf raw/sources/my-file.pdf
 
 The LLM reads from `raw/` - symlinks are followed automatically. The wiki tools work with symlinks without modification.
 
+## Agent integration
+
+For complex wiki tasks, use the project's custom agents stored in `tools/agents/`:
+
+### When to use wiki agents
+
+- **Quality review**: Use `wiki-quality-reviewer` for deep content analysis
+- **Source verification**: Use `wiki-source-verifier` to verify claims against raw sources
+- **Ingest**: Use `wiki-ingest` for processing new sources
+- **Contradiction detection**: Use `wiki-contradiction-detector` to find conflicts
+- **Search/Research**: Use `wiki-search` to find and synthesize information
+
+### Custom wiki agents
+
+This project defines specialized agents in `tools/agents/`:
+
+- `wiki-quality-reviewer.agent.md` - Deep content quality analysis
+- `wiki-source-verifier.agent.md` - Verify claims against raw sources
+- `wiki-ingest.agent.md` - Process new sources through ingest workflow
+- `wiki-contradiction-detector.agent.md` - Find contradictions across pages
+- `wiki-search.agent.md` - Search and research wiki content
+
+### opencode agent registration
+
+Agents are registered with opencode via symlinks in `.opencode/agents/` (opencode's project-local agent directory):
+
+```
+.opencode/agents/
+  wiki-ingest.md                → ../../tools/agents/wiki-ingest.agent.md
+  wiki-quality-reviewer.md      → ../../tools/agents/wiki-quality-reviewer.agent.md
+  wiki-source-verifier.md       → ../../tools/agents/wiki-source-verifier.agent.md
+  wiki-contradiction-detector.md → ../../tools/agents/wiki-contradiction-detector.agent.md
+  wiki-search.md                → ../../tools/agents/wiki-search.agent.md
+```
+
+Each agent file includes opencode-compatible YAML frontmatter (`description`, `mode`, `tools`).
+The `wiki-agent.py` wrapper uses `--agent NAME` to invoke them by registered name.
+
+**Claude** does not need project-local registration — it receives the agent instructions
+via `--system-prompt` directly from the source files.
+
+### Agent workflow examples
+
+```bash
+# Search the wiki
+python3 tools/agents/wiki-agent.py search --page "machine learning"
+
+# Quality review with opencode (default)
+python3 tools/agents/wiki-agent.py quality --page wiki/concepts/my-concept.md
+
+# Run with Claude Sonnet, high effort
+python3 tools/agents/wiki-agent.py quality --page wiki/concepts/my-concept.md --cli claude --model sonnet --effort high
+
+# Verify source claims
+python3 tools/agents/wiki-agent.py verify --source wiki/sources/my-source.md --effort high
+
+# Ingest new source
+python3 tools/agents/wiki-agent.py ingest --source raw/sources/paper.pdf --cli ollama --model qwen3.5:9b
+
+# Find contradictions
+python3 tools/agents/wiki-agent.py contradict
+```
+
+### Available Agents
+
+| Agent | File | Purpose |
+|-------|------|---------|
+| Quality | `wiki-quality-reviewer.agent.md` | Deep content analysis - claims, summaries, cross-references |
+| Verify | `wiki-source-verifier.agent.md` | Verify wiki claims against raw source material |
+| Ingest | `wiki-ingest.agent.md` | Process new sources through full ingest workflow |
+| Contradict | `wiki-contradiction-detector.agent.md` | Find contradictions across pages |
+| Search | `wiki-search.agent.md` | Search and synthesize wiki content |
+
+**CLI options**: `opencode`, `claude`, `ollama`
+**OpenCode models**: `opencode/minimax-m2.5-free` (default), `github-copilot/gpt-5.3-codex`
+**Claude models**: `sonnet` (default), `haiku`, `opus`
+**Ollama models**: `qwen3.5:4b` (default), `qwen3.5:9b`, `gemma4:e4b`
+**Effort levels**: `low` (fast), `medium` (default), `high` (deep thinking)
+
 ## Canonical operations
 
 ### Ingest
 
 When told to ingest source(s):
 
-1. Read source material from `raw/sources/` (or move file from `raw/inbox/` if requested).
-2. Analyze and extract key claims - make them falsifiable.
+1. Use `python3 tools/agents/wiki-agent.py ingest --source raw/sources/FILE.pdf` to analyze
+2. Extract key claims - make them falsifiable.
 3. Create/update a source page under `wiki/sources/`.
 4. Update relevant pages in `wiki/entities/`, `wiki/concepts/`, `wiki/topics/`, and/or `wiki/syntheses/`.
 5. Add wikilinks to connect new content with existing wiki.
@@ -155,7 +236,7 @@ When told to ingest source(s):
 When answering a user question using this wiki:
 
 1. Read `wiki/index.md` first to understand current state.
-2. Use `python3 tools/wiki.py search` or `qmd query` for relevant pages.
+2. Use `python3 tools/agents/wiki-agent.py search --page "query"` to find relevant pages.
 3. Identify and read relevant pages.
 4. Synthesize with explicit citations in wiki-link form.
 5. If answer is durable, save it as a page under `wiki/queries/` and link it.
@@ -167,10 +248,18 @@ When answering a user question using this wiki:
 
 Perform periodically or on request:
 
-- Run `python3 tools/wiki.py lint` for basic checks.
-- Run `python3 tools/wiki.py lint --strict` for full checks (includes orphans).
-- Check for: contradictions, stale claims, sparse pages, orphan pages, missing cross-references.
-- Use `python3 tools/wiki_extra.py suggest-links <page>` to find link opportunities.
+**Programmatic checks** (structural, fast):
+- Run `python3 tools/wiki.py lint` for links, metadata, and staleness (>180 days).
+- Run `python3 tools/wiki.py lint --strict` to also fail on orphan pages.
+- Run `python3 tools/wiki.py validate-log` to check log entry format.
+
+**Agent checks** (semantic, thorough):
+- Use `python3 tools/agents/wiki-agent.py quality --page wiki/concepts/x.md` for deep quality review.
+- Use `python3 tools/agents/wiki-agent.py contradict` for contradiction detection across pages.
+- Use `python3 tools/agents/wiki-agent.py verify --source wiki/sources/x.md` to verify claims against raw sources.
+
+Link suggestions are best done by agents (semantic understanding) rather than substring matching.
+
 - Write findings to `wiki/reports/`.
 - Update wiki pages to resolve highest-priority issues.
 
@@ -215,29 +304,160 @@ qmd query "query"         # Hybrid (best)
 qmd query "query" --json  # For LLM context
 ```
 
-### Obsidian Plugins (optional)
+### Obsidian Plugins
 
-- **Dataview** - Query frontmatter for dynamic tables
-- **Marp** - Generate slide decks from markdown
+**Installed and active:**
+- **Dataview** - Dynamic tables and queries from frontmatter (JS enabled)
+- **Templater** - Auto-fills templates when creating pages in wiki folders
+
+**Recommended (optional):**
 - **Web Clipper** - Clip web articles to raw/inbox/
+- **Obsidian Git** - Auto-commit and sync
 
 ## Useful commands
 
 ```bash
 # Core maintenance
 python3 tools/wiki.py build-index          # Regenerate index
-python3 tools/wiki.py lint                  # Health check
-python3 tools/wiki.py lint --strict         # Full check with orphans
+python3 tools/wiki.py lint                 # Health check (links, metadata, staleness)
+python3 tools/wiki.py lint --strict        # Full check including orphans
 python3 tools/wiki.py search "term"        # Search wiki content
+python3 tools/wiki.py validate-log         # Check log entry format
 python3 tools/wiki.py append-log ...       # Add log entry
 
+# AI-powered agents (use wiki-agent.py)
+python3 tools/agents/wiki-agent.py quality --page wiki/concepts/x.md
+python3 tools/agents/wiki-agent.py verify --source wiki/sources/x.md
+python3 tools/agents/wiki-agent.py ingest --source raw/sources/x.pdf
+python3 tools/agents/wiki-agent.py contradict
+
 # Extra utilities
-python3 tools/wiki_extra.py next-id        # Generate next source ID
-python3 tools/wiki_extra.py qmd-search "q" # QMD search
-python3 tools/wiki_extra.py suggest-links # Link suggestions
-python3 tools/wiki_extra.py orphans        # Find orphan pages
-python3 tools/wiki_extra.py stats          # Wiki statistics
+python3 tools/wiki_extra.py next-id         # Generate next source ID
+python3 tools/wiki_extra.py qmd-search "q"  # QMD search
+python3 tools/wiki_extra.py stats           # Wiki statistics
 ```
+
+## Quality checks
+
+### Agent-powered quality review
+
+Use the wiki-agent.py wrapper to invoke AI agents:
+
+```bash
+# Quality review with opencode (default)
+python3 tools/agents/wiki-agent.py quality --page wiki/concepts/my-concept.md
+
+# With Claude, high effort
+python3 tools/agents/wiki-agent.py quality --page wiki/concepts/x.md --cli claude --model sonnet --effort high
+
+# Source verification
+python3 tools/agents/wiki-agent.py verify --source wiki/sources/my-source.md
+
+# Contradiction detection
+python3 tools/agents/wiki-agent.py contradict
+
+# Ingest new source
+python3 tools/agents/wiki-agent.py ingest --source raw/sources/new-paper.pdf
+```
+
+The agents read `.agent.md` files as their system prompt and use configurable:
+- **CLI**: `opencode`, `claude`, or `ollama`
+- **Model**: varies by CLI (e.g., `sonnet`, `qwen3.5`, `minimax-free`)
+- **Effort**: `low`, `medium`, `high` (thinking depth)
+
+```bash
+# Deep content quality analysis - checks claims, clarity, structure
+python3 tools/agents/wiki-agent.py quality --page wiki/concepts/your-concept.md --effort high
+
+# Verify source claims against original sources
+python3 tools/agents/wiki-agent.py verify --source wiki/sources/your-source.md --effort high
+```
+
+When to use agents:
+- **Structural issues**: Templates, frontmatter, linking patterns
+- **Content depth**: Are claims well-supported? Any gaps?
+- **Cross-wiki consistency**: Contradictions that automated tools miss
+- **Summary quality**: Does summary match content accurately?
+
+## PDF and image handling
+
+### PDF parsing
+
+**Option 1: Direct LLM reading (recommended for this wiki)**
+- Place PDF in `raw/sources/` or `raw/inbox/`
+- The LLM reads PDF directly via the Read tool
+- Extract key claims and create source page
+
+**Option 2: Convert to markdown first**
+For complex PDFs with tables/figures, convert before ingestion:
+
+```bash
+# Using pandoc
+pandoc -t markdown input.pdf -o output.md
+
+# Using Obsidian PDF plugins
+# - PDF Highlights: Extract annotations and highlights
+# - Readwise: Sync highlights to markdown
+```
+
+**Option 3: Specialized extraction**
+For academic papers:
+- SciPDF (arxiv papers)
+- GPTPDF for OCR-heavy documents
+
+### Image handling
+
+- Store images in `raw/assets/`
+- Use relative paths in wiki: `![image](../../raw/assets/image.png)`
+- Add to obsidian config for image folder if needed
+
+## Obsidian integrations
+
+### Templater
+
+Templater is configured with folder templates — creating a file in any wiki subdirectory auto-applies the matching template from `wiki/_templates/`.
+
+| Folder | Template Applied |
+|--------|-----------------|
+| `wiki/sources/` | `source.md` — prompts for source_type |
+| `wiki/entities/` | `entity.md` — prompts for entity_type |
+| `wiki/concepts/` | `concept.md` |
+| `wiki/topics/` | `topic.md` |
+| `wiki/syntheses/` | `synthesis.md` |
+| `wiki/comparisons/` | `comparison.md` |
+| `wiki/queries/` | `query.md` |
+| `wiki/reports/` | `report.md` — prompts for report_type |
+
+All templates auto-fill: title from filename, today's date, cursor placement, and Dataview backlink queries.
+
+### Dataview
+
+Every template includes Dataview queries for automatic backlink/relationship tables. Key patterns:
+
+```
+# Show all pages linking to current page
+FROM "wiki" WHERE contains(file.outlinks, this.file.link)
+
+# Show sources by domain
+FROM "wiki/sources" WHERE domain = "research"
+
+# Show draft pages needing review
+FROM "wiki" WHERE status = "draft"
+
+# Show stale pages
+FROM "wiki" WHERE date(updated) < date(today) - dur(180 days)
+```
+
+The home page has a live dashboard with recent sources, drafts, domain breakdown, and staleness alerts.
+
+### Graph View
+
+Graph is color-coded by page type:
+- **Blue** — Sources | **Green** — Entities | **Purple** — Concepts
+- **Orange** — Topics | **Magenta** — Syntheses | **Yellow** — Comparisons
+- **Cyan** — Queries | **Gray** — Reports
+
+Orphan pages are visible. Filter is set to `path:wiki`.
 
 ## Why this works
 

@@ -1,42 +1,79 @@
-# Second Brain Wiki System
+---
+title: Setup Guide
+type: page
+status: active
+created: 2026-04-11
+updated: 2026-04-11
+summary: How to set up and configure your LLM Wiki Second Brain.
+---
 
-A template for Karpathy's LLM Wiki pattern - ready to use as a Second Brain.
+# Setup Guide
 
-## What's Included
+Based on [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
-- `AGENTS.md` - Operating schema
-- `wiki/` - Wiki structure with templates
-- `tools/` - Maintenance CLI tools
+## Prerequisites
 
-## What's NOT Included
-
-Raw sources and wiki content go elsewhere - they're your data.
+- [Obsidian](https://obsidian.md) with plugins: Dataview, Templater
+- Python 3.10+
+- An LLM CLI: `claude`, `opencode`, or `ollama`
 
 ## Quick Setup
 
 ```bash
-# Clone or copy the system
-git clone https://github.com/yourusername/second-brain-system.git your-wiki
-cd your-wiki
-
-# Initialize fresh directories for YOUR data
+# Initialize directories for your data
 mkdir -p raw/sources raw/assets raw/inbox
-mkdir -p wiki/sources wiki/entities wiki/concepts wiki/topics
 
-# Open in Obsidian
-open .
+# Verify tools work
+python3 tools/wiki.py lint
+python3 tools/wiki.py build-index
 ```
 
-## Directory Structure After Setup
+## Obsidian Configuration
+
+### Required Plugins
+
+1. **Dataview** - Dynamic tables and queries from frontmatter
+2. **Templater** - Auto-fills templates when creating new pages in wiki folders
+
+### Recommended Plugins
+
+- **Obsidian Git** - Auto-commit and sync
+- **Web Clipper** - Clip articles to `raw/inbox/`
+
+### Templater Setup
+
+Templater is pre-configured to auto-apply templates when you create files in wiki subdirectories. Creating a new file in `wiki/sources/` auto-fills the source template.
+
+### Graph View
+
+Open graph view to see wiki structure. Color groups are pre-configured by page type (sources=blue, entities=green, concepts=purple, etc.).
+
+## QMD Search (Optional)
+
+For hybrid BM25 + vector search:
+
+```bash
+./tools/scripts/setup-qmd.sh
+```
+
+First run downloads a ~1.3GB embedding model. After setup:
+
+```bash
+qmd search "query"    # Keyword
+qmd vsearch "query"   # Semantic
+qmd query "query"     # Hybrid (best)
+```
+
+## Directory Structure
 
 ```
-your-wiki/
-├── AGENTS.md              # Schema (copy this)
-├── raw/
-│   ├── sources/          # YOUR sources
-│   ├── assets/           # YOUR assets
-│   └── inbox/            # YOUR inbox
-├── wiki/                 # YOUR wiki content
+Second Brain/
+├── AGENTS.md              # Operating schema
+├── raw/                   # YOUR source material (immutable)
+│   ├── sources/
+│   ├── assets/
+│   └── inbox/
+├── wiki/                  # LLM-maintained knowledge base
 │   ├── sources/
 │   ├── entities/
 │   ├── concepts/
@@ -49,25 +86,19 @@ your-wiki/
 │   ├── _templates/
 │   ├── index.md
 │   └── log.md
-└── tools/                # Copy this
+└── tools/
     ├── wiki.py
     ├── wiki_extra.py
+    ├── agents/
     └── scripts/
 ```
 
-## Syncing
-
-Add your data directories to your own git repo:
+## Version Control
 
 ```bash
 git init
-echo "raw/
-wiki/
-!.gitkeep" > .gitignore
 git add .
-git commit -m "Initial wiki with my data"
+git commit -m "Initial wiki setup"
 ```
 
-## See Also
-
-- Original pattern: https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f
+The `.obsidian/` folder is tracked so plugin configs are preserved.
