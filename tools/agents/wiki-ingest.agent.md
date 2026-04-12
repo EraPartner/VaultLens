@@ -35,7 +35,6 @@ Process raw source material and create/update wiki pages following the LLM Wiki 
 - Note contradictions where claims conflict
 
 ### 4. Maintenance
-- Run `python3 tools/wiki.py build-index`
 - Run `python3 tools/wiki.py lint` and fix issues
 - Append log entry
 

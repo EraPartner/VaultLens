@@ -25,7 +25,6 @@ mkdir -p raw/sources raw/assets raw/inbox
 
 # Verify tools work
 python3 tools/wiki.py lint
-python3 tools/wiki.py build-index
 ```
 
 ## Obsidian Configuration
@@ -84,7 +83,7 @@ Second Brain/
 │   ├── reports/
 │   ├── system/
 │   ├── _templates/
-│   ├── index.md
+│   ├── index.md           # Dataview-powered catalog
 │   └── log.md
 └── tools/
     ├── wiki.py

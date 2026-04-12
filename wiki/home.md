@@ -121,7 +121,7 @@ Second Brain/
 │   ├── reports/           # Lint/audit outputs
 │   ├── system/            # Schema docs
 │   ├── _templates/        # Templater page templates
-│   ├── index.md           # Generated catalog
+│   ├── index.md           # Dataview-powered catalog
 │   └── log.md             # Append-only activity log
 └── tools/                  # Wiki maintenance utilities
     ├── wiki.py            # Core CLI (index, lint, search, log)
@@ -135,7 +135,6 @@ Second Brain/
 ### Core Maintenance
 
 ```bash
-python3 tools/wiki.py build-index          # Regenerate catalog
 python3 tools/wiki.py lint                 # Health check
 python3 tools/wiki.py lint --strict        # Include orphan check
 python3 tools/wiki.py search "term"        # Search wiki content
@@ -171,12 +170,12 @@ qmd query "query" --json   # For LLM context
 1. Place source in `raw/inbox/` or `raw/sources/`
 2. Tell agent: "Ingest [source file]"
 3. Agent creates source page, updates entities/concepts/topics
-4. Agent runs index build and lint
+4. Agent runs lint
 5. Agent appends log entry
 
 ### Ask Question
 
-1. Agent reads `index.md` for navigation
+1. Agent opens `index.md` for navigation (Dataview-powered)
 2. Agent searches relevant pages
 3. Agent synthesizes answer with citations
 4. If durable, agent saves to `wiki/queries/`
@@ -187,7 +186,6 @@ qmd query "query" --json   # For LLM context
 1. Run lint: `python3 tools/wiki.py lint --strict`
 2. Review reports in `wiki/reports/`
 3. Fix issues
-4. Rebuild index
 
 ## Graph View
 

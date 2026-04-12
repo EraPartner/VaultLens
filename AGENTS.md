@@ -9,7 +9,7 @@ Maintain a durable wiki in `wiki/` from immutable source material in `raw/`.
 
 - Raw data in `raw/` is source of truth and should not be modified in-place by normal ingest flows.
 - Wiki pages in `wiki/` are maintained by the agent and can be updated incrementally.
-- `wiki/index.md` and `wiki/log.md` are mandatory navigation files.
+- `wiki/index.md` (Dataview-powered catalog) and `wiki/log.md` are mandatory navigation files.
 
 ## Architecture
 
@@ -227,15 +227,14 @@ When told to ingest source(s):
 4. Update relevant pages in `wiki/entities/`, `wiki/concepts/`, `wiki/topics/`, and/or `wiki/syntheses/`.
 5. Add wikilinks to connect new content with existing wiki.
 6. Add contradiction notes where claims conflict with existing knowledge.
-7. Run `python3 tools/wiki.py build-index`.
-8. Run `python3 tools/wiki.py lint` and fix issues.
-9. Append to log using `python3 tools/wiki.py append-log ...`.
+7. Run `python3 tools/wiki.py lint` and fix issues.
+8. Append to log using `python3 tools/wiki.py append-log ...`.
 
 ### Query
 
 When answering a user question using this wiki:
 
-1. Read `wiki/index.md` first to understand current state.
+1. Open `wiki/index.md` for an overview of existing pages (rendered dynamically by Dataview).
 2. Use `python3 tools/agents/wiki-agent.py search --page "query"` to find relevant pages.
 3. Identify and read relevant pages.
 4. Synthesize with explicit citations in wiki-link form.
@@ -280,7 +279,7 @@ Link suggestions are best done by agents (semantic understanding) rather than su
 
 ## Index and log policy
 
-- `wiki/index.md` is generated and should be rebuilt after every ingest-level change.
+- `wiki/index.md` uses Dataview queries and updates automatically — no rebuild needed.
 - `wiki/log.md` is append-only chronological history.
 - Log headings use: `## [YYYY-MM-DD] operation | title`.
 
@@ -318,7 +317,6 @@ qmd query "query" --json  # For LLM context
 
 ```bash
 # Core maintenance
-python3 tools/wiki.py build-index          # Regenerate index
 python3 tools/wiki.py lint                 # Health check (links, metadata, staleness)
 python3 tools/wiki.py lint --strict        # Full check including orphans
 python3 tools/wiki.py search "term"        # Search wiki content

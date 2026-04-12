@@ -20,6 +20,7 @@ AGENT_FILES = {
     "ingest": "wiki-ingest.agent.md",
     "contradict": "wiki-contradiction-detector.agent.md",
     "search": "wiki-search.agent.md",
+    "enhance": "wiki-enhancer.agent.md",
 }
 
 # opencode agent names (symlink stems in agent/ directory)
@@ -29,6 +30,7 @@ OPENCODE_AGENT_NAMES = {
     "ingest": "wiki-ingest",
     "contradict": "wiki-contradiction-detector",
     "search": "wiki-search",
+    "enhance": "wiki-enhancer",
 }
 
 CLI_OPTIONS = {
@@ -85,7 +87,20 @@ Examples:
         help="Agent to invoke",
     )
     parser.add_argument("--page", help="Page path relative to wiki/")
-    parser.add_argument("--source", help="Source path (for verify/ingest)")
+    parser.add_argument("--source", help="Source path (for verify/ingest/enhance)")
+    parser.add_argument(
+        "--topic",
+        help="Topic page path (for enhance, relative to wiki/)",
+    )
+    parser.add_argument(
+        "--coverage",
+        action="store_true",
+        help="Enhance mode: let the agent pick the sparsest target from wiki.py coverage",
+    )
+    parser.add_argument(
+        "--pdf",
+        help="Original PDF to attach when enhancing (defaults to --source if it ends with .pdf)",
+    )
     parser.add_argument(
         "--cli",
         choices=list(CLI_OPTIONS.keys()),
@@ -153,6 +168,11 @@ def build_prompt(agent: str, page: str, source: str, custom: str, cli: str = "")
             "ingest": f"Process the attached source material into the wiki. {_attached_note}",
             "contradict": "Find potential contradictions across wiki pages",
             "search": f"Search the wiki for: {source if source else page}",
+            "enhance": (
+                "Enhance the wiki for the attached target. Re-read any attached PDF "
+                "as ground truth, fix correctness issues, fill sparse coverage, and "
+                "strengthen cross-topic interlinking. Follow wiki-enhancer.agent.md."
+            ),
         }
     else:
         prompts = {
@@ -161,6 +181,13 @@ def build_prompt(agent: str, page: str, source: str, custom: str, cli: str = "")
             "ingest": f"Process new source material: {source}",
             "contradict": "Find potential contradictions across wiki pages",
             "search": f"Search the wiki for: {source if source else page}",
+            "enhance": (
+                f"Enhance wiki coverage. Target: "
+                f"{page or source or 'auto-pick sparsest area via python3 tools/wiki.py coverage'}. "
+                f"Re-read the source PDF if available. Fix correctness, expand sparse "
+                f"sections, create new concept pages where the source is dense, and "
+                f"strengthen cross-topic interlinking. Follow wiki-enhancer.agent.md."
+            ),
         }
 
     return prompts.get(agent, "Analyze and report.")
@@ -333,6 +360,19 @@ def run_agent(args) -> int:
         extra_args = ["--domain", args.page]
     elif args.agent == "search":
         extra_args = [args.source or args.page or ""]
+    elif args.agent == "enhance":
+        # Attach whatever is relevant: target wiki page(s) + original PDF.
+        targets = []
+        pdf_path = args.pdf or (args.source if args.source and args.source.endswith(".pdf") else "")
+        if pdf_path:
+            targets.append(str((ROOT / pdf_path).resolve()))
+        if args.page:
+            targets.append(str((ROOT / args.page).resolve()))
+        if args.topic:
+            targets.append(str((ROOT / args.topic).resolve()))
+        if args.source and args.source != pdf_path:
+            targets.append(str((ROOT / args.source).resolve()))
+        extra_args = targets
 
     if not validate_cli(args.cli):
         print(f"Error: CLI '{args.cli}' not found in PATH.")
@@ -367,6 +407,15 @@ def main(argv=None) -> int:
             print(f"Error: --{required} required for {args.agent}")
             parser.print_help()
             return 1
+
+    if args.agent == "enhance" and not (
+        args.page or args.topic or args.source or args.pdf or args.coverage
+    ):
+        print(
+            "Error: enhance requires one of --page, --topic, --source, --pdf, or --coverage"
+        )
+        parser.print_help()
+        return 1
 
     return run_agent(args)
 
