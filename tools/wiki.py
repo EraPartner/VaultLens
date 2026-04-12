@@ -7,6 +7,8 @@ import argparse
 import datetime as dt
 import json
 import re
+import shutil
+import subprocess
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
@@ -15,6 +17,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WIKI_DIR = ROOT / "wiki"
+RAW_SOURCES_DIR = ROOT / "raw" / "sources"
+RAW_SOURCES_TEXT_DIR = ROOT / "raw" / "sources-text"
 
 IGNORE_DIRS = {"_templates", ".obsidian"}
 IGNORE_FILES = {"index.md", "log.md"}
@@ -515,6 +519,143 @@ def append_log_entry(
     return 0
 
 
+def text_path_for_pdf(pdf_path: Path) -> Path:
+    """Return the markdown sibling path for a given PDF in raw/sources/."""
+    return RAW_SOURCES_TEXT_DIR / f"{pdf_path.stem}.md"
+
+
+def _pdf_needs_extract(pdf_path: Path, text_path: Path) -> bool:
+    if not text_path.exists():
+        return True
+    return pdf_path.stat().st_mtime > text_path.stat().st_mtime
+
+
+def extract_pdf_to_markdown(pdf_path: Path, force: bool = False) -> Path:
+    """Extract a PDF into a markdown sibling using `pdftotext -layout`.
+
+    Returns the path of the generated markdown file. Skips work when the
+    sibling exists and is newer than the PDF, unless `force=True`.
+    Raises FileNotFoundError, RuntimeError on failure.
+    """
+    if not pdf_path.exists():
+        raise FileNotFoundError(f"PDF not found: {pdf_path}")
+
+    if shutil.which("pdftotext") is None:
+        raise RuntimeError(
+            "pdftotext is not installed. Install poppler (`brew install poppler`) "
+            "or xpdf-tools and retry."
+        )
+
+    text_path = text_path_for_pdf(pdf_path)
+    if not force and not _pdf_needs_extract(pdf_path, text_path):
+        return text_path
+
+    text_path.parent.mkdir(parents=True, exist_ok=True)
+
+    raw_txt = text_path.with_suffix(".raw.txt")
+    decrypted_pdf: Path | None = None
+    try:
+        result = subprocess.run(
+            ["pdftotext", "-layout", "-enc", "UTF-8", str(pdf_path), str(raw_txt)],
+            capture_output=True,
+            text=True,
+        )
+        PERMISSION_ERROR = "Copying of text from this document is not allowed"
+        if result.returncode != 0 and PERMISSION_ERROR in result.stderr:
+            # PDF has copy-protection; strip restrictions with qpdf and retry.
+            if shutil.which("qpdf") is None:
+                raise RuntimeError(
+                    f"Permission Error: {PERMISSION_ERROR}. "
+                    "Install qpdf (`brew install qpdf`) to bypass restriction."
+                )
+            decrypted_pdf = text_path.with_suffix(".decrypted.pdf")
+            qpdf_result = subprocess.run(
+                ["qpdf", "--decrypt", str(pdf_path), str(decrypted_pdf)],
+                capture_output=True,
+                text=True,
+            )
+            if qpdf_result.returncode != 0:
+                raise RuntimeError(
+                    f"qpdf decrypt failed for {pdf_path.name}: {qpdf_result.stderr.strip()}"
+                )
+            result = subprocess.run(
+                ["pdftotext", "-layout", "-enc", "UTF-8", str(decrypted_pdf), str(raw_txt)],
+                capture_output=True,
+                text=True,
+            )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"pdftotext failed for {pdf_path.name}: {result.stderr.strip()}"
+            )
+
+        body = raw_txt.read_text(encoding="utf-8", errors="replace")
+    finally:
+        raw_txt.unlink(missing_ok=True)
+        if decrypted_pdf is not None:
+            decrypted_pdf.unlink(missing_ok=True)
+
+    today = dt.datetime.now().strftime("%Y-%m-%d")
+    extractor = "qpdf --decrypt | pdftotext -layout" if decrypted_pdf is not None else "pdftotext -layout"
+    header = (
+        "---\n"
+        f'source_pdf: "raw/sources/{pdf_path.name}"\n'
+        f"extracted: {today}\n"
+        f"extractor: {extractor}\n"
+        "---\n\n"
+        f"# {pdf_path.stem}\n\n"
+        "> Pre-extracted plain text from the source PDF. Treat as ground-truth\n"
+        "> reference content. Layout artifacts (page numbers, headers, line\n"
+        "> breaks inside paragraphs) may be present.\n\n"
+    )
+
+    text_path.write_text(header + body, encoding="utf-8")
+    return text_path
+
+
+def preprocess_pdfs(pdf: str | None, force: bool) -> int:
+    """CLI entry: preprocess one PDF or all PDFs under raw/sources/."""
+    if pdf:
+        pdf_path = Path(pdf)
+        if not pdf_path.is_absolute():
+            pdf_path = (ROOT / pdf_path).resolve()
+        targets = [pdf_path]
+    else:
+        if not RAW_SOURCES_DIR.exists():
+            print(f"No raw/sources directory at {RAW_SOURCES_DIR}")
+            return 1
+        targets = sorted(RAW_SOURCES_DIR.glob("*.pdf"))
+
+    if not targets:
+        print("No PDFs found to preprocess.")
+        return 0
+
+    extracted = 0
+    skipped = 0
+    failed = 0
+    for target in targets:
+        try:
+            text_path = extract_pdf_to_markdown(target, force=force)
+            if force or _pdf_needs_extract(target, text_path) or not text_path.exists():
+                # Should not happen post-extraction; keep for safety.
+                extracted += 1
+            else:
+                # Determine via mtime comparison whether we just wrote it.
+                if text_path.stat().st_mtime >= target.stat().st_mtime - 1:
+                    extracted += 1
+                else:
+                    skipped += 1
+            print(f"  ok   {target.name} -> {text_path.relative_to(ROOT)}")
+        except Exception as exc:  # noqa: BLE001
+            failed += 1
+            print(f"  FAIL {target.name}: {exc}")
+
+    print(
+        f"\nPreprocess complete. extracted={extracted} "
+        f"skipped={skipped} failed={failed}"
+    )
+    return 0 if failed == 0 else 2
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Markdown wiki maintenance tools")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -555,6 +696,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     log_parser.add_argument("--notes", default="", help="Optional notes")
 
+    preprocess_parser = sub.add_parser(
+        "preprocess",
+        help="Pre-extract raw/sources/*.pdf into raw/sources-text/*.md so agents can read them",
+    )
+    preprocess_parser.add_argument(
+        "--pdf",
+        help="Process a single PDF (path relative to repo root or absolute). Defaults to all PDFs in raw/sources/.",
+    )
+    preprocess_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-extract even if the markdown sibling is newer than the PDF",
+    )
+
     return parser
 
 
@@ -579,6 +734,8 @@ def main(argv: list[str] | None = None) -> int:
             sources=args.source,
             notes=args.notes,
         )
+    if args.command == "preprocess":
+        return preprocess_pdfs(pdf=args.pdf, force=args.force)
 
     parser.print_help()
     return 1

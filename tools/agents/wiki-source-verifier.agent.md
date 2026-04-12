@@ -19,8 +19,8 @@ Verify claims in wiki source pages against original raw source material. Be thor
 ## Process
 
 1. Read the wiki source page to extract all claims
-2. Locate the original source in `raw/sources/` or linked location
-3. Read the original source material directly (use Read tool for PDFs)
+2. Locate the original source. PDFs live in `raw/sources/<file>.pdf` but you must read the pre-extracted markdown sibling at `raw/sources-text/<same-stem>.md` — never the `.pdf` itself, most models cannot parse PDF input
+3. Read the `raw/sources-text/*.md` file with the Read tool. If the sibling does not exist, report this in your verdict and ask the operator to run `python3 tools/wiki.py preprocess --pdf raw/sources/<file>.pdf` (this agent runs read-only, so you cannot run it yourself)
 4. Verify each key claim against source material
 5. Flag any discrepancies or unsupported claims
 
@@ -63,7 +63,7 @@ Verify claims in wiki source pages against original raw source material. Be thor
 
 ## Important
 
-- Read PDFs directly using the Read tool - don't skip this
+- Read the pre-extracted `raw/sources-text/<stem>.md` with the Read tool — never try to Read a `.pdf`, most models cannot parse PDF input. Layout artifacts (page numbers, broken paragraphs) are expected — read past them.
 - DO NOT modify wiki files - only verify and report
 - For ambiguous cases, explain your uncertainty
 - Be specific about what doesn't match

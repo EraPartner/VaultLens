@@ -31,6 +31,7 @@ Search the wiki to find relevant information, synthesize findings, and present a
 - `wiki/sources/` - Original references
 - `wiki/entities/` - Specific people, tools, places
 - `wiki/topics/` - Syntheses of many concepts
+- `raw/sources-text/` - Unprocessed source material (if not found in wiki)
 
 ## Output format
 
@@ -57,3 +58,4 @@ Search the wiki to find relevant information, synthesize findings, and present a
 - Cite sources with wikilinks
 - If no good results, suggest alternatives
 - Consider if answer should be saved as a query page
+

@@ -16,7 +16,7 @@ Think deeply. Be thorough. Prefer depth over breadth per run.
 - A single source page (`wiki/sources/src-*.md`) + its attached original PDF — you enhance the wiki coverage of that source.
 - A single topic page (`wiki/topics/*.md`) — you enhance coverage of that topic across all relevant sources.
 - A single concept page (`wiki/concepts/*.md`) — you verify, deepen, and interlink it.
-- `--coverage` mode with no specific target — you scan the wiki for sparse areas and pick the weakest one to enhance first. Use `python3 tools/wiki.py coverage --json` to get the ranked list.
+- `--coverage` mode with no specific target — you scan the wiki for sparse areas and pick the weakest one to enhance first. Use `python3 tools/wiki.py coverage --json` to get the ranked list. Once you've picked a target, look up its source page (`wiki/sources/src-*.md`) for the original PDF filename, then Read the corresponding `raw/sources-text/<stem>.md`. If that text file does not exist yet, run `python3 tools/wiki.py preprocess --pdf raw/sources/<file>.pdf` from the Bash tool first.
 
 Whenever a PDF is attached via `-f`, treat it as the ground-truth source. Re-parse it, don't trust the existing wiki page blindly.
 
@@ -30,9 +30,15 @@ Before changing anything, understand what already exists:
 - Run `python3 tools/wiki.py search "<topic-keywords>"` to find every related wiki page.
 - Build a mental map: which concepts are covered, how deeply, and where the links are missing.
 
-### 2. Re-read the source (when a PDF is attached)
+### 2. Re-read the source (when one is attached)
 
-- Read the PDF with the Read tool.
+**Source material is always pre-extracted to markdown.** You will never see a raw PDF.
+For every PDF in `raw/sources/`, a sibling exists at `raw/sources-text/<same-stem>.md` containing the full text extracted via `pdftotext -layout`. The wiki-agent wrapper attaches this markdown automatically.
+
+- Read the attached `raw/sources-text/*.md` with the Read tool. Treat it as ground truth.
+- Do NOT attempt to Read any `.pdf` file — most models cannot parse PDF input directly, and the sandbox blocks shelling out to `pdftotext`.
+- If a source you need is not yet preprocessed, run from the Bash tool: `python3 tools/wiki.py preprocess --pdf raw/sources/<file>.pdf`. This is the only sanctioned way to materialize source text.
+- Layout artifacts (page-number lines, broken paragraphs, table noise) are expected — read past them. Never write to `/tmp/` or anywhere outside the project root.
 - For each major section / chapter, check: does the wiki actually cover this? At what depth?
 - Flag:
   - **Correctness issues** — claims in the wiki that the PDF contradicts or qualifies.

@@ -15,8 +15,9 @@ Process raw source material and create/update wiki pages following the LLM Wiki 
 ## Ingest workflow
 
 ### 1. Analyze Source
-- Read source from `raw/sources/` or `raw/inbox/`
-- For PDFs, read directly using Read tool
+- Read the source material via the Read tool. **For PDFs, always read the pre-extracted markdown sibling at `raw/sources-text/<same-stem>.md`, never the `.pdf` itself** — most models cannot parse PDF input directly.
+- The wiki-agent wrapper auto-extracts PDFs before invoking you. If a needed source has not been preprocessed yet, run `python3 tools/wiki.py preprocess --pdf raw/sources/<file>.pdf` from the Bash tool.
+- Layout artifacts (page numbers, broken paragraphs, table noise) are expected in extracted text — read past them.
 - Extract key claims (make them falsifiable)
 - Identify entity/concept mentions
 - Understand the main thesis/argument

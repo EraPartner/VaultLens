@@ -12,6 +12,42 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 AGENTS_DIR = ROOT / "tools" / "agents"
+TOOLS_DIR = ROOT / "tools"
+
+
+def _resolve_pdf_to_markdown(path_str: str) -> str:
+    """If path_str points to a PDF in raw/sources/, return its raw/sources-text/ markdown sibling.
+
+    Auto-runs `python3 tools/wiki.py preprocess --pdf <path>` if the sibling is missing
+    or older than the PDF. Returns the original path if it is not a PDF or extraction fails.
+    """
+    if not path_str or not path_str.lower().endswith(".pdf"):
+        return path_str
+
+    pdf_abs = (
+        (ROOT / path_str).resolve()
+        if not Path(path_str).is_absolute()
+        else Path(path_str).resolve()
+    )
+    if not pdf_abs.exists():
+        return path_str
+
+    if TOOLS_DIR not in [Path(p) for p in sys.path]:
+        sys.path.insert(0, str(TOOLS_DIR))
+    try:
+        from wiki import extract_pdf_to_markdown  # type: ignore[import]
+    except ImportError as exc:
+        print(f"Warning: could not import wiki.extract_pdf_to_markdown: {exc}")
+        return path_str
+
+    try:
+        text_path = extract_pdf_to_markdown(pdf_abs, force=False)
+        print(f"Pre-extracted PDF -> {text_path.relative_to(ROOT)}")
+        return str(text_path)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Warning: PDF preprocess failed for {pdf_abs.name}: {exc}")
+        print("Falling back to attaching the original PDF.")
+        return str(pdf_abs)
 
 
 AGENT_FILES = {
@@ -137,7 +173,7 @@ Examples:
 def get_default_model(cli: str) -> str:
     """Get default model for CLI."""
     defaults = {
-        "opencode": "opencode/minimax-m2.5-free",
+        "opencode": "github-copilot/gpt-5.3-codex",
         "claude": "sonnet",
         "ollama": "qwen3.5:4b",
     }
@@ -165,13 +201,20 @@ def build_prompt(agent: str, page: str, source: str, custom: str, cli: str = "")
         prompts = {
             "quality": "Analyze the attached wiki page",
             "verify": f"Verify claims in the attached wiki source page. {_attached_note}",
-            "ingest": f"Process the attached source material into the wiki. {_attached_note}",
+            "ingest": (
+                "Process the attached source material into the wiki. The attached file "
+                "is the pre-extracted markdown of the source (raw/sources-text/*.md); "
+                "treat it as the canonical text. Never try to Read raw .pdf files. "
+                f"{_attached_note}"
+            ),
             "contradict": "Find potential contradictions across wiki pages",
             "search": f"Search the wiki for: {source if source else page}",
             "enhance": (
-                "Enhance the wiki for the attached target. Re-read any attached PDF "
-                "as ground truth, fix correctness issues, fill sparse coverage, and "
-                "strengthen cross-topic interlinking. Follow wiki-enhancer.agent.md."
+                "Enhance the wiki for the attached target. Any attached "
+                "raw/sources-text/*.md file is the pre-extracted ground-truth source — "
+                "re-read it carefully, fix correctness issues, fill sparse coverage, and "
+                "strengthen cross-topic interlinking. Never try to Read raw .pdf files. "
+                "Follow wiki-enhancer.agent.md."
             ),
         }
     else:
@@ -355,22 +398,26 @@ def run_agent(args) -> int:
     elif args.agent == "verify" and args.source:
         extra_args = [str((ROOT / args.source).resolve())]
     elif args.agent == "ingest" and args.source:
-        extra_args = [str((ROOT / args.source).resolve())]
+        # PDFs get pre-extracted to raw/sources-text/*.md so the model can read them.
+        extra_args = [_resolve_pdf_to_markdown(args.source)]
     elif args.agent == "contradict" and args.page:
         extra_args = ["--domain", args.page]
     elif args.agent == "search":
         extra_args = [args.source or args.page or ""]
     elif args.agent == "enhance":
-        # Attach whatever is relevant: target wiki page(s) + original PDF.
+        # Attach whatever is relevant: target wiki page(s) + extracted source markdown.
         targets = []
-        pdf_path = args.pdf or (args.source if args.source and args.source.endswith(".pdf") else "")
+        pdf_path = args.pdf or (
+            args.source if args.source and args.source.endswith(".pdf") else ""
+        )
         if pdf_path:
-            targets.append(str((ROOT / pdf_path).resolve()))
+            targets.append(_resolve_pdf_to_markdown(pdf_path))
         if args.page:
             targets.append(str((ROOT / args.page).resolve()))
         if args.topic:
             targets.append(str((ROOT / args.topic).resolve()))
         if args.source and args.source != pdf_path:
+            # Source may be a non-PDF (e.g. wiki/sources/src-*.md); attach as-is.
             targets.append(str((ROOT / args.source).resolve()))
         extra_args = targets
 
