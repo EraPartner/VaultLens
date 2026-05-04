@@ -64,6 +64,21 @@ class Page:
         return self._scalar("updated")
 
     @property
+    def tags(self) -> list[str]:
+        value = self.frontmatter.get("tags", "")
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if not value:
+            return []
+        # Tolerate string forms: "foo", "foo, bar", or stray "[foo, bar]" leftovers.
+        text = value.strip().strip("[]")
+        return [item.strip().strip('"').strip("'") for item in text.split(",") if item.strip()]
+
+    @property
+    def domain(self) -> str:
+        return self._scalar("domain").strip()
+
+    @property
     def category(self) -> str:
         if len(self.rel.parts) == 1:
             return "root"
@@ -515,6 +530,85 @@ def search(query: str, limit: int) -> int:
     return 0
 
 
+def tags_command(
+    queries: list[str], domain: str, as_json: bool, limit: int
+) -> int:
+    """List all tags or filter pages by tag.
+
+    With no `queries`, prints `tag\tcount` for every tag in the wiki.
+    With one or more `queries`, prints pages whose tags contain ALL queries
+    (case-insensitive). `domain` further restricts results to pages whose
+    `domain` frontmatter matches (case-insensitive). `--limit 0` disables truncation.
+    """
+    pages = list_content_pages()
+    domain_norm = domain.strip().lower() if domain else ""
+
+    if not queries:
+        counts: dict[str, int] = defaultdict(int)
+        for page in pages:
+            if domain_norm and page.domain.lower() != domain_norm:
+                continue
+            for tag in page.tags:
+                counts[tag] += 1
+
+        rows = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        if limit > 0:
+            rows = rows[:limit]
+
+        if as_json:
+            print(json.dumps([{"tag": tag, "count": n} for tag, n in rows], indent=2))
+            return 0
+
+        if not rows:
+            print("No tags found.")
+            return 0
+
+        width = max(len(tag) for tag, _ in rows)
+        for tag, count in rows:
+            print(f"{tag:<{width}}  {count}")
+        return 0
+
+    wanted = {q.lower() for q in queries if q.strip()}
+    if not wanted:
+        print("No query tags supplied.")
+        return 1
+
+    matched: list[Page] = []
+    for page in pages:
+        if domain_norm and page.domain.lower() != domain_norm:
+            continue
+        page_tags = {t.lower() for t in page.tags}
+        if wanted.issubset(page_tags):
+            matched.append(page)
+
+    matched.sort(key=lambda p: p.rel.as_posix())
+    if limit > 0:
+        matched = matched[:limit]
+
+    if as_json:
+        payload = [
+            {
+                "path": page.rel.as_posix(),
+                "title": page.title,
+                "tags": page.tags,
+                "domain": page.domain,
+            }
+            for page in matched
+        ]
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    if not matched:
+        print(f"No pages match tags: {', '.join(sorted(wanted))}")
+        return 0
+
+    print(f"Pages matching tags [{', '.join(sorted(wanted))}]: {len(matched)}\n")
+    for page in matched:
+        tag_str = ", ".join(page.tags)
+        print(f"{page.rel.as_posix()}  ({tag_str})")
+    return 0
+
+
 def append_log_entry(
     operation: str,
     title: str,
@@ -716,6 +810,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit", type=int, default=25, help="Max rows (0 = all)"
     )
 
+    tags_parser = sub.add_parser(
+        "tags",
+        help="List tags with counts, or filter pages by tag (AND across multiple)",
+    )
+    tags_parser.add_argument(
+        "tag",
+        nargs="*",
+        help="Tag(s) to filter by. Omit to list all tags with counts.",
+    )
+    tags_parser.add_argument(
+        "--domain", default="", help="Restrict to pages with this `domain` frontmatter"
+    )
+    tags_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON"
+    )
+    tags_parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Max rows (0 = all). Default 0 for filter, 0 for tally.",
+    )
+
     sub.add_parser("validate-log", help="Check log.md entry format")
 
     log_parser = sub.add_parser("append-log", help="Append entry to wiki/log.md")
@@ -757,6 +873,13 @@ def main(argv: list[str] | None = None) -> int:
         return search(args.query, args.limit)
     if args.command == "coverage":
         return coverage(as_json=args.json, limit=args.limit)
+    if args.command == "tags":
+        return tags_command(
+            queries=args.tag,
+            domain=args.domain,
+            as_json=args.json,
+            limit=args.limit,
+        )
     if args.command == "validate-log":
         return validate_log()
     if args.command == "append-log":
