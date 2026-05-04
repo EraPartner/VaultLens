@@ -67,7 +67,10 @@ For each subfolder mentioned in `## Layout` or discovered on disk:
 ### 3. Pull in the wiki KB
 
 - Read every page in `wiki_refs` — the project's curated entry points.
-- Run `python3 tools/wiki.py search "<keywords>"` for adjacent wiki pages not yet linked.
+- **Search the wiki for adjacent material** (preferred order):
+  - `qmd query "<natural-language question>" --json` — hybrid BM25 + vector + LLM reranking. Use this when the question is conceptual ("which control loop fits this manipulator?"). If `mcp__qmd__*` tools are available, use them instead of the CLI.
+  - `qmd search "<keywords>"` — BM25 only. Fast and free. Use for exact-term lookups.
+  - `python3 tools/wiki.py search "<query>"` — substring fallback when qmd is unavailable.
 - Run `python3 tools/wiki.py tags <tag> [<tag>...]` (AND across multiple tags) using the project's frontmatter `tags` to surface sibling concept pages.
 - Read promising wiki pages. Stop when you have enough; don't grep the whole wiki.
 

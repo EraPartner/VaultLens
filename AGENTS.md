@@ -436,25 +436,56 @@ Link suggestions are best done by agents (semantic understanding) rather than su
 - `wiki/log.md` is append-only chronological history.
 - Log headings use: `## [YYYY-MM-DD] operation | title`.
 
-## Optional tools
+## Search
 
-### QMD Search Engine
+### QMD — primary search engine
 
-For larger wikis, install qmd for hybrid BM25 + vector search with LLM re-ranking:
+The wiki uses [qmd](https://www.npmjs.com/package/@tobilu/qmd) for hybrid BM25 + vector + LLM-rerank search across `wiki/` and `raw/`. **All search-using agents (wiki-search, project-assistant, wiki-enhancer, wiki-contradiction-detector) prefer qmd over `wiki.py search` when available.**
 
 ```bash
 # Install
-npm install -g @tobilu/qmd
+bun install -g @tobilu/qmd     # or: npm install -g @tobilu/qmd
 
-# Setup (run from wiki root)
+# Initial setup (creates wiki + raw collections, builds index, generates embeddings)
 ./tools/scripts/setup-qmd.sh
 
-# Search
-qmd search "query"        # BM25
-qmd vsearch "query"       # Vector
-qmd query "query"         # Hybrid (best)
-qmd query "query" --json  # For LLM context
+# Re-index after adding new files
+qmd update
+
+# Refresh vector embeddings after content changes
+qmd embed
+
+# Search (in order of preference for agents)
+qmd query "<natural language question>" --json   # hybrid + reranking; best for conceptual queries
+qmd search "<keywords>"                          # BM25 only; fast, good for exact terms
+qmd vsearch "<question>"                         # vector only; rare niche
 ```
+
+#### MCP server for agents
+
+`qmd mcp` runs an MCP server (stdio transport) exposing `mcp__qmd__*` tools. Opencode and Claude Code can connect to it for first-class search without bash. See `qmd skill show` for the bundled agent skill.
+
+#### Health checks
+
+```bash
+qmd status                                       # index health summary
+qmd collection list                              # list collections
+qmd collection show wiki                         # collection details
+qmd ls wiki                                      # list indexed files
+```
+
+If the collection paths are wrong (e.g. after the vault was moved), remove and re-add:
+
+```bash
+qmd collection remove wiki && qmd collection remove raw
+./tools/scripts/setup-qmd.sh
+```
+
+### `wiki.py` search — fallback
+
+`python3 tools/wiki.py search "<query>"` is a substring matcher over the wiki bodies. It's the fallback when qmd isn't installed or indexed. Always works without setup.
+
+## Optional tools
 
 ### Obsidian Plugins
 
@@ -470,21 +501,40 @@ qmd query "query" --json  # For LLM context
 
 ```bash
 # Core maintenance
-python3 tools/wiki.py lint                 # Health check (links, metadata, staleness)
+python3 tools/wiki.py lint                 # Health check (links, metadata, projects, staleness)
 python3 tools/wiki.py lint --strict        # Full check including orphans
-python3 tools/wiki.py search "term"        # Search wiki content
+python3 tools/wiki.py search "term"        # Substring search (qmd is preferred — see Search section)
+python3 tools/wiki.py tags <tag>           # Filter pages by tag (AND across multiple tags)
+python3 tools/wiki.py coverage             # Rank sparse / underlinked pages
 python3 tools/wiki.py validate-log         # Check log entry format
 python3 tools/wiki.py append-log ...       # Add log entry
+python3 tools/wiki.py preprocess           # Pre-extract raw/sources/*.pdf -> raw/sources-text/*.md
+
+# Projects layer (application workspaces that consume the wiki KB)
+python3 tools/wiki.py project list                                # enumerate projects
+python3 tools/wiki.py project new <slug>                          # scaffold project.md + queries/
+python3 tools/wiki.py project show <slug>                         # print details + subfolder tree
+python3 tools/wiki.py project link <slug> concepts/some-page      # append wiki_ref + bump updated
+
+# qmd search (preferred over wiki.py search for agents; see Search section above)
+qmd query "<question>" --json                                     # hybrid BM25 + vector + LLM rerank
+qmd search "<keywords>"                                           # BM25 only, fast
+qmd update                                                        # re-index after content changes
+qmd embed                                                         # refresh vector embeddings
+qmd status                                                        # health check
 
 # AI-powered agents (use wiki-agent.py)
 python3 tools/agents/wiki-agent.py quality --page wiki/concepts/x.md
 python3 tools/agents/wiki-agent.py verify --source wiki/sources/x.md
 python3 tools/agents/wiki-agent.py ingest --source raw/sources/x.pdf
+python3 tools/agents/wiki-agent.py enhance --coverage
+python3 tools/agents/wiki-agent.py search --page "topic"
 python3 tools/agents/wiki-agent.py contradict
+python3 tools/agents/wiki-agent.py project --project <slug> --question "..."
 
 # Extra utilities
 python3 tools/wiki_extra.py next-id         # Generate next source ID
-python3 tools/wiki_extra.py qmd-search "q"  # QMD search
+python3 tools/wiki_extra.py qmd-search "q"  # QMD search via wiki_extra wrapper
 python3 tools/wiki_extra.py stats           # Wiki statistics
 ```
 

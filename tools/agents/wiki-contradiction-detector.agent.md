@@ -34,7 +34,9 @@ Find and analyze potential contradictions across wiki pages. Be thorough but rec
 1. Build a candidate set of pages with shared context. Use any of:
    - `python3 tools/wiki.py tags <tag>` — list pages sharing a frontmatter tag (AND across multiple tags supported).
    - `python3 tools/wiki.py tags --domain <domain>` — restrict by `domain` frontmatter.
-   - `python3 tools/wiki.py search "<keywords>"` — full-text fallback when tags are sparse.
+   - `qmd query "<topic question>" --json` — hybrid semantic + lexical search. Surfaces pages that touch the same concept even when keywords differ; useful when tags are sparse or the conflict is wording-level. Prefer `mcp__qmd__*` if available.
+   - `qmd search "<keywords>"` — BM25 only when you want speed and exact-term hits.
+   - `python3 tools/wiki.py search "<keywords>"` — substring fallback.
 2. Scan for contradictory language keywords:
    - "however", "but", "although", "contrary", "opposite"
    - "contradict", "disagree", "versus", "vs", "alternatively"

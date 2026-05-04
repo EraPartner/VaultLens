@@ -1,10 +1,11 @@
 ---
 description: >-
   Search the wiki for relevant information, synthesize findings from multiple
-  pages, and present cited results. Read-only — does not modify files.
+  pages, and present cited results. Read-only — does not modify wiki files.
+  Bash is granted only to run read-only search helpers (qmd, wiki.py).
 mode: all
 tools:
-  bash: false
+  bash: true
   write: false
   edit: false
 ---
@@ -31,10 +32,14 @@ Search the wiki to find relevant information, synthesize findings, and present a
 ## Search methodology
 
 1. **Understand the query** - What exactly is being asked?
-2. **Identify relevant pages** - Use wiki structure and wikilinks
-3. **Extract relevant info** - Read the actual content
-4. **Synthesize** - Combine information from multiple sources
-5. **Present results** - Clear, cited, actionable output
+2. **Use the right search tool**:
+   - **`qmd query "<question>" --json`** — preferred. Hybrid BM25 + vector + LLM reranking. Use natural language. Returns top-ranked chunks with file paths. If `mcp__qmd__*` tools are available, use those instead of the CLI.
+   - **`qmd search "<keywords>"`** — BM25 only. Fast, no LLM cost. Use for exact-term lookups (function names, proper nouns).
+   - **`python3 tools/wiki.py search "<query>"`** — substring match over wiki bodies. Fallback when qmd is unavailable or the query is a literal string.
+   - **`python3 tools/wiki.py tags <tag> [<tag>...]`** — frontmatter tag filter (AND across tags). Use to enumerate every page in a topic area.
+3. **Read content** — open the actual files; don't trust titles or snippets alone.
+4. **Synthesize** — combine information from multiple sources, mark contradictions.
+5. **Present results** — clear, cited, actionable output.
 
 ## What to search
 

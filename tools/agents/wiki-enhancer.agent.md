@@ -74,8 +74,11 @@ If running multiple iterations in a session, alternate strategies (e.g. two shal
 Before changing anything, understand what already exists:
 
 - Read the target source/topic/concept page fully.
-- Run `python3 tools/wiki.py search "<topic-keywords>"` to find every related wiki page.
-- Run `python3 tools/wiki.py tags <tag>` (AND across multiple tags supported) to find every page sharing the current page's frontmatter tags — fastest way to surface siblings.
+- **Search the wiki for related material** (preferred order):
+  - `qmd query "<topic question or keywords>" --json` — hybrid BM25 + vector + LLM reranking. Best for surfacing semantically related pages even when keywords differ. Prefer `mcp__qmd__*` tools when available.
+  - `qmd search "<topic-keywords>"` — BM25 only. Fast and free.
+  - `python3 tools/wiki.py search "<topic-keywords>"` — substring fallback.
+- Run `python3 tools/wiki.py tags <tag>` (AND across multiple tags supported) to find every page sharing the current page's frontmatter tags — fastest way to surface siblings by topic membership.
 - Build a mental map: which concepts are covered, how deeply, and where the links are missing.
 
 ### 2. Re-read the source
