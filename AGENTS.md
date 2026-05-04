@@ -142,21 +142,23 @@ For complex wiki tasks, use the project's custom agents stored in `tools/agents/
 
 ### When to use wiki agents
 
-- **Quality review**: Use `wiki-quality-reviewer` for deep content analysis
-- **Source verification**: Use `wiki-source-verifier` to verify claims against raw sources
-- **Ingest**: Use `wiki-ingest` for processing new sources
-- **Contradiction detection**: Use `wiki-contradiction-detector` to find conflicts
-- **Search/Research**: Use `wiki-search` to find and synthesize information
+- **Ingest**: Use `wiki-ingest` for first-pass intake of a brand-new source.
+- **Enhance**: Use `wiki-enhancer` to iteratively deepen, fix, and interlink already-ingested content.
+- **Quality review**: Use `wiki-quality-reviewer` for intrinsic page-level audits (read-only).
+- **Source verification**: Use `wiki-source-verifier` to verify wiki claims against the raw source.
+- **Contradiction detection**: Use `wiki-contradiction-detector` to surface intra-wiki conflicts.
+- **Search/Research**: Use `wiki-search` to answer questions with cited synthesis.
 
 ### Custom wiki agents
 
 This project defines specialized agents in `tools/agents/`:
 
-- `wiki-quality-reviewer.agent.md` - Deep content quality analysis
-- `wiki-source-verifier.agent.md` - Verify claims against raw sources
-- `wiki-ingest.agent.md` - Process new sources through ingest workflow
-- `wiki-contradiction-detector.agent.md` - Find contradictions across pages
-- `wiki-search.agent.md` - Search and research wiki content
+- `wiki-ingest.agent.md` - First-pass intake of a brand-new source
+- `wiki-enhancer.agent.md` - Iterative improvement of already-ingested pages
+- `wiki-quality-reviewer.agent.md` - Intrinsic page-level audit (read-only)
+- `wiki-source-verifier.agent.md` - Verify a single page's claims against the raw source
+- `wiki-contradiction-detector.agent.md` - Find conflicts across pages
+- `wiki-search.agent.md` - Answer questions with cited synthesis
 
 ### opencode agent registration
 
@@ -164,11 +166,12 @@ Agents are registered with opencode via symlinks in `.opencode/agents/` (opencod
 
 ```
 .opencode/agents/
-  wiki-ingest.md                → ../../tools/agents/wiki-ingest.agent.md
-  wiki-quality-reviewer.md      → ../../tools/agents/wiki-quality-reviewer.agent.md
-  wiki-source-verifier.md       → ../../tools/agents/wiki-source-verifier.agent.md
+  wiki-ingest.md                 → ../../tools/agents/wiki-ingest.agent.md
+  wiki-enhancer.md               → ../../tools/agents/wiki-enhancer.agent.md
+  wiki-quality-reviewer.md       → ../../tools/agents/wiki-quality-reviewer.agent.md
+  wiki-source-verifier.md        → ../../tools/agents/wiki-source-verifier.agent.md
   wiki-contradiction-detector.md → ../../tools/agents/wiki-contradiction-detector.agent.md
-  wiki-search.md                → ../../tools/agents/wiki-search.agent.md
+  wiki-search.md                 → ../../tools/agents/wiki-search.agent.md
 ```
 
 Each agent file includes opencode-compatible YAML frontmatter (`description`, `mode`, `tools`).
@@ -201,13 +204,33 @@ python3 tools/agents/wiki-agent.py contradict
 
 ### Available Agents
 
-| Agent | File | Purpose |
-|-------|------|---------|
-| Quality | `wiki-quality-reviewer.agent.md` | Deep content analysis - claims, summaries, cross-references |
-| Verify | `wiki-source-verifier.agent.md` | Verify wiki claims against raw source material |
-| Ingest | `wiki-ingest.agent.md` | Process new sources through full ingest workflow |
-| Contradict | `wiki-contradiction-detector.agent.md` | Find contradictions across pages |
-| Search | `wiki-search.agent.md` | Search and synthesize wiki content |
+The agents are designed to be **orthogonal** — each owns a distinct slice of the
+maintenance workflow. Pick by matching the input you have and the action you want.
+
+| Agent | Reads | Writes | Owns |
+|-------|-------|--------|------|
+| Ingest (`wiki-ingest`) | new raw source + wiki | wiki | First-pass extraction of a brand-new source into the wiki. |
+| Enhance (`wiki-enhancer`) | already-ingested raw source + wiki | wiki | Iterative improvement of pages that already exist — fix, deepen, interlink, spawn new concept pages from dense subtopics. |
+| Quality (`wiki-quality-reviewer`) | one wiki page | — | Intrinsic page-level audit (structure, summary, falsifiability, frontmatter). No source compare. |
+| Verify (`wiki-source-verifier`) | one wiki page + its raw source-text | — | Source-fidelity audit: does the wiki accurately represent the source? |
+| Contradict (`wiki-contradiction-detector`) | many wiki pages | — | Intra-wiki conflict detection across pages. Does not consult raw sources. |
+| Search (`wiki-search`) | wiki | — | Query answering — locate pages, read, synthesize a cited answer. |
+
+**Decision matrix** — pick the agent by what you have and what you want:
+
+| You have... | You want to... | Use |
+|---|---|---|
+| A new file in `raw/sources/` | Add it to the wiki | `wiki-ingest` |
+| An existing wiki page that feels shallow or stale | Improve it (in place) | `wiki-enhancer` |
+| A wiki page you suspect drifts from the original | Verify against the source | `wiki-source-verifier` |
+| A wiki page you want a structural audit of | Audit, no edits | `wiki-quality-reviewer` |
+| Suspicion that two pages disagree | Surface and analyze the conflict | `wiki-contradiction-detector` |
+| A research question | Get a synthesized cited answer | `wiki-search` |
+
+**Handoff conventions** — each agent ends its report by recommending the next
+agent (e.g. quality → enhancer to apply fixes; contradict → verifier to determine
+which side is correct). Read the full agent `.agent.md` files for the exact
+handoff list.
 
 **CLI options**: `opencode`, `claude`, `ollama`
 **OpenCode models**: `opencode/minimax-m2.5-free` (default), `github-copilot/gpt-5.3-codex`
