@@ -41,7 +41,7 @@ def _resolve_pdf_to_markdown(path_str: str) -> str:
         return path_str
 
     try:
-        text_path = extract_pdf_to_markdown(pdf_abs, force=False)
+        text_path, _status = extract_pdf_to_markdown(pdf_abs, force=False)
         print(f"Pre-extracted PDF -> {text_path.relative_to(ROOT)}")
         return str(text_path)
     except Exception as exc:  # noqa: BLE001
@@ -57,6 +57,7 @@ AGENT_FILES = {
     "contradict": "wiki-contradiction-detector.agent.md",
     "search": "wiki-search.agent.md",
     "enhance": "wiki-enhancer.agent.md",
+    "project": "project-assistant.agent.md",
 }
 
 # Symlink stems in .opencode/agents/ are just the agent file stripped of `.agent.md`.
@@ -125,6 +126,14 @@ Examples:
     parser.add_argument(
         "--pdf",
         help="Original PDF to attach when enhancing (defaults to --source if it ends with .pdf)",
+    )
+    parser.add_argument(
+        "--project",
+        help="Project slug under projects/ (for project agent)",
+    )
+    parser.add_argument(
+        "--question",
+        help="Question to ask the project agent",
     )
     parser.add_argument(
         "--cli",
@@ -205,6 +214,15 @@ def build_prompt(agent: str, page: str, source: str, custom: str, cli: str = "")
                 "strengthen cross-topic interlinking. Never try to Read raw .pdf files. "
                 "Follow wiki-enhancer.agent.md."
             ),
+            "project": (
+                "Answer the user's question for the attached project. The attached "
+                "project.md is the project context — read its frontmatter (wiki_refs, "
+                "tags), description, and key questions. Then read the wiki pages it "
+                "references and any others surfaced via `wiki.py search` or `wiki.py "
+                "tags`. Cite every wiki page used. Save durable Q&A artifacts to "
+                "projects/<slug>/queries/. Write only inside projects/. Follow "
+                "project-assistant.agent.md."
+            ),
         }
     else:
         prompts = {
@@ -219,6 +237,13 @@ def build_prompt(agent: str, page: str, source: str, custom: str, cli: str = "")
                 f"Re-read the source PDF if available. Fix correctness, expand sparse "
                 f"sections, create new concept pages where the source is dense, and "
                 f"strengthen cross-topic interlinking. Follow wiki-enhancer.agent.md."
+            ),
+            "project": (
+                f"Project: {page or source or '<unset>'}. "
+                "Read projects/<slug>/project.md and its referenced wiki pages, then "
+                "answer the user's question grounded in that context. Cite every wiki "
+                "page used. Save durable Q&A to projects/<slug>/queries/. Write only "
+                "inside projects/. Follow project-assistant.agent.md."
             ),
         }
 
@@ -370,7 +395,13 @@ def run_agent(args) -> int:
     # Build prompt
     page = args.page or ""
     source = args.source or ""
+    if args.agent == "project":
+        # Show the slug in fallback prompts; the question is appended below.
+        page = args.project or ""
+        source = ""
     prompt = build_prompt(args.agent, page, source, args.prompt or "", args.cli)
+    if args.agent == "project" and args.question:
+        prompt = f"{prompt}\n\nQuestion: {args.question}"
 
     # Get model
     model = args.model or get_default_model(args.cli)
@@ -409,6 +440,14 @@ def run_agent(args) -> int:
             # Source may be a non-PDF (e.g. wiki/sources/src-*.md); attach as-is.
             targets.append(str((ROOT / args.source).resolve()))
         extra_args = targets
+    elif args.agent == "project":
+        # Attach the project page so the agent can read its frontmatter + body.
+        project_md = ROOT / "projects" / (args.project or "") / "project.md"
+        if not project_md.exists():
+            print(f"Error: project not found at {project_md.relative_to(ROOT)}")
+            print("Create it with: python3 tools/wiki.py project new <slug>")
+            return 1
+        extra_args = [str(project_md.resolve())]
 
     if not validate_cli(args.cli):
         print(f"Error: CLI '{args.cli}' not found in PATH.")
@@ -450,6 +489,11 @@ def main(argv=None) -> int:
         print(
             "Error: enhance requires one of --page, --topic, --source, --pdf, or --coverage"
         )
+        parser.print_help()
+        return 1
+
+    if args.agent == "project" and not args.project:
+        print("Error: project requires --project <slug>")
         parser.print_help()
         return 1
 

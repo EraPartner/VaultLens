@@ -13,11 +13,12 @@ Maintain a durable wiki in `wiki/` from immutable source material in `raw/`.
 
 ## Architecture
 
-**Three layers:**
+**Four layers:**
 
 1. **Raw sources** (`raw/`) - Immutable source documents. The source of truth.
 2. **The wiki** (`wiki/`) - LLM-generated markdown files. The agent owns this layer.
-3. **The schema** (`AGENTS.md`) - This file. Tells the LLM how to operate.
+3. **Projects** (`projects/`) - Application workspaces that consume the wiki as a knowledge base. Each project has its own context, notes, and preserved Q&A. The `project-assistant` agent answers questions in a project's context, citing wiki pages. Projects may reference wiki pages but never write to `wiki/`.
+4. **The schema** (`AGENTS.md`) - This file. Tells the LLM how to operate.
 
 ## Directory contract
 
@@ -35,6 +36,10 @@ Maintain a durable wiki in `wiki/` from immutable source material in `raw/`.
 - `wiki/queries/` - high-value Q&A artifacts worth preserving
 - `wiki/reports/` - lint outputs, audits, and curation reports
 - `wiki/_templates/` - templates for standardized pages
+- `projects/<slug>/` - one folder per application project (see Projects layer below)
+- `projects/<slug>/project.md` - project metadata page (frontmatter + description + linked wiki pages)
+- `projects/<slug>/notes/` - project-local scratch notes
+- `projects/<slug>/queries/` - durable Q&A artifacts produced by `project-assistant`
 - `tools/wiki.py` - core maintenance utility
 - `tools/wiki_extra.py` - additional utilities
 - `tools/scripts/` - setup and helper scripts
@@ -46,7 +51,7 @@ Maintain a durable wiki in `wiki/` from immutable source material in `raw/`.
 All content pages should include YAML frontmatter with at least:
 
 - `title`
-- `type` (page, source, entity, concept, topic, synthesis, comparison, query)
+- `type` (page, source, entity, concept, topic, synthesis, comparison, query, project)
 - `status` (`active`, `superseded`, `archived`, `draft`)
 - `created` (`YYYY-MM-DD`)
 - `updated` (`YYYY-MM-DD`)
@@ -63,6 +68,11 @@ Additional required fields for `wiki/sources/*`:
 - `source_type` (`article`, `paper`, `book`, `pdf`, `video`, `podcast`, `dataset`, `note`, `other`)
 - `origin` (URL, publication, or provenance)
 - `ingested_on` (`YYYY-MM-DD`)
+
+Additional fields for `projects/<slug>/project.md`:
+
+- `wiki_refs` - List of `[concepts/foo, topics/bar, ...]` wikilinks the project depends on
+- `tags` and `domain` are first-class for projects (used by `project-assistant` to scope wiki search)
 
 ### PDF Support
 
@@ -136,6 +146,113 @@ ln -s /path/to/existing/file.pdf raw/sources/my-file.pdf
 
 The LLM reads from `raw/` - symlinks are followed automatically. The wiki tools work with symlinks without modification.
 
+## Projects layer
+
+`projects/` is the application layer that consumes the wiki as a knowledge base. Each subfolder is one project workspace.
+
+**Each project owns its own folder structure.** The scaffold creates only `project.md` and a default `queries/` directory; the user defines whatever else the project needs (`papers/`, `meetings/`, `repos/`, `drafts/`, etc.). The project's layout and rules are documented inside `project.md` itself, and the `project-assistant` agent reads them before answering.
+
+### Minimum scaffolded structure
+
+```
+projects/<slug>/
+  project.md          ← metadata + description + Layout + Rules + linked wiki pages
+  queries/            ← default Q&A artifact landing zone (overridable in ## Rules)
+```
+
+### Common bespoke additions (user-created)
+
+```
+projects/<slug>/
+  papers/             ← relevant academic papers (PDFs + extracted notes)
+  meetings/           ← dated meeting notes and annotations
+  repos/              ← read-only references to external code
+  drafts/             ← writing in progress
+  data/               ← experimental data, plots
+  ...
+```
+
+### Project page schema
+
+```yaml
+---
+title: <Human Title>
+type: project
+status: active            # active | paused | archived
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+summary: <one-sentence description>
+domain: personal          # or research / work / learning
+tags: [<scope tags>]
+wiki_refs: [<concepts/foo, topics/bar, sources/src-...>]
+---
+
+# <Title>
+
+## Description
+## Layout                 ← describe what each subfolder contains
+## Rules                  ← project-specific rules the agent MUST follow
+## Key questions
+## Context
+## Linked wiki pages
+```
+
+The `wiki_refs` and `tags` fields are load-bearing: `project-assistant` uses them to scope which wiki pages it pulls into context. Use `python3 tools/wiki.py project link <slug> <wiki-ref>` to add a reference (it preserves frontmatter formatting and updates `updated`).
+
+### `## Layout` section
+
+Document the actual folder structure of this project. The agent reads this BEFORE doing anything else, so it knows where to look. Example for a thesis project:
+
+```markdown
+## Layout
+
+- `papers/` — academic papers relevant to the thesis (PDFs + notes/<paper>.md per file)
+- `repos/` — read-only references to forked or surveyed codebases
+- `meetings/` — dated meeting notes (e.g. `meetings/2026-04-12-supervisor.md`)
+- `drafts/` — chapter drafts in progress
+- `queries/` — durable Q&A artifacts (default)
+```
+
+If `## Layout` is missing, the agent falls back to filesystem discovery via `ls` and `find`.
+
+### `## Rules` section
+
+Free-form, project-specific rules the `project-assistant` agent MUST follow. **Project rules override the agent's defaults** when they conflict.
+
+```markdown
+## Rules
+
+- Save query artifacts under `meetings/qa/` instead of the default `queries/`.
+- Treat `repos/` as read-only — never write inside it.
+- Cite the source PDF filename whenever referencing a paper from `papers/`.
+- Never summarize meeting notes in `meetings/` without asking first.
+- For design questions, prefer concepts in `wiki_refs` over general wiki search.
+```
+
+### Boundary rules
+
+- Projects MAY reference any wiki page via wikilinks. Lint validates `wiki_refs` against the canonical wiki page set.
+- Projects MUST NOT modify `wiki/` or `raw/`. The `project-assistant` agent's write surface is restricted to `projects/<slug>/`.
+- If a project finds wiki coverage lacking, the agent recommends a `wiki-enhancer` follow-up rather than editing the wiki itself.
+- `lint` checks projects: required frontmatter fields and broken `wiki_refs`. Project body content (Layout, Rules) is intentionally free-form and not validated.
+
+### CLI
+
+```bash
+python3 tools/wiki.py project list                                       # list all projects
+python3 tools/wiki.py project new <slug>                                 # scaffold a new project
+python3 tools/wiki.py project show <slug>                                # print details (use --json for machine output)
+python3 tools/wiki.py project link <slug> concepts/some-page             # append wiki ref + bump updated
+```
+
+### Agent invocation
+
+```bash
+python3 tools/agents/wiki-agent.py project --project <slug> --question "<question>"
+```
+
+The wrapper attaches `projects/<slug>/project.md` to the agent so the agent reads the project's context, then expects the agent to follow `project-assistant.agent.md` for the rest.
+
 ## Agent integration
 
 For complex wiki tasks, use the project's custom agents stored in `tools/agents/`:
@@ -148,6 +265,7 @@ For complex wiki tasks, use the project's custom agents stored in `tools/agents/
 - **Source verification**: Use `wiki-source-verifier` to verify wiki claims against the raw source.
 - **Contradiction detection**: Use `wiki-contradiction-detector` to surface intra-wiki conflicts.
 - **Search/Research**: Use `wiki-search` to answer questions with cited synthesis.
+- **Project Q&A**: Use `project-assistant` to answer questions in the context of a specific project under `projects/<slug>/`, citing wiki pages and saving durable Q&A artifacts.
 
 ### Custom wiki agents
 
@@ -159,6 +277,7 @@ This project defines specialized agents in `tools/agents/`:
 - `wiki-source-verifier.agent.md` - Verify a single page's claims against the raw source
 - `wiki-contradiction-detector.agent.md` - Find conflicts across pages
 - `wiki-search.agent.md` - Answer questions with cited synthesis
+- `project-assistant.agent.md` - Project-scoped reasoning grounded in the wiki KB; writes only inside `projects/<slug>/`
 
 ### opencode agent registration
 
@@ -172,6 +291,7 @@ Agents are registered with opencode via symlinks in `.opencode/agents/` (opencod
   wiki-source-verifier.md        → ../../tools/agents/wiki-source-verifier.agent.md
   wiki-contradiction-detector.md → ../../tools/agents/wiki-contradiction-detector.agent.md
   wiki-search.md                 → ../../tools/agents/wiki-search.agent.md
+  project-assistant.md           → ../../tools/agents/project-assistant.agent.md
 ```
 
 Each agent file includes opencode-compatible YAML frontmatter (`description`, `mode`, `tools`).
@@ -200,6 +320,13 @@ python3 tools/agents/wiki-agent.py ingest --source raw/sources/paper.pdf --cli o
 
 # Find contradictions
 python3 tools/agents/wiki-agent.py contradict
+
+# Scaffold a new project that consumes the wiki as a KB
+python3 tools/wiki.py project new my-thesis
+python3 tools/wiki.py project link my-thesis concepts/some-relevant-page
+
+# Ask the project-assistant a question in that project's context
+python3 tools/agents/wiki-agent.py project --project my-thesis --question "Which control loop should we use for the manipulator?"
 ```
 
 ### Available Agents
@@ -214,7 +341,8 @@ maintenance workflow. Pick by matching the input you have and the action you wan
 | Quality (`wiki-quality-reviewer`) | one wiki page | — | Intrinsic page-level audit (structure, summary, falsifiability, frontmatter). No source compare. |
 | Verify (`wiki-source-verifier`) | one wiki page + its raw source-text | — | Source-fidelity audit: does the wiki accurately represent the source? |
 | Contradict (`wiki-contradiction-detector`) | many wiki pages | — | Intra-wiki conflict detection across pages. Does not consult raw sources. |
-| Search (`wiki-search`) | wiki | — | Query answering — locate pages, read, synthesize a cited answer. |
+| Search (`wiki-search`) | wiki | — | Query answering — locate pages, read, synthesize a cited answer. No project context. |
+| Project (`project-assistant`) | one `projects/<slug>/` + its referenced wiki pages | `projects/<slug>/` only | Project-scoped Q&A — answers grounded in a specific project's context, cites wiki pages, saves durable Q&A artifacts. Never writes to `wiki/`. |
 
 **Decision matrix** — pick the agent by what you have and what you want:
 
@@ -226,7 +354,8 @@ maintenance workflow. Pick by matching the input you have and the action you wan
 | A wiki page you suspect drifts from the original | Verify against the source | `wiki-source-verifier` |
 | A wiki page you want a structural audit of | Audit, no edits | `wiki-quality-reviewer` |
 | Suspicion that two pages disagree | Surface and analyze the conflict | `wiki-contradiction-detector` |
-| A research question | Get a synthesized cited answer | `wiki-search` |
+| A research question with no project context | Get a synthesized cited answer | `wiki-search` |
+| A question about a specific project under `projects/` | Project-scoped answer that cites wiki pages, optionally saved as a query artifact | `project-assistant` |
 
 **Handoff conventions** — each agent ends its report by recommending the next
 agent (e.g. quality → enhancer to apply fixes; contradict → verifier to determine

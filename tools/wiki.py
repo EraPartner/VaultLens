@@ -18,12 +18,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WIKI_DIR = ROOT / "wiki"
+PROJECTS_DIR = ROOT / "projects"
 RAW_SOURCES_DIR = ROOT / "raw" / "sources"
 RAW_SOURCES_TEXT_DIR = ROOT / "raw" / "sources-text"
 
 IGNORE_DIRS = {"_templates", ".obsidian"}
 IGNORE_FILES = {"index.md", "log.md"}
 SPECIAL_LINK_TARGETS = {"index", "log", "home", "category", "page-name", "path", "to"}
+PROJECT_REQUIRED_FIELDS = {"title", "type", "status", "created", "updated", "summary"}
 
 
 class ExtractStatus(Enum):
@@ -65,14 +67,7 @@ class Page:
 
     @property
     def tags(self) -> list[str]:
-        value = self.frontmatter.get("tags", "")
-        if isinstance(value, list):
-            return [str(item).strip() for item in value if str(item).strip()]
-        if not value:
-            return []
-        # Tolerate string forms: "foo", "foo, bar", or stray "[foo, bar]" leftovers.
-        text = value.strip().strip("[]")
-        return [item.strip().strip('"').strip("'") for item in text.split(",") if item.strip()]
+        return _coerce_str_list(self.frontmatter.get("tags"))
 
     @property
     def domain(self) -> str:
@@ -83,6 +78,55 @@ class Page:
         if len(self.rel.parts) == 1:
             return "root"
         return self.rel.parts[0]
+
+
+@dataclass
+class Project:
+    slug: str
+    path: Path
+    root: Path
+    frontmatter: dict[str, str | list[str]]
+    body: str
+
+    def _scalar(self, key: str) -> str:
+        value = self.frontmatter.get(key, "")
+        return value if isinstance(value, str) else ""
+
+    @property
+    def title(self) -> str:
+        title = self._scalar("title").strip()
+        return title or slug_to_title(self.slug)
+
+    @property
+    def summary(self) -> str:
+        summary = self._scalar("summary").strip()
+        return summary or first_paragraph(self.body)
+
+    @property
+    def status(self) -> str:
+        return self._scalar("status").strip()
+
+    @property
+    def domain(self) -> str:
+        return self._scalar("domain").strip()
+
+    @property
+    def tags(self) -> list[str]:
+        return _coerce_str_list(self.frontmatter.get("tags"))
+
+    @property
+    def wiki_refs(self) -> list[str]:
+        return _coerce_str_list(self.frontmatter.get("wiki_refs"))
+
+
+def _coerce_str_list(value: str | list[str] | None) -> list[str]:
+    """Frontmatter list coercion shared by Page.tags and Project.{tags,wiki_refs}."""
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if not value:
+        return []
+    text = str(value).strip().strip("[]")
+    return [item.strip().strip('"').strip("'") for item in text.split(",") if item.strip()]
 
 
 def slug_to_title(slug: str) -> str:
@@ -343,12 +387,18 @@ def lint(strict: bool) -> int:
 
     stale_pages = check_staleness(pages)
 
+    projects = list_projects()
+    project_missing, project_broken_refs = lint_projects(projects, canonical, basename_map)
+
     print(f"Pages checked: {len(pages)}")
     print(f"Missing frontmatter fields: {len(missing_fields)}")
     print(f"Broken links: {len(broken_links)}")
     print(f"Ambiguous links: {len(ambiguous_links)}")
     print(f"Orphans: {len(orphan_pages)}")
     print(f"Stale pages (>{STALENESS_DAYS} days): {len(stale_pages)}")
+    print(f"Projects checked: {len(projects)}")
+    print(f"Project missing fields: {len(project_missing)}")
+    print(f"Project broken wiki_refs: {len(project_broken_refs)}")
 
     if missing_fields:
         print("\nMissing fields:")
@@ -375,10 +425,26 @@ def lint(strict: bool) -> int:
         for row in stale_pages:
             print(f"- {row}")
 
+    if project_missing:
+        print("\nProject missing fields:")
+        for row in project_missing:
+            print(f"- {row}")
+
+    if project_broken_refs:
+        print("\nProject broken wiki_refs:")
+        for row in project_broken_refs:
+            print(f"- {row}")
+
     print("\nNote: Contradiction and semantic quality checks require agent review.")
     print("Run: python3 tools/agents/wiki-agent.py contradict")
 
-    has_errors = bool(missing_fields or broken_links or ambiguous_links)
+    has_errors = bool(
+        missing_fields
+        or broken_links
+        or ambiguous_links
+        or project_missing
+        or project_broken_refs
+    )
     if strict:
         has_errors = has_errors or bool(orphan_pages)
 
@@ -748,6 +814,331 @@ def extract_pdf_to_markdown(
     return text_path, status
 
 
+def _load_project(project_md: Path) -> Project:
+    text = project_md.read_text(encoding="utf-8")
+    fm, body = parse_frontmatter(text)
+    return Project(
+        slug=project_md.parent.name,
+        path=project_md,
+        root=project_md.parent,
+        frontmatter=fm,
+        body=body,
+    )
+
+
+def list_projects() -> list[Project]:
+    if not PROJECTS_DIR.exists():
+        return []
+    projects: list[Project] = []
+    for project_md in sorted(PROJECTS_DIR.glob("*/project.md")):
+        projects.append(_load_project(project_md))
+    return projects
+
+
+def _find_project(slug: str) -> Project | None:
+    project_md = PROJECTS_DIR / slug / "project.md"
+    if not project_md.exists():
+        return None
+    return _load_project(project_md)
+
+
+def lint_projects(
+    projects: list[Project],
+    canonical: dict[str, Page],
+    basename_map: dict[str, list[Page]],
+) -> tuple[list[str], list[str]]:
+    """Validate project metadata and wiki_refs. Returns (missing_fields, broken_refs)."""
+    missing: list[str] = []
+    broken: list[str] = []
+    for project in projects:
+        rel = project.path.relative_to(ROOT).as_posix()
+        gaps = sorted(key for key in PROJECT_REQUIRED_FIELDS if key not in project.frontmatter)
+        if gaps:
+            missing.append(f"{rel}: missing {', '.join(gaps)}")
+        for ref in project.wiki_refs:
+            target = normalize_link_target(ref)
+            if not target or target in canonical:
+                continue
+            if target in SPECIAL_LINK_TARGETS:
+                continue
+            if "/" not in target and len(basename_map.get(target, [])) == 1:
+                continue
+            broken.append(f"{rel}: wiki_refs [[{ref}]]")
+    return missing, broken
+
+
+def _render_frontmatter_value(value: str | list[str]) -> str:
+    if isinstance(value, list):
+        return "[" + ", ".join(value) + "]"
+    return str(value)
+
+
+def _set_frontmatter_field(text: str, key: str, value: str | list[str]) -> str:
+    """Update or append `key: value` inside the frontmatter block of `text`."""
+    if not text.startswith("---\n"):
+        return text
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return text
+    block = text[4:end]
+    rendered = _render_frontmatter_value(value)
+    pattern = re.compile(rf"^{re.escape(key)}\s*:")
+    new_lines: list[str] = []
+    found = False
+    for line in block.splitlines():
+        if pattern.match(line):
+            new_lines.append(f"{key}: {rendered}")
+            found = True
+        else:
+            new_lines.append(line)
+    if not found:
+        new_lines.append(f"{key}: {rendered}")
+    return f"---\n" + "\n".join(new_lines) + f"\n---\n{text[end + 5:]}"
+
+
+PROJECT_TEMPLATE = """---
+title: {title}
+type: project
+status: active
+created: {today}
+updated: {today}
+summary: One-sentence description of this project.
+domain: personal
+tags: []
+wiki_refs: []
+---
+
+# {title}
+
+## Description
+
+Describe what this project is, its goals, and why you're working on it.
+
+## Layout
+
+This project owns its own folder structure. The `project-assistant` agent reads
+this section to understand where things live before answering questions.
+
+- `queries/` — durable Q&A artifacts saved by `project-assistant` (default).
+<!-- Add your own folders here, e.g.:
+- `papers/` — relevant academic papers (PDFs + extracted notes)
+- `meetings/` — dated meeting notes and annotations
+- `repos/` — read-only references to external repos
+- `drafts/` — writing in progress
+-->
+
+## Rules
+
+Project-specific rules the `project-assistant` agent MUST follow. These override
+the agent's defaults when they conflict. Be specific.
+
+<!-- Examples:
+- Never summarize meeting notes from `meetings/` without asking first.
+- Cite the source PDF filename whenever referencing a paper from `papers/`.
+- Save query artifacts under `meetings/qa/` instead of the default `queries/`.
+- Treat `repos/` as read-only — never write inside it.
+- When answering design questions, prefer concepts in `wiki_refs` over general wiki search.
+-->
+
+## Key questions
+
+Open questions you want the `project-assistant` agent to answer using the wiki KB.
+
+## Context
+
+Background, constraints, decisions to date.
+
+## Linked wiki pages
+
+Wikilinks to relevant concepts, sources, and topics. Add via:
+
+```bash
+python3 tools/wiki.py project link {slug} concepts/some-page
+```
+"""
+
+
+def _project_list(as_json: bool) -> int:
+    projects = list_projects()
+    if as_json:
+        rows = [
+            {
+                "slug": p.slug,
+                "title": p.title,
+                "status": p.status,
+                "summary": p.summary,
+                "domain": p.domain,
+                "tags": p.tags,
+                "wiki_refs": p.wiki_refs,
+            }
+            for p in projects
+        ]
+        print(json.dumps(rows, indent=2))
+        return 0
+    if not projects:
+        print(
+            "No projects yet. Create one with:\n"
+            "  python3 tools/wiki.py project new <slug>"
+        )
+        return 0
+    print(f"Projects ({len(projects)}):\n")
+    for project in projects:
+        status = project.status or "active"
+        print(f"  {project.slug:<28} [{status}]  {project.title}")
+        if project.summary:
+            print(f"    {project.summary[:100]}")
+    return 0
+
+
+def _project_new(slug: str) -> int:
+    cleaned = slug.strip().strip("/")
+    if not cleaned or "/" in cleaned or cleaned.startswith("."):
+        print(f"Invalid project slug: {slug!r}")
+        return 1
+    project_dir = PROJECTS_DIR / cleaned
+    if project_dir.exists():
+        print(f"Project '{cleaned}' already exists at {project_dir.relative_to(ROOT)}")
+        return 1
+    project_dir.mkdir(parents=True)
+    (project_dir / "queries").mkdir()
+    today = dt.datetime.now().strftime("%Y-%m-%d")
+    title = slug_to_title(cleaned)
+    (project_dir / "project.md").write_text(
+        PROJECT_TEMPLATE.format(title=title, slug=cleaned, today=today),
+        encoding="utf-8",
+    )
+    print(f"Created project '{cleaned}' at {project_dir.relative_to(ROOT)}")
+    print("  - project.md")
+    print("  - queries/   (default Q&A artifact dir; redefine in ## Rules if you want)")
+    print(
+        f"\nNext steps:\n"
+        f"  1. Edit projects/{cleaned}/project.md — fill in Description, Layout, and Rules.\n"
+        f"  2. Create whatever subfolders this project needs (papers/, meetings/, repos/, ...).\n"
+        f"  3. Link relevant wiki pages: python3 tools/wiki.py project link {cleaned} <wiki-ref>"
+    )
+    return 0
+
+
+def _project_subfolders(project: Project) -> list[dict]:
+    """Enumerate every direct subfolder of the project root, with file counts."""
+    rows: list[dict] = []
+    for child in sorted(project.root.iterdir()):
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        md_files = [p for p in child.rglob("*.md") if p.is_file()]
+        all_files = [p for p in child.rglob("*") if p.is_file()]
+        rows.append(
+            {
+                "name": child.name,
+                "rel": str(child.relative_to(project.root)),
+                "md_count": len(md_files),
+                "file_count": len(all_files),
+            }
+        )
+    return rows
+
+
+def _project_show(slug: str, as_json: bool) -> int:
+    project = _find_project(slug)
+    if project is None:
+        print(f"Project '{slug}' not found in {PROJECTS_DIR.relative_to(ROOT)}/")
+        return 1
+    subfolders = _project_subfolders(project)
+
+    if as_json:
+        print(
+            json.dumps(
+                {
+                    "slug": project.slug,
+                    "title": project.title,
+                    "status": project.status,
+                    "domain": project.domain,
+                    "summary": project.summary,
+                    "tags": project.tags,
+                    "wiki_refs": project.wiki_refs,
+                    "path": str(project.path.relative_to(ROOT)),
+                    "subfolders": subfolders,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    print(f"# {project.title}")
+    print(f"Slug:    {project.slug}")
+    print(f"Status:  {project.status or '(unset)'}")
+    if project.domain:
+        print(f"Domain:  {project.domain}")
+    if project.tags:
+        print(f"Tags:    {', '.join(project.tags)}")
+    print(f"Summary: {project.summary}")
+    print(f"Path:    {project.path.relative_to(ROOT)}")
+    if project.wiki_refs:
+        print(f"\nLinked wiki pages ({len(project.wiki_refs)}):")
+        for ref in project.wiki_refs:
+            print(f"  - [[{ref}]]")
+    if subfolders:
+        print(f"\nSubfolders ({len(subfolders)}):")
+        for entry in subfolders:
+            print(
+                f"  - {entry['name']:<20} "
+                f"({entry['md_count']} md / {entry['file_count']} files)"
+            )
+    else:
+        print("\nNo subfolders yet — create them as needed for this project.")
+    return 0
+
+
+def _project_link(slug: str, ref: str) -> int:
+    project = _find_project(slug)
+    if project is None:
+        print(f"Project '{slug}' not found")
+        return 1
+    cleaned = normalize_link_target(ref)
+    if not cleaned:
+        print(f"Empty wiki reference: {ref!r}")
+        return 1
+    existing = project.wiki_refs
+    if cleaned in existing:
+        print(f"'{cleaned}' already linked in project '{slug}'")
+        return 0
+    new_refs = existing + [cleaned]
+    today = dt.datetime.now().strftime("%Y-%m-%d")
+    text = project.path.read_text(encoding="utf-8")
+    text = _set_frontmatter_field(text, "wiki_refs", new_refs)
+    text = _set_frontmatter_field(text, "updated", today)
+    project.path.write_text(text, encoding="utf-8")
+    print(f"Linked '{cleaned}' to project '{slug}' ({len(new_refs)} total wiki_refs)")
+    return 0
+
+
+def cmd_project(
+    action: str,
+    slug: str | None,
+    ref: str | None,
+    as_json: bool,
+) -> int:
+    if action == "list":
+        return _project_list(as_json)
+    if action == "new":
+        if not slug:
+            print("Error: project new <slug> requires a slug")
+            return 1
+        return _project_new(slug)
+    if action == "show":
+        if not slug:
+            print("Error: project show <slug> requires a slug")
+            return 1
+        return _project_show(slug, as_json)
+    if action == "link":
+        if not slug or not ref:
+            print("Error: project link <slug> <wiki-ref> requires both arguments")
+            return 1
+        return _project_link(slug, ref)
+    print(f"Unknown project action: {action}")
+    return 1
+
+
 def preprocess_pdfs(pdf: str | None, force: bool) -> int:
     """CLI entry: preprocess one PDF or all PDFs under raw/sources/."""
     if pdf:
@@ -860,6 +1251,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Re-extract even if the markdown sibling is newer than the PDF",
     )
 
+    project_parser = sub.add_parser(
+        "project",
+        help="Manage application projects that consume the wiki KB (list/new/show/link)",
+    )
+    project_parser.add_argument(
+        "action",
+        choices=["list", "new", "show", "link"],
+        help="Project subaction",
+    )
+    project_parser.add_argument(
+        "slug",
+        nargs="?",
+        help="Project slug (required for new/show/link)",
+    )
+    project_parser.add_argument(
+        "ref",
+        nargs="?",
+        help="Wiki page reference (required for link, e.g. concepts/some-page)",
+    )
+    project_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON for list/show",
+    )
+
     return parser
 
 
@@ -893,6 +1309,13 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "preprocess":
         return preprocess_pdfs(pdf=args.pdf, force=args.force)
+    if args.command == "project":
+        return cmd_project(
+            action=args.action,
+            slug=args.slug,
+            ref=args.ref,
+            as_json=args.json,
+        )
 
     parser.print_help()
     return 1
