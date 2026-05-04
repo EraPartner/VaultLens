@@ -5,10 +5,10 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-WIKI_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 echo "Setting up QMD search engine for wiki..."
-echo "Wiki directory: $WIKI_DIR"
+echo "Wiki directory: $REPO_ROOT"
 
 # Check if qmd is installed (any package manager)
 if ! command -v qmd &> /dev/null; then
@@ -28,7 +28,7 @@ echo "Using qmd at: $(command -v qmd)"
 # Add wiki collection
 echo ""
 echo "Adding wiki collection..."
-cd "$WIKI_DIR"
+cd "$REPO_ROOT"
 qmd collection add wiki/ --name wiki 2>/dev/null || echo "Wiki collection may already exist"
 
 # Add raw sources collection

@@ -12,6 +12,7 @@ import subprocess
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 
@@ -25,32 +26,42 @@ IGNORE_FILES = {"index.md", "log.md"}
 SPECIAL_LINK_TARGETS = {"index", "log", "home", "category", "page-name", "path", "to"}
 
 
+class ExtractStatus(Enum):
+    EXTRACTED = "extracted"
+    SKIPPED = "skipped"
+    DECRYPTED = "decrypted"
+
+
 @dataclass
 class Page:
     path: Path
     rel: Path
-    frontmatter: dict[str, str]
+    frontmatter: dict[str, str | list[str]]
     body: str
     text: str
     links: list[str]
 
+    def _scalar(self, key: str) -> str:
+        value = self.frontmatter.get(key, "")
+        return value if isinstance(value, str) else ""
+
     @property
     def title(self) -> str:
-        title = self.frontmatter.get("title", "").strip()
+        title = self._scalar("title").strip()
         if title:
             return title
         return slug_to_title(self.rel.stem)
 
     @property
     def summary(self) -> str:
-        summary = self.frontmatter.get("summary", "").strip()
+        summary = self._scalar("summary").strip()
         if summary:
             return summary
         return first_paragraph(self.body)
 
     @property
     def updated(self) -> str:
-        return self.frontmatter.get("updated", "")
+        return self._scalar("updated")
 
     @property
     def category(self) -> str:
@@ -73,17 +84,28 @@ def first_paragraph(text: str) -> str:
             continue
         if in_code:
             continue
-        if not line:
+        if not line or line.startswith("#"):
             continue
-        if line.startswith("#"):
-            continue
-        if line.startswith("-"):
-            continue
+        if line.startswith(("-", "*", "+")):
+            line = line[1:].strip()
+            if not line:
+                continue
         return line[:220]
     return "No summary available."
 
 
-def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
+def _parse_frontmatter_value(raw: str) -> str | list[str]:
+    value = raw.strip()
+    if value.startswith("[") and value.endswith("]"):
+        inner = value[1:-1].strip()
+        if not inner:
+            return []
+        items = [item.strip().strip('"').strip("'") for item in inner.split(",")]
+        return [item for item in items if item]
+    return value
+
+
+def parse_frontmatter(text: str) -> tuple[dict[str, str | list[str]], str]:
     normalized = text.replace("\r\n", "\n")
     if not normalized.startswith("---\n"):
         return {}, text
@@ -92,7 +114,7 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
         return {}, text
     block = normalized[4:end]
     body = normalized[end + 5 :]
-    result: dict[str, str] = {}
+    result: dict[str, str | list[str]] = {}
     for line in block.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
@@ -100,7 +122,7 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
         if ":" not in line:
             continue
         key, value = line.split(":", 1)
-        result[key.strip()] = value.strip()
+        result[key.strip()] = _parse_frontmatter_value(value)
     return result, body
 
 
@@ -161,6 +183,60 @@ def normalize_link_target(target: str) -> str:
     return value
 
 
+def build_page_indexes(
+    pages: list[Page],
+) -> tuple[dict[str, Page], dict[str, list[Page]]]:
+    """Return (canonical-key → Page, basename → [Page]) lookup tables."""
+    canonical = {page.rel.with_suffix("").as_posix(): page for page in pages}
+    basename_map: dict[str, list[Page]] = defaultdict(list)
+    for page in pages:
+        basename_map[page.rel.stem].append(page)
+    return canonical, basename_map
+
+
+def compute_inbound_links(
+    pages: list[Page],
+    canonical: dict[str, Page],
+    basename_map: dict[str, list[Page]],
+    *,
+    skip_categories: set[str] | None = None,
+) -> tuple[dict[str, int], list[str], list[str]]:
+    """Walk every page's links and tally inbound counts.
+
+    Returns (inbound_counts, broken_links, ambiguous_links). Pages whose
+    category is in `skip_categories` contribute nothing on either side.
+    """
+    skip = skip_categories or set()
+    inbound: dict[str, int] = defaultdict(int)
+    broken: list[str] = []
+    ambiguous: list[str] = []
+
+    for page in pages:
+        if page.category in skip:
+            continue
+        for raw_target in page.links:
+            target = normalize_link_target(raw_target)
+            if not target:
+                continue
+            if target in canonical:
+                inbound[target] += 1
+                continue
+            if target in SPECIAL_LINK_TARGETS:
+                continue
+            if "/" not in target and target in basename_map:
+                candidates = basename_map[target]
+                if len(candidates) == 1:
+                    inbound[candidates[0].rel.with_suffix("").as_posix()] += 1
+                else:
+                    ambiguous.append(
+                        f"{page.rel.as_posix()}: [[{raw_target}]] matches {len(candidates)} pages"
+                    )
+                continue
+            broken.append(f"{page.rel.as_posix()}: [[{raw_target}]]")
+
+    return inbound, broken, ambiguous
+
+
 STALENESS_DAYS = 180
 
 
@@ -170,7 +246,7 @@ def check_staleness(pages: list[Page]) -> list[str]:
     for page in pages:
         if page.category in {"system", "root"}:
             continue
-        raw = page.frontmatter.get("updated", "").strip()
+        raw = page.updated.strip()
         if not raw:
             continue
         try:
@@ -211,68 +287,41 @@ def validate_log() -> int:
     return 1 if malformed else 0
 
 
+REQUIRED_FRONTMATTER_BASE = {"title", "type", "status", "created", "updated", "summary"}
+REQUIRED_FRONTMATTER_BY_CATEGORY = {
+    "sources": {"source_id", "source_type", "origin", "ingested_on"},
+}
+LINK_VALIDATION_SKIP_CATEGORIES = {"system"}
+ORPHAN_EXEMPT = {"home", "system/schema"}
+
+
 def lint(strict: bool) -> int:
     pages = list_content_pages()
-    canonical = {page.rel.with_suffix("").as_posix(): page for page in pages}
-    basename_map: dict[str, list[Page]] = defaultdict(list)
-    for page in pages:
-        basename_map[page.rel.stem].append(page)
-
-    required_base = {"title", "type", "status", "created", "updated", "summary"}
-    required_by_category = {
-        "sources": {"source_id", "source_type", "origin", "ingested_on"},
-    }
+    canonical, basename_map = build_page_indexes(pages)
 
     missing_fields: list[str] = []
-    broken_links: list[str] = []
-    ambiguous_links: list[str] = []
-
-    skip_link_validation = {"system"}
-
-    inbound: dict[str, int] = defaultdict(int)
-
     for page in pages:
-        if page.category not in {"system", "root"}:
-            need = set(required_base)
-            need.update(required_by_category.get(page.category, set()))
-            missing = sorted(key for key in need if key not in page.frontmatter)
-            if missing:
-                missing_fields.append(
-                    f"{page.rel.as_posix()}: missing {', '.join(missing)}"
-                )
+        if page.category in {"system", "root"}:
+            continue
+        need = set(REQUIRED_FRONTMATTER_BASE)
+        need.update(REQUIRED_FRONTMATTER_BY_CATEGORY.get(page.category, set()))
+        missing = sorted(key for key in need if key not in page.frontmatter)
+        if missing:
+            missing_fields.append(
+                f"{page.rel.as_posix()}: missing {', '.join(missing)}"
+            )
 
-        for raw_target in page.links:
-            if page.category in skip_link_validation:
-                continue
-            target = normalize_link_target(raw_target)
-            if not target:
-                continue
+    inbound, broken_links, ambiguous_links = compute_inbound_links(
+        pages,
+        canonical,
+        basename_map,
+        skip_categories=LINK_VALIDATION_SKIP_CATEGORIES,
+    )
 
-            if target in canonical:
-                inbound[target] += 1
-                continue
-
-            if target in SPECIAL_LINK_TARGETS:
-                continue
-
-            if "/" not in target and target in basename_map:
-                candidates = basename_map[target]
-                if len(candidates) == 1:
-                    inbound[candidates[0].rel.with_suffix("").as_posix()] += 1
-                else:
-                    ambiguous_links.append(
-                        f"{page.rel.as_posix()}: [[{raw_target}]] matches {len(candidates)} pages"
-                    )
-                continue
-
-            broken_links.append(f"{page.rel.as_posix()}: [[{raw_target}]]")
-
-    orphan_exempt = {"home", "system/schema"}
-    skip_link_validation = {"system/schema"}
     orphan_pages: list[str] = []
     for page in pages:
         key = page.rel.with_suffix("").as_posix()
-        if key in orphan_exempt:
+        if key in ORPHAN_EXEMPT:
             continue
         if inbound.get(key, 0) == 0:
             orphan_pages.append(page.rel.as_posix())
@@ -348,23 +397,8 @@ def coverage(as_json: bool, limit: int) -> int:
       - For topics: concept-page count mentioned in body
     """
     pages = list_content_pages()
-    canonical = {page.rel.with_suffix("").as_posix(): page for page in pages}
-    basename_map: dict[str, list[Page]] = defaultdict(list)
-    for page in pages:
-        basename_map[page.rel.stem].append(page)
-
-    inbound: dict[str, int] = defaultdict(int)
-    for page in pages:
-        for raw_target in page.links:
-            target = normalize_link_target(raw_target)
-            if not target:
-                continue
-            if target in canonical:
-                inbound[target] += 1
-            elif "/" not in target and target in basename_map:
-                candidates = basename_map[target]
-                if len(candidates) == 1:
-                    inbound[candidates[0].rel.with_suffix("").as_posix()] += 1
+    canonical, basename_map = build_page_indexes(pages)
+    inbound, _broken, _ambiguous = compute_inbound_links(pages, canonical, basename_map)
 
     rows: list[dict] = []
     for page in pages:
@@ -404,9 +438,7 @@ def coverage(as_json: bool, limit: int) -> int:
         if score == 0:
             continue
 
-        source_origin = ""
-        if page.category == "sources":
-            source_origin = page.frontmatter.get("origin", "")
+        source_origin = page._scalar("origin") if page.category == "sources" else ""
 
         rows.append(
             {
@@ -530,11 +562,14 @@ def _pdf_needs_extract(pdf_path: Path, text_path: Path) -> bool:
     return pdf_path.stat().st_mtime > text_path.stat().st_mtime
 
 
-def extract_pdf_to_markdown(pdf_path: Path, force: bool = False) -> Path:
+def extract_pdf_to_markdown(
+    pdf_path: Path, force: bool = False
+) -> tuple[Path, ExtractStatus]:
     """Extract a PDF into a markdown sibling using `pdftotext -layout`.
 
-    Returns the path of the generated markdown file. Skips work when the
-    sibling exists and is newer than the PDF, unless `force=True`.
+    Returns (markdown_path, status). Status is SKIPPED when the sibling
+    exists and is newer than the PDF (and force=False), EXTRACTED on a
+    plain run, or DECRYPTED when qpdf was needed first.
     Raises FileNotFoundError, RuntimeError on failure.
     """
     if not pdf_path.exists():
@@ -548,7 +583,7 @@ def extract_pdf_to_markdown(pdf_path: Path, force: bool = False) -> Path:
 
     text_path = text_path_for_pdf(pdf_path)
     if not force and not _pdf_needs_extract(pdf_path, text_path):
-        return text_path
+        return text_path, ExtractStatus.SKIPPED
 
     text_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -595,7 +630,14 @@ def extract_pdf_to_markdown(pdf_path: Path, force: bool = False) -> Path:
             decrypted_pdf.unlink(missing_ok=True)
 
     today = dt.datetime.now().strftime("%Y-%m-%d")
-    extractor = "qpdf --decrypt | pdftotext -layout" if decrypted_pdf is not None else "pdftotext -layout"
+    status = (
+        ExtractStatus.DECRYPTED if decrypted_pdf is not None else ExtractStatus.EXTRACTED
+    )
+    extractor = (
+        "qpdf --decrypt | pdftotext -layout"
+        if status is ExtractStatus.DECRYPTED
+        else "pdftotext -layout"
+    )
     header = (
         "---\n"
         f'source_pdf: "raw/sources/{pdf_path.name}"\n'
@@ -609,7 +651,7 @@ def extract_pdf_to_markdown(pdf_path: Path, force: bool = False) -> Path:
     )
 
     text_path.write_text(header + body, encoding="utf-8")
-    return text_path
+    return text_path, status
 
 
 def preprocess_pdfs(pdf: str | None, force: bool) -> int:
@@ -629,29 +671,21 @@ def preprocess_pdfs(pdf: str | None, force: bool) -> int:
         print("No PDFs found to preprocess.")
         return 0
 
-    extracted = 0
-    skipped = 0
+    counts = {status: 0 for status in ExtractStatus}
     failed = 0
     for target in targets:
         try:
-            text_path = extract_pdf_to_markdown(target, force=force)
-            if force or _pdf_needs_extract(target, text_path) or not text_path.exists():
-                # Should not happen post-extraction; keep for safety.
-                extracted += 1
-            else:
-                # Determine via mtime comparison whether we just wrote it.
-                if text_path.stat().st_mtime >= target.stat().st_mtime - 1:
-                    extracted += 1
-                else:
-                    skipped += 1
-            print(f"  ok   {target.name} -> {text_path.relative_to(ROOT)}")
+            text_path, status = extract_pdf_to_markdown(target, force=force)
+            counts[status] += 1
+            print(f"  {status.value:<9} {target.name} -> {text_path.relative_to(ROOT)}")
         except Exception as exc:  # noqa: BLE001
             failed += 1
-            print(f"  FAIL {target.name}: {exc}")
+            print(f"  FAIL      {target.name}: {exc}")
 
     print(
-        f"\nPreprocess complete. extracted={extracted} "
-        f"skipped={skipped} failed={failed}"
+        f"\nPreprocess complete. extracted={counts[ExtractStatus.EXTRACTED]} "
+        f"decrypted={counts[ExtractStatus.DECRYPTED]} "
+        f"skipped={counts[ExtractStatus.SKIPPED]} failed={failed}"
     )
     return 0 if failed == 0 else 2
 

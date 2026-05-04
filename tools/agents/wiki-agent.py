@@ -59,26 +59,15 @@ AGENT_FILES = {
     "enhance": "wiki-enhancer.agent.md",
 }
 
-# opencode agent names (symlink stems in agent/ directory)
+# Symlink stems in .opencode/agents/ are just the agent file stripped of `.agent.md`.
 OPENCODE_AGENT_NAMES = {
-    "quality": "wiki-quality-reviewer",
-    "verify": "wiki-source-verifier",
-    "ingest": "wiki-ingest",
-    "contradict": "wiki-contradiction-detector",
-    "search": "wiki-search",
-    "enhance": "wiki-enhancer",
+    key: filename.removesuffix(".agent.md") for key, filename in AGENT_FILES.items()
 }
 
 CLI_OPTIONS = {
     "opencode": "opencode",
     "claude": "claude",
     "ollama": "ollama",
-}
-
-MODEL_OPTIONS = {
-    "opencode": ["opencode/minimax-m2.5-free", "github-copilot/gpt-5.3-codex"],
-    "claude": ["sonnet", "haiku", "opus"],
-    "ollama": ["qwen3.5:4b", "qwen3.5:9b", "gemma4:e4b"],
 }
 
 EFFORT_MAP = {

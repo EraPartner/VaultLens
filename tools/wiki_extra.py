@@ -9,36 +9,28 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from wiki import IGNORE_DIRS, IGNORE_FILES, parse_frontmatter
+
 ROOT = Path(__file__).resolve().parents[1]
 WIKI_DIR = ROOT / "wiki"
 
 
-def find_qmd() -> Path | None:
-    """Locate qmd executable via PATH lookup."""
-    found = shutil.which("qmd")
-    return Path(found) if found else None
-
-
 def cmd_qmd(args: list[str]) -> str:
-    """Run qmd command and return output."""
-    qmd_path = find_qmd()
+    """Run qmd command and return stdout (empty string when missing or failed)."""
+    qmd_path = shutil.which("qmd")
     if not qmd_path:
         return ""
     result = subprocess.run(
-        [str(qmd_path)] + args, capture_output=True, text=True, cwd=str(WIKI_DIR)
+        [qmd_path] + args, capture_output=True, text=True, cwd=str(WIKI_DIR)
     )
     return result.stdout if result.returncode == 0 else ""
 
 
 def generate_source_id() -> str:
     """Generate next source ID."""
-    existing = list((WIKI_DIR / "sources").glob("src-*.md"))
     today = datetime.now().strftime("%Y-%m-%d")
-    count = 1
-    for f in existing:
-        if today in f.stem:
-            count += 1
-    return f"src-{today}-{count:03d}"
+    existing = list((WIKI_DIR / "sources").glob(f"src-{today}-*.md"))
+    return f"src-{today}-{len(existing) + 1:03d}"
 
 
 def qmd_search(query: str, limit: int = 10) -> int:
@@ -61,24 +53,24 @@ def qmd_search(query: str, limit: int = 10) -> int:
 
 
 def count_words() -> int:
-    """Count total words in wiki."""
+    """Count total words in wiki body content (frontmatter excluded)."""
     total = 0
-    pages = list(WIKI_DIR.rglob("*.md"))
-    content_pages = [
-        p
-        for p in pages
-        if "_templates" not in str(p) and p.name not in ("index.md", "log.md")
-    ]
-    for page in content_pages:
-        content = page.read_text()
-        if content.startswith("---"):
-            end = content.find("---", 3)
-            if end > 0:
-                content = content[end + 3 :]
-        words = len(content.split())
-        total += words
+    pages = []
+    for path in WIKI_DIR.rglob("*.md"):
+        rel = path.relative_to(WIKI_DIR)
+        if any(part in IGNORE_DIRS for part in rel.parts):
+            continue
+        if path.name in IGNORE_FILES:
+            continue
+        pages.append(path)
+
+    for page in pages:
+        text = page.read_text(encoding="utf-8")
+        _fm, body = parse_frontmatter(text)
+        total += len(body.split())
+
     print(f"Total words in wiki: {total:,}")
-    print(f"Total pages: {len(content_pages)}")
+    print(f"Total pages: {len(pages)}")
     return 0
 
 
