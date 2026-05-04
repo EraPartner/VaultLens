@@ -143,7 +143,7 @@ For complex wiki tasks, use the project's custom agents stored in `tools/agents/
 ### When to use wiki agents
 
 - **Ingest**: Use `wiki-ingest` for first-pass intake of a brand-new source.
-- **Enhance**: Use `wiki-enhancer` to iteratively deepen, fix, and interlink already-ingested content.
+- **Enhance**: Use `wiki-enhancer` to iteratively deepen, fix, and interlink already-ingested content — also covers iterative-loop mode ("next stub", "random page", "keep going on the wiki") rewriting pages toward the canonical structure.
 - **Quality review**: Use `wiki-quality-reviewer` for intrinsic page-level audits (read-only).
 - **Source verification**: Use `wiki-source-verifier` to verify wiki claims against the raw source.
 - **Contradiction detection**: Use `wiki-contradiction-detector` to surface intra-wiki conflicts.
@@ -154,7 +154,7 @@ For complex wiki tasks, use the project's custom agents stored in `tools/agents/
 This project defines specialized agents in `tools/agents/`:
 
 - `wiki-ingest.agent.md` - First-pass intake of a brand-new source
-- `wiki-enhancer.agent.md` - Iterative improvement of already-ingested pages
+- `wiki-enhancer.agent.md` - Iterative improvement of already-ingested pages, including loop-mode rewrites toward canonical structure
 - `wiki-quality-reviewer.agent.md` - Intrinsic page-level audit (read-only)
 - `wiki-source-verifier.agent.md` - Verify a single page's claims against the raw source
 - `wiki-contradiction-detector.agent.md` - Find conflicts across pages
@@ -210,7 +210,7 @@ maintenance workflow. Pick by matching the input you have and the action you wan
 | Agent | Reads | Writes | Owns |
 |-------|-------|--------|------|
 | Ingest (`wiki-ingest`) | new raw source + wiki | wiki | First-pass extraction of a brand-new source into the wiki. |
-| Enhance (`wiki-enhancer`) | already-ingested raw source + wiki | wiki | Iterative improvement of pages that already exist — fix, deepen, interlink, spawn new concept pages from dense subtopics. |
+| Enhance (`wiki-enhancer`) | already-ingested raw source + wiki | wiki | Iterative improvement of pages that already exist — fix, deepen, interlink, spawn new concept pages, and rewrite stubs toward the canonical concept-page structure. Supports loop mode (shallowest stub / random / sparse-coverage). |
 | Quality (`wiki-quality-reviewer`) | one wiki page | — | Intrinsic page-level audit (structure, summary, falsifiability, frontmatter). No source compare. |
 | Verify (`wiki-source-verifier`) | one wiki page + its raw source-text | — | Source-fidelity audit: does the wiki accurately represent the source? |
 | Contradict (`wiki-contradiction-detector`) | many wiki pages | — | Intra-wiki conflict detection across pages. Does not consult raw sources. |
@@ -222,6 +222,7 @@ maintenance workflow. Pick by matching the input you have and the action you wan
 |---|---|---|
 | A new file in `raw/sources/` | Add it to the wiki | `wiki-ingest` |
 | An existing wiki page that feels shallow or stale | Improve it (in place) | `wiki-enhancer` |
+| A vague "keep enhancing the wiki / next stub / random page" | Loop-mode rewrite toward canonical structure | `wiki-enhancer` |
 | A wiki page you suspect drifts from the original | Verify against the source | `wiki-source-verifier` |
 | A wiki page you want a structural audit of | Audit, no edits | `wiki-quality-reviewer` |
 | Suspicion that two pages disagree | Surface and analyze the conflict | `wiki-contradiction-detector` |
