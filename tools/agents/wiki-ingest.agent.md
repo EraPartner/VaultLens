@@ -45,6 +45,10 @@ Process raw source material and create/update wiki pages following the LLM Wiki 
 - Document key claims in body
 
 ### 3. Link and Update
+- **Find related existing pages** before creating new ones — search first:
+  - `qmd query "<concept or topic>" --json` — hybrid BM25 + vector + LLM reranking. Best for finding semantically related pages even when keywords differ. Prefer `mcp__qmd__*` tools when available.
+  - `qmd search "<keywords>"` — BM25 only. Fast, good for exact term lookups.
+  - `python3 tools/wiki.py search "<query>"` — substring fallback when qmd is unavailable.
 - Create/update entity pages in `wiki/entities/`
 - Add to concept pages in `wiki/concepts/`
 - Link to topics in `wiki/topics/`

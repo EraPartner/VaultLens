@@ -487,6 +487,22 @@ qmd collection remove wiki && qmd collection remove raw
 
 ## Optional tools
 
+### Obsidian skill (Claude Code)
+
+When running inside Claude Code, the `obsidian:` skill family is available. Use these skills for vault-native operations:
+
+| Skill | Use for |
+|-------|---------|
+| `obsidian:obsidian-markdown` | Creating or editing wiki pages with Obsidian-flavored markdown (wikilinks, callouts, tags, frontmatter) |
+| `obsidian:obsidian-cli` | Vault-level operations (open note, search vault index, navigate) |
+| `obsidian:defuddle` | Extracting clean markdown from a web URL before placing it in `raw/inbox/` |
+| `obsidian:json-canvas` | Creating or editing `.canvas` files |
+| `obsidian:obsidian-bases` | Creating or editing `.base` files |
+
+**When to prefer these over raw file tools:** use `obsidian:obsidian-markdown` when writing new wiki pages to ensure OFM-compatible formatting (correct wikilink syntax, frontmatter, callouts). Use `obsidian:defuddle` instead of fetching raw HTML when clipping a web article to `raw/inbox/`.
+
+These skills are optional — fall back to Read/Write/Edit tools if the skill is unavailable.
+
 ### Obsidian Plugins
 
 **Installed and active:**
