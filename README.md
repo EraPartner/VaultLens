@@ -80,7 +80,9 @@ wiki_refs:
 
 ## Layout
 projects/my-thesis/
-  project.md
+  project.md     ← metadata, description, layout, rules, wiki refs
+  context.md     ← model-agnostic AI entrypoint (auto-generated)
+  CLAUDE.md      ← Claude Code shim: @context.md (auto-generated)
   queries/       ← Q&A artifacts
   papers/        ← relevant PDFs
   meetings/      ← dated meeting notes

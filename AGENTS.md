@@ -150,7 +150,7 @@ The LLM reads from `raw/` - symlinks are followed automatically. The wiki tools 
 
 `projects/` is the application layer that consumes the wiki as a knowledge base. Each subfolder is one project workspace.
 
-**Each project owns its own folder structure.** The scaffold creates only `project.md` and a default `queries/` directory; the user defines whatever else the project needs (`papers/`, `meetings/`, `repos/`, `drafts/`, etc.). The project's layout and rules are documented inside `project.md` itself, and the `project-assistant` agent reads them before answering.
+**Each project owns its own folder structure.** The scaffold creates `project.md`, `context.md`, `CLAUDE.md`, and a default `queries/` directory; the user defines whatever else the project needs (`papers/`, `meetings/`, `repos/`, `drafts/`, etc.). The project's layout and rules are documented inside `project.md` itself, and the `project-assistant` agent reads them before answering.
 
 ### Minimum scaffolded structure
 
