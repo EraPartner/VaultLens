@@ -958,6 +958,22 @@ python3 tools/wiki.py project link {slug} concepts/some-page
 """
 
 
+CONTEXT_MD_TEMPLATE = """\
+# Project Context
+
+Before answering questions or editing files:
+1. Read `project.md` — this project's description, layout, and rules.
+2. Read `../../AGENTS.md` — the Brain wiki operating schema (directory contract,
+   agents, search tools, write boundaries).
+
+Write only inside this project directory. Never modify `wiki/` or `raw/`.
+"""
+
+# Claude Code shim: imports the model-agnostic context.md above.
+# Other tools should reference context.md directly in their own config.
+CLAUDE_MD_TEMPLATE = "@context.md\n"
+
+
 def _project_list(as_json: bool) -> int:
     projects = list_projects()
     if as_json:
@@ -1007,8 +1023,12 @@ def _project_new(slug: str) -> int:
         PROJECT_TEMPLATE.format(title=title, slug=cleaned, today=today),
         encoding="utf-8",
     )
+    (project_dir / "context.md").write_text(CONTEXT_MD_TEMPLATE, encoding="utf-8")
+    (project_dir / "CLAUDE.md").write_text(CLAUDE_MD_TEMPLATE, encoding="utf-8")
     print(f"Created project '{cleaned}' at {project_dir.relative_to(ROOT)}")
     print("  - project.md")
+    print("  - context.md (model-agnostic AI entrypoint — reference from any tool)")
+    print("  - CLAUDE.md  (Claude Code shim → imports context.md)")
     print("  - queries/   (default Q&A artifact dir; redefine in ## Rules if you want)")
     print(
         f"\nNext steps:\n"

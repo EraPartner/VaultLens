@@ -157,8 +157,12 @@ The LLM reads from `raw/` - symlinks are followed automatically. The wiki tools 
 ```
 projects/<slug>/
   project.md          ← metadata + description + Layout + Rules + linked wiki pages
+  context.md          ← model-agnostic AI entrypoint: read project.md + AGENTS.md
+  CLAUDE.md           ← Claude Code shim: @context.md (one line)
   queries/            ← default Q&A artifact landing zone (overridable in ## Rules)
 ```
+
+`context.md` is the generic hook for AI tools. Point other tools (Cursor, Windsurf, opencode, etc.) at it in their own config rather than duplicating its content.
 
 ### Common bespoke additions (user-created)
 
