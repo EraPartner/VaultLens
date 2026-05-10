@@ -4,6 +4,8 @@
 .claude
 .obsidian
 .ruff_cache
+.mcp.json
+opencode.json
 __pycache__
 
 raw/assets/*

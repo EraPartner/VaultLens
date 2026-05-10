@@ -131,6 +131,21 @@ WHERE domain = "learning"
 
 This makes the wiki a true **Second Brain** - one vault, unlimited topics, all connected.
 
+## Tool permissions
+
+Reads are auto-approved; writes require explicit confirmation. This is enforced at the tool level for Claude Code and opencode, and is a standing instruction for all other models.
+
+| Operation | Policy |
+|---|---|
+| Read files anywhere in the vault | auto-approved |
+| Run read-only shell commands (`ls`, `find`, `grep`, `cat`, `qmd query`, `wiki.py search`, …) | auto-approved |
+| Write or edit files | requires confirmation |
+
+**Claude Code** — configured in `.claude/settings.json` via `allowedTools`.
+**opencode** — configured in `opencode.json` via `permission: { read, bash, write, edit }`.
+**GitHub Copilot CLI** — reads `AGENTS.md` automatically from repo root and CWD; `qmd` MCP server configured in `~/.copilot/mcp-config.json`. `wiki-agent.py` passes `--allow-all-paths` and read-only `--allow-tool` flags automatically.
+**All other models** — treat this section as a standing instruction: never write a file without explicit user approval in the same session.
+
 ## Symlinks
 
 The wiki supports symlinks for existing data - no need to duplicate files:
@@ -150,19 +165,20 @@ The LLM reads from `raw/` - symlinks are followed automatically. The wiki tools 
 
 `projects/` is the application layer that consumes the wiki as a knowledge base. Each subfolder is one project workspace.
 
-**Each project owns its own folder structure.** The scaffold creates `project.md`, `context.md`, `CLAUDE.md`, and a default `queries/` directory; the user defines whatever else the project needs (`papers/`, `meetings/`, `repos/`, `drafts/`, etc.). The project's layout and rules are documented inside `project.md` itself, and the `project-assistant` agent reads them before answering.
+**Each project owns its own folder structure.** The scaffold creates `project.md`, `CLAUDE.md`, `AGENTS.md`, `opencode.json`, and a default `queries/` directory; the user defines whatever else the project needs (`papers/`, `meetings/`, `repos/`, `drafts/`, etc.). The project's layout and rules are documented inside `project.md` itself, and the `project-assistant` agent reads them before answering.
 
 ### Minimum scaffolded structure
 
 ```
 projects/<slug>/
   project.md          ← metadata + description + Layout + Rules + linked wiki pages
-  context.md          ← model-agnostic AI entrypoint: read project.md + AGENTS.md
-  CLAUDE.md           ← Claude Code shim: @context.md (one line)
+  AGENTS.md           ← AI entrypoint: instructs any tool to read project.md + ../../AGENTS.md
+  CLAUDE.md           ← Claude Code shim: @AGENTS.md (one line)
+  opencode.json       ← opencode shim: instructions: ["AGENTS.md"]
   queries/            ← default Q&A artifact landing zone (overridable in ## Rules)
 ```
 
-`context.md` is the generic hook for AI tools. Point other tools (Cursor, Windsurf, opencode, etc.) at it in their own config rather than duplicating its content.
+`AGENTS.md` is the single entrypoint for all AI tools. Claude Code imports it via `@AGENTS.md`; opencode loads it via `instructions`; Copilot CLI reads it automatically from CWD.
 
 ### Common bespoke additions (user-created)
 
@@ -233,6 +249,20 @@ Free-form, project-specific rules the `project-assistant` agent MUST follow. **P
 - For design questions, prefer concepts in `wiki_refs` over general wiki search.
 ```
 
+### Keeping project.md current
+
+`project.md` is the model-agnostic source of truth for a project. After any session where new information is established — a meeting outcome, a decision, a direction change, a completed deliverable, a new deadline — update the relevant sections of `project.md` before the session ends.
+
+Sections most likely to need updating:
+
+- **Current status / deliverables** — mark things done, add next steps, update deadlines
+- **Key questions** — remove resolved questions, add newly opened ones
+- **Context** — new constraints, signals, or facts from meetings or supervisor conversations
+- **Description / research question** — update if the framing or scope shifts
+- **Planning sections** — update if timeline or milestones change
+
+Rules: only edit sections that changed. Small, targeted updates. Update the `updated` frontmatter field whenever you touch the file.
+
 ### Boundary rules
 
 - Projects MAY reference any wiki page via wikilinks. Lint validates `wiki_refs` against the canonical wiki page set.
@@ -271,38 +301,7 @@ For complex wiki tasks, use the project's custom agents stored in `tools/agents/
 - **Search/Research**: Use `wiki-search` to answer questions with cited synthesis.
 - **Project Q&A**: Use `project-assistant` to answer questions in the context of a specific project under `projects/<slug>/`, citing wiki pages and saving durable Q&A artifacts.
 
-### Custom wiki agents
-
-This project defines specialized agents in `tools/agents/`:
-
-- `wiki-ingest.agent.md` - First-pass intake of a brand-new source
-- `wiki-enhancer.agent.md` - Iterative improvement of already-ingested pages, including loop-mode rewrites toward canonical structure
-- `wiki-quality-reviewer.agent.md` - Intrinsic page-level audit (read-only)
-- `wiki-source-verifier.agent.md` - Verify a single page's claims against the raw source
-- `wiki-contradiction-detector.agent.md` - Find conflicts across pages
-- `wiki-search.agent.md` - Answer questions with cited synthesis
-- `project-assistant.agent.md` - Project-scoped reasoning grounded in the wiki KB; writes only inside `projects/<slug>/`
-
-### opencode agent registration
-
-Agents are registered with opencode via symlinks in `.opencode/agents/` (opencode's project-local agent directory):
-
-```
-.opencode/agents/
-  wiki-ingest.md                 → ../../tools/agents/wiki-ingest.agent.md
-  wiki-enhancer.md               → ../../tools/agents/wiki-enhancer.agent.md
-  wiki-quality-reviewer.md       → ../../tools/agents/wiki-quality-reviewer.agent.md
-  wiki-source-verifier.md        → ../../tools/agents/wiki-source-verifier.agent.md
-  wiki-contradiction-detector.md → ../../tools/agents/wiki-contradiction-detector.agent.md
-  wiki-search.md                 → ../../tools/agents/wiki-search.agent.md
-  project-assistant.md           → ../../tools/agents/project-assistant.agent.md
-```
-
-Each agent file includes opencode-compatible YAML frontmatter (`description`, `mode`, `tools`).
-The `wiki-agent.py` wrapper uses `--agent NAME` to invoke them by registered name.
-
-**Claude** does not need project-local registration — it receives the agent instructions
-via `--system-prompt` directly from the source files.
+Agent definition files live in `tools/agents/*.agent.md`. opencode loads them as native sub-agents via symlinks in `.opencode/agents/`. Claude Code, Copilot, and other CLIs are invoked via `wiki-agent.py`, which reads the agent file and injects its body as a system prompt — no native subagent registration needed.
 
 ### Agent workflow examples
 
@@ -310,27 +309,21 @@ via `--system-prompt` directly from the source files.
 # Search the wiki
 python3 tools/agents/wiki-agent.py search --page "machine learning"
 
-# Quality review with opencode (default)
+# Quality review (opencode default; override with --cli claude/copilot/ollama)
 python3 tools/agents/wiki-agent.py quality --page wiki/concepts/my-concept.md
-
-# Run with Claude Sonnet, high effort
 python3 tools/agents/wiki-agent.py quality --page wiki/concepts/my-concept.md --cli claude --model sonnet --effort high
 
 # Verify source claims
 python3 tools/agents/wiki-agent.py verify --source wiki/sources/my-source.md --effort high
 
 # Ingest new source
-python3 tools/agents/wiki-agent.py ingest --source raw/sources/paper.pdf --cli ollama --model qwen3.5:9b
+python3 tools/agents/wiki-agent.py ingest --source raw/sources/paper.pdf
 
 # Find contradictions
 python3 tools/agents/wiki-agent.py contradict
 
-# Scaffold a new project that consumes the wiki as a KB
-python3 tools/wiki.py project new my-thesis
-python3 tools/wiki.py project link my-thesis concepts/some-relevant-page
-
-# Ask the project-assistant a question in that project's context
-python3 tools/agents/wiki-agent.py project --project my-thesis --question "Which control loop should we use for the manipulator?"
+# Project-scoped Q&A
+python3 tools/agents/wiki-agent.py project --project my-thesis --question "Which approach should we use?"
 ```
 
 ### Available Agents
@@ -366,39 +359,22 @@ agent (e.g. quality → enhancer to apply fixes; contradict → verifier to dete
 which side is correct). Read the full agent `.agent.md` files for the exact
 handoff list.
 
-**CLI options**: `opencode`, `claude`, `ollama`
+**CLI options**: `opencode`, `claude`, `ollama`, `copilot`
 **OpenCode models**: `opencode/minimax-m2.5-free` (default), `github-copilot/gpt-5.3-codex`
 **Claude models**: `sonnet` (default), `haiku`, `opus`
 **Ollama models**: `qwen3.5:4b` (default), `qwen3.5:9b`, `gemma4:e4b`
+**Copilot models**: `gpt-5.3-codex` (default), `claude-sonnet-4.6`, `gpt-5.2`
 **Effort levels**: `low` (fast), `medium` (default), `high` (deep thinking)
 
 ## Canonical operations
 
 ### Ingest
 
-When told to ingest source(s):
-
-1. Use `python3 tools/agents/wiki-agent.py ingest --source raw/sources/FILE.pdf` to analyze
-2. Extract key claims - make them falsifiable.
-3. Create/update a source page under `wiki/sources/`.
-4. Update relevant pages in `wiki/entities/`, `wiki/concepts/`, `wiki/topics/`, and/or `wiki/syntheses/`.
-5. Add wikilinks to connect new content with existing wiki.
-6. Add contradiction notes where claims conflict with existing knowledge.
-7. Run `python3 tools/wiki.py lint` and fix issues.
-8. Append to log using `python3 tools/wiki.py append-log ...`.
+Use `wiki-ingest` agent: `python3 tools/agents/wiki-agent.py ingest --source raw/sources/FILE.pdf`. The agent handles extraction, source-page creation, concept/topic page updates, linting, and log entry. See `wiki-ingest.agent.md` for the full workflow.
 
 ### Query
 
-When answering a user question using this wiki:
-
-1. Open `wiki/index.md` for an overview of existing pages (rendered dynamically by Dataview).
-2. Use `python3 tools/agents/wiki-agent.py search --page "query"` to find relevant pages.
-3. Identify and read relevant pages.
-4. Synthesize with explicit citations in wiki-link form.
-5. If answer is durable, save it as a page under `wiki/queries/` and link it.
-6. Append query entry to `wiki/log.md` when requested or when preserving artifacts.
-
-**Important:** Good answers should be filed back into the wiki as new pages. Comparisons, analyses, and connections discovered during research are valuable and shouldn't disappear into chat history.
+Use `wiki-search` (general) or `project-assistant` (project-scoped): `python3 tools/agents/wiki-agent.py search --page "question"`. Durable answers worth preserving should be filed as `wiki/queries/` pages.
 
 ### Lint / health check
 
@@ -558,131 +534,7 @@ python3 tools/wiki_extra.py qmd-search "q"  # QMD search via wiki_extra wrapper
 python3 tools/wiki_extra.py stats           # Wiki statistics
 ```
 
-## Quality checks
-
-### Agent-powered quality review
-
-Use the wiki-agent.py wrapper to invoke AI agents:
-
-```bash
-# Quality review with opencode (default)
-python3 tools/agents/wiki-agent.py quality --page wiki/concepts/my-concept.md
-
-# With Claude, high effort
-python3 tools/agents/wiki-agent.py quality --page wiki/concepts/x.md --cli claude --model sonnet --effort high
-
-# Source verification
-python3 tools/agents/wiki-agent.py verify --source wiki/sources/my-source.md
-
-# Contradiction detection
-python3 tools/agents/wiki-agent.py contradict
-
-# Ingest new source
-python3 tools/agents/wiki-agent.py ingest --source raw/sources/new-paper.pdf
-```
-
-The agents read `.agent.md` files as their system prompt and use configurable:
-- **CLI**: `opencode`, `claude`, or `ollama`
-- **Model**: varies by CLI (e.g., `sonnet`, `qwen3.5`, `minimax-free`)
-- **Effort**: `low`, `medium`, `high` (thinking depth)
-
-```bash
-# Deep content quality analysis - checks claims, clarity, structure
-python3 tools/agents/wiki-agent.py quality --page wiki/concepts/your-concept.md --effort high
-
-# Verify source claims against original sources
-python3 tools/agents/wiki-agent.py verify --source wiki/sources/your-source.md --effort high
-```
-
-When to use agents:
-- **Structural issues**: Templates, frontmatter, linking patterns
-- **Content depth**: Are claims well-supported? Any gaps?
-- **Cross-wiki consistency**: Contradictions that automated tools miss
-- **Summary quality**: Does summary match content accurately?
-
-## PDF and image handling
-
-### PDF parsing
-
-**Option 1: Direct LLM reading (recommended for this wiki)**
-- Place PDF in `raw/sources/` or `raw/inbox/`
-- The LLM reads PDF directly via the Read tool
-- Extract key claims and create source page
-
-**Option 2: Convert to markdown first**
-For complex PDFs with tables/figures, convert before ingestion:
-
-```bash
-# Using pandoc
-pandoc -t markdown input.pdf -o output.md
-
-# Using Obsidian PDF plugins
-# - PDF Highlights: Extract annotations and highlights
-# - Readwise: Sync highlights to markdown
-```
-
-**Option 3: Specialized extraction**
-For academic papers:
-- SciPDF (arxiv papers)
-- GPTPDF for OCR-heavy documents
-
-### Image handling
-
-- Store images in `raw/assets/`
-- Use relative paths in wiki: `![image](../../raw/assets/image.png)`
-- Add to obsidian config for image folder if needed
-
 ## Obsidian integrations
 
-### Templater
-
-Templater is configured with folder templates — creating a file in any wiki subdirectory auto-applies the matching template from `wiki/_templates/`.
-
-| Folder | Template Applied |
-|--------|-----------------|
-| `wiki/sources/` | `source.md` — prompts for source_type |
-| `wiki/entities/` | `entity.md` — prompts for entity_type |
-| `wiki/concepts/` | `concept.md` |
-| `wiki/topics/` | `topic.md` |
-| `wiki/syntheses/` | `synthesis.md` |
-| `wiki/comparisons/` | `comparison.md` |
-| `wiki/queries/` | `query.md` |
-| `wiki/reports/` | `report.md` — prompts for report_type |
-
-All templates auto-fill: title from filename, today's date, cursor placement, and Dataview backlink queries.
-
-### Dataview
-
-Every template includes Dataview queries for automatic backlink/relationship tables. Key patterns:
-
-```
-# Show all pages linking to current page
-FROM "wiki" WHERE contains(file.outlinks, this.file.link)
-
-# Show sources by domain
-FROM "wiki/sources" WHERE domain = "research"
-
-# Show draft pages needing review
-FROM "wiki" WHERE status = "draft"
-
-# Show stale pages
-FROM "wiki" WHERE date(updated) < date(today) - dur(180 days)
-```
-
-The home page has a live dashboard with recent sources, drafts, domain breakdown, and staleness alerts.
-
-### Graph View
-
-Graph is color-coded by page type:
-- **Blue** — Sources | **Green** — Entities | **Purple** — Concepts
-- **Orange** — Topics | **Magenta** — Syntheses | **Yellow** — Comparisons
-- **Cyan** — Queries | **Gray** — Reports
-
-Orphan pages are visible. Filter is set to `path:wiki`.
-
-## Why this works
-
-The tedious part of maintaining a knowledge base is the bookkeeping - updating cross-references, keeping summaries current, noting contradictions, maintaining consistency. Humans abandon wikis because maintenance burden grows faster than value. LLMs don't get bored, don't forget updates, and can touch 15 files in one pass.
-
-The human's job: curate sources, direct analysis, ask good questions, think about meaning.
-The LLM's job: everything else - summarizing, cross-referencing, filing, bookkeeping.
+**Templater** — creating a file in any `wiki/` subfolder auto-applies the matching template from `wiki/_templates/` (title, date, cursor, Dataview backlinks pre-filled).
+**Dataview** — dynamic tables throughout the wiki update automatically from frontmatter. JS API is enabled.

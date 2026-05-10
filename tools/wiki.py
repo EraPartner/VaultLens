@@ -958,20 +958,24 @@ python3 tools/wiki.py project link {slug} concepts/some-page
 """
 
 
-CONTEXT_MD_TEMPLATE = """\
-# Project Context
+# Claude Code shim: imports the project AGENTS.md (which instructs reading project.md
+# and the root ../../AGENTS.md schema).
+CLAUDE_MD_TEMPLATE = "@AGENTS.md\n"
+
+# Project-level AGENTS.md shim: points tools that look for AGENTS.md in the
+# working directory to the root schema rather than duplicating it.
+AGENTS_MD_TEMPLATE = """\
+# Project Agent Context
+
+This is a project workspace inside the Brain wiki.
 
 Before answering questions or editing files:
-1. Read `project.md` — this project's description, layout, and rules.
-2. Read `../../AGENTS.md` — the Brain wiki operating schema (directory contract,
-   agents, search tools, write boundaries).
+1. Read `project.md` (this directory) — project description, layout, rules, current status.
+2. If not already loaded: read `../../AGENTS.md` — the full wiki operating schema
+   (directory contract, agents, search tools, write boundaries).
 
 Write only inside this project directory. Never modify `wiki/` or `raw/`.
 """
-
-# Claude Code shim: imports the model-agnostic context.md above.
-# Other tools should reference context.md directly in their own config.
-CLAUDE_MD_TEMPLATE = "@context.md\n"
 
 
 def _project_list(as_json: bool) -> int:
@@ -1023,13 +1027,15 @@ def _project_new(slug: str) -> int:
         PROJECT_TEMPLATE.format(title=title, slug=cleaned, today=today),
         encoding="utf-8",
     )
-    (project_dir / "context.md").write_text(CONTEXT_MD_TEMPLATE, encoding="utf-8")
     (project_dir / "CLAUDE.md").write_text(CLAUDE_MD_TEMPLATE, encoding="utf-8")
+    (project_dir / "AGENTS.md").write_text(AGENTS_MD_TEMPLATE, encoding="utf-8")
+    (project_dir / "opencode.json").write_text('{\n  "instructions": ["AGENTS.md"]\n}\n', encoding="utf-8")
     print(f"Created project '{cleaned}' at {project_dir.relative_to(ROOT)}")
     print("  - project.md")
-    print("  - context.md (model-agnostic AI entrypoint — reference from any tool)")
-    print("  - CLAUDE.md  (Claude Code shim → imports context.md)")
-    print("  - queries/   (default Q&A artifact dir; redefine in ## Rules if you want)")
+    print("  - AGENTS.md      (AI entrypoint → read project.md + ../../AGENTS.md)")
+    print("  - CLAUDE.md      (Claude Code shim → @AGENTS.md)")
+    print("  - opencode.json  (opencode shim → instructions: [AGENTS.md])")
+    print("  - queries/       (default Q&A artifact dir; redefine in ## Rules if you want)")
     print(
         f"\nNext steps:\n"
         f"  1. Edit projects/{cleaned}/project.md — fill in Description, Layout, and Rules.\n"

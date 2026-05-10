@@ -69,20 +69,23 @@ CLI_OPTIONS = {
     "opencode": "opencode",
     "claude": "claude",
     "ollama": "ollama",
+    "copilot": "copilot",
 }
 
 EFFORT_MAP = {
-    "low": {"opencode": ["--variant", "minimal"], "claude": [], "ollama": []},
-    "medium": {"opencode": [], "claude": [], "ollama": []},
+    "low": {"opencode": ["--variant", "minimal"], "claude": [], "ollama": [], "copilot": ["--effort", "low"]},
+    "medium": {"opencode": [], "claude": [], "ollama": [], "copilot": []},
     "high": {
         "opencode": ["--variant", "xhigh"],
         "claude": [],
         "ollama": [],
+        "copilot": ["--effort", "high"],
     },
     "max": {
         "opencode": ["--variant", "xhigh"],
         "claude": [],
         "ollama": [],
+        "copilot": ["--effort", "xhigh"],
     },
 }
 
@@ -174,6 +177,7 @@ def get_default_model(cli: str) -> str:
         "opencode": "github-copilot/gpt-5.3-codex",
         "claude": "sonnet",
         "ollama": "qwen3.5:4b",
+        "copilot": "gpt-5.3-codex",
     }
     return defaults.get(cli, "default")
 
@@ -311,6 +315,31 @@ def invoke_agent(
         else:
             cmd.append(prompt)
 
+    elif cli == "copilot":
+        system_text, system_file = _prepare_system_prompt(agent_file, system_addon)
+        full_prompt = f"{system_text}\n\n---\n\nTask: {prompt}"
+        if extra_args:
+            paths = "\n".join(f"- {p}" for p in extra_args)
+            full_prompt += f"\n\nFiles to read:\n{paths}"
+        cmd = ["copilot", "-p", full_prompt]
+        if model:
+            cmd.extend(["--model", model])
+        cmd.extend(effort_flags)
+        cmd.extend([
+            "--allow-all-paths",
+            "--allow-tool=read",
+            "--allow-tool=shell(ls:*)",
+            "--allow-tool=shell(find:*)",
+            "--allow-tool=shell(grep:*)",
+            "--allow-tool=shell(cat:*)",
+            "--allow-tool=shell(head:*)",
+            "--allow-tool=shell(tail:*)",
+            "--allow-tool=shell(wc:*)",
+            "--allow-tool=shell(python3:*)",
+            "--allow-tool=shell(qmd:*)",
+            "--allow-tool=qmd",
+        ])
+
     elif cli in ("claude", "ollama"):
         system_text, system_file = _prepare_system_prompt(agent_file, system_addon)
         if cli == "claude":
@@ -353,8 +382,8 @@ def invoke_agent(
 
     result = subprocess.run(cmd)
 
-    # Clean up temp file if one was created for claude/ollama
-    if cli in ("claude", "ollama") and system_file != agent_file:
+    # Clean up temp file if one was created for claude/ollama/copilot
+    if cli in ("claude", "ollama", "copilot") and system_file != agent_file:
         system_file.unlink(missing_ok=True)
 
     return result.returncode
