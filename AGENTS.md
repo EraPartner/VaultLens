@@ -17,7 +17,7 @@ Maintain a durable wiki in `wiki/` from immutable source material in `raw/`.
 
 1. **Raw sources** (`raw/`) - Immutable source documents. The source of truth.
 2. **The wiki** (`wiki/`) - LLM-generated markdown files. The agent owns this layer.
-3. **Projects** (`projects/`) - Application workspaces that consume the wiki as a knowledge base. Each project has its own context, notes, and preserved Q&A. The `project-assistant` agent answers questions in a project's context, citing wiki pages. Projects may reference wiki pages but never write to `wiki/`.
+3. **Projects** (`projects/`) - Application workspaces that consume the wiki as a knowledge base. Each project has its own context, notes, and preserved Q&A. Any AI tool launched from a project directory follows the conventions in `## Working inside a project`. Projects may reference wiki pages but never write to `wiki/`.
 4. **The schema** (`AGENTS.md`) - This file. Tells the LLM how to operate.
 
 ## Directory contract
@@ -39,7 +39,7 @@ Maintain a durable wiki in `wiki/` from immutable source material in `raw/`.
 - `projects/<slug>/` - one folder per application project (see Projects layer below)
 - `projects/<slug>/project.md` - project metadata page (frontmatter + description + linked wiki pages)
 - `projects/<slug>/notes/` - project-local scratch notes
-- `projects/<slug>/queries/` - durable Q&A artifacts produced by `project-assistant`
+- `projects/<slug>/queries/` - durable Q&A artifacts saved by project-scoped agent runs
 - `tools/wiki.py` - core maintenance utility
 - `tools/wiki_extra.py` - additional utilities
 - `tools/scripts/` - setup and helper scripts
@@ -72,7 +72,7 @@ Additional required fields for `wiki/sources/*`:
 Additional fields for `projects/<slug>/project.md`:
 
 - `wiki_refs` - List of `[concepts/foo, topics/bar, ...]` wikilinks the project depends on
-- `tags` and `domain` are first-class for projects (used by `project-assistant` to scope wiki search)
+- `tags` and `domain` are first-class for projects (used to scope wiki search to the project's domain)
 
 ### PDF Support
 
@@ -165,7 +165,7 @@ The LLM reads from `raw/` - symlinks are followed automatically. The wiki tools 
 
 `projects/` is the application layer that consumes the wiki as a knowledge base. Each subfolder is one project workspace.
 
-**Each project owns its own folder structure.** The scaffold creates `project.md`, `CLAUDE.md`, `AGENTS.md`, `opencode.json`, and a default `queries/` directory; the user defines whatever else the project needs (`papers/`, `meetings/`, `repos/`, `drafts/`, etc.). The project's layout and rules are documented inside `project.md` itself, and the `project-assistant` agent reads them before answering.
+**Each project owns its own folder structure.** The scaffold creates `project.md`, `CLAUDE.md`, `AGENTS.md`, `opencode.json`, and a default `queries/` directory; the user defines whatever else the project needs (`papers/`, `meetings/`, `repos/`, `drafts/`, etc.). The project's layout and rules are documented inside `project.md` itself; agents operating in the project read them before answering.
 
 ### Minimum scaffolded structure
 
@@ -217,7 +217,7 @@ wiki_refs: [<concepts/foo, topics/bar, sources/src-...>]
 ## Linked wiki pages
 ```
 
-The `wiki_refs` and `tags` fields are load-bearing: `project-assistant` uses them to scope which wiki pages it pulls into context. Use `python3 tools/wiki.py project link <slug> <wiki-ref>` to add a reference (it preserves frontmatter formatting and updates `updated`).
+The `wiki_refs` and `tags` fields are load-bearing: agents working in the project use them to scope which wiki pages they pull into context. Use `python3 tools/wiki.py project link <slug> <wiki-ref>` to add a reference (it preserves frontmatter formatting and updates `updated`).
 
 ### `## Layout` section
 
@@ -237,7 +237,7 @@ If `## Layout` is missing, the agent falls back to filesystem discovery via `ls`
 
 ### `## Rules` section
 
-Free-form, project-specific rules the `project-assistant` agent MUST follow. **Project rules override the agent's defaults** when they conflict.
+Free-form, project-specific rules agents working in the project MUST follow. **Project rules override the defaults in `## Working inside a project`** when they conflict.
 
 ```markdown
 ## Rules
@@ -266,9 +266,50 @@ Rules: only edit sections that changed. Small, targeted updates. Update the `upd
 ### Boundary rules
 
 - Projects MAY reference any wiki page via wikilinks. Lint validates `wiki_refs` against the canonical wiki page set.
-- Projects MUST NOT modify `wiki/` or `raw/`. The `project-assistant` agent's write surface is restricted to `projects/<slug>/`.
+- Projects MUST NOT modify `wiki/` or `raw/`. Agents working in a project have their write surface restricted to `projects/<slug>/`.
 - If a project finds wiki coverage lacking, the agent recommends a `wiki-enhancer` follow-up rather than editing the wiki itself.
 - `lint` checks projects: required frontmatter fields and broken `wiki_refs`. Project body content (Layout, Rules) is intentionally free-form and not validated.
+
+### Working inside a project (instructions for agents)
+
+When operating from a `projects/<slug>/` directory (CWD or attached project), follow these conventions on top of `## Rules` in `project.md`.
+
+**Wiki search ladder** — try in order, stop when you have enough:
+
+1. `qmd query "<natural-language question>" --json` — hybrid BM25 + vector + LLM rerank. Best for conceptual questions.
+2. `qmd search "<keywords>"` — BM25 only. Fast, free, good for exact terms.
+3. `python3 tools/wiki.py search "<query>"` — substring fallback when qmd is unavailable.
+4. `python3 tools/wiki.py tags <tag> [<tag>...]` — AND-filter wiki pages by the project's frontmatter `tags` to surface sibling concept pages.
+
+If `mcp__qmd__*` tools are exposed in the session, prefer them over the CLI.
+
+**Citation discipline** — every load-bearing claim in a project answer carries an inline wikilink (`[[concepts/some-page]]`) to the wiki page that backs it. Mark anything not backed by the wiki as `[outside wiki — agent inference]`. A claim with no marker is treated as obviously general knowledge.
+
+**Adding a `wiki_ref`** — never hand-edit `project.md` frontmatter. Use `python3 tools/wiki.py project link <slug> <wiki-ref>`; it preserves YAML formatting and bumps `updated`.
+
+**Saving durable Q&A** — when an answer captures a non-trivial decision, design, or analysis the project will reference later, save it. Default path is `projects/<slug>/queries/YYYY-MM-DD-<short-topic-slug>.md` unless `## Rules` overrides:
+
+```yaml
+---
+title: <short title of the question>
+type: query
+status: active
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+summary: <one-line summary of the question + answer>
+tags: [<inherit from project + add specific tags>]
+wiki_refs: [<the wiki pages this answer cites>]
+---
+```
+
+Body sections:
+
+- `## Question` — the question verbatim or paraphrased.
+- `## Answer` — synthesis with inline wikilinks.
+- `## Sources` — bullet list of cited `[[wiki-pages]]`.
+- `## Follow-ups` — open questions or recommended agent passes.
+
+Skip the artifact for trivial Q&A — one-line answers belong inline.
 
 ### CLI
 
@@ -279,13 +320,9 @@ python3 tools/wiki.py project show <slug>                                # print
 python3 tools/wiki.py project link <slug> concepts/some-page             # append wiki ref + bump updated
 ```
 
-### Agent invocation
+### Working in a project from any AI tool
 
-```bash
-python3 tools/agents/wiki-agent.py project --project <slug> --question "<question>"
-```
-
-The wrapper attaches `projects/<slug>/project.md` to the agent so the agent reads the project's context, then expects the agent to follow `project-assistant.agent.md` for the rest.
+There is no dedicated project agent. Launch any AI CLI (Claude Code, opencode, Copilot CLI) from inside `projects/<slug>/` and it will pick up the project's `AGENTS.md` (and `CLAUDE.md` shim), which loads `project.md` plus the root schema. The behavior described in `## Working inside a project` above is the contract every such session follows.
 
 ## Agent integration
 
@@ -299,7 +336,7 @@ For complex wiki tasks, use the project's custom agents stored in `tools/agents/
 - **Source verification**: Use `wiki-source-verifier` to verify wiki claims against the raw source.
 - **Contradiction detection**: Use `wiki-contradiction-detector` to surface intra-wiki conflicts.
 - **Search/Research**: Use `wiki-search` to answer questions with cited synthesis.
-- **Project Q&A**: Use `project-assistant` to answer questions in the context of a specific project under `projects/<slug>/`, citing wiki pages and saving durable Q&A artifacts.
+- **Project Q&A**: Launch any AI tool from `projects/<slug>/` — the project's `AGENTS.md` shim and root `## Working inside a project` section drive the workflow.
 
 Agent definition files live in `tools/agents/*.agent.md`. opencode loads them as native sub-agents via symlinks in `.opencode/agents/`. Claude Code, Copilot, and other CLIs are invoked via `wiki-agent.py`, which reads the agent file and injects its body as a system prompt — no native subagent registration needed.
 
@@ -321,9 +358,6 @@ python3 tools/agents/wiki-agent.py ingest --source raw/sources/paper.pdf
 
 # Find contradictions
 python3 tools/agents/wiki-agent.py contradict
-
-# Project-scoped Q&A
-python3 tools/agents/wiki-agent.py project --project my-thesis --question "Which approach should we use?"
 ```
 
 ### Available Agents
@@ -339,7 +373,6 @@ maintenance workflow. Pick by matching the input you have and the action you wan
 | Verify (`wiki-source-verifier`) | one wiki page + its raw source-text | — | Source-fidelity audit: does the wiki accurately represent the source? |
 | Contradict (`wiki-contradiction-detector`) | many wiki pages | — | Intra-wiki conflict detection across pages. Does not consult raw sources. |
 | Search (`wiki-search`) | wiki | — | Query answering — locate pages, read, synthesize a cited answer. No project context. |
-| Project (`project-assistant`) | one `projects/<slug>/` + its referenced wiki pages | `projects/<slug>/` only | Project-scoped Q&A — answers grounded in a specific project's context, cites wiki pages, saves durable Q&A artifacts. Never writes to `wiki/`. |
 
 **Decision matrix** — pick the agent by what you have and what you want:
 
@@ -352,7 +385,7 @@ maintenance workflow. Pick by matching the input you have and the action you wan
 | A wiki page you want a structural audit of | Audit, no edits | `wiki-quality-reviewer` |
 | Suspicion that two pages disagree | Surface and analyze the conflict | `wiki-contradiction-detector` |
 | A research question with no project context | Get a synthesized cited answer | `wiki-search` |
-| A question about a specific project under `projects/` | Project-scoped answer that cites wiki pages, optionally saved as a query artifact | `project-assistant` |
+| A question about a specific project under `projects/` | Project-scoped answer that cites wiki pages, optionally saved as a query artifact | Launch any AI CLI from `projects/<slug>/` |
 
 **Handoff conventions** — each agent ends its report by recommending the next
 agent (e.g. quality → enhancer to apply fixes; contradict → verifier to determine
@@ -374,7 +407,7 @@ Use `wiki-ingest` agent: `python3 tools/agents/wiki-agent.py ingest --source raw
 
 ### Query
 
-Use `wiki-search` (general) or `project-assistant` (project-scoped): `python3 tools/agents/wiki-agent.py search --page "question"`. Durable answers worth preserving should be filed as `wiki/queries/` pages.
+Use `wiki-search` (general) — `python3 tools/agents/wiki-agent.py search --page "question"`. For project-scoped Q&A, run any AI CLI from inside `projects/<slug>/`. Durable answers worth preserving should be filed as `wiki/queries/` pages (general) or `projects/<slug>/queries/` (project-scoped).
 
 ### Lint / health check
 
@@ -420,7 +453,7 @@ Link suggestions are best done by agents (semantic understanding) rather than su
 
 ### QMD — primary search engine
 
-The wiki uses [qmd](https://www.npmjs.com/package/@tobilu/qmd) for hybrid BM25 + vector + LLM-rerank search across `wiki/` and `raw/`. **All search-using agents (wiki-search, project-assistant, wiki-enhancer, wiki-contradiction-detector) prefer qmd over `wiki.py search` when available.**
+The wiki uses [qmd](https://www.npmjs.com/package/@tobilu/qmd) for hybrid BM25 + vector + LLM-rerank search across `wiki/` and `raw/`. **All search-using agents (wiki-search, wiki-enhancer, wiki-contradiction-detector — and any AI tool answering project-scoped questions) prefer qmd over `wiki.py search` when available.**
 
 ```bash
 # Install
@@ -526,7 +559,6 @@ python3 tools/agents/wiki-agent.py ingest --source raw/sources/x.pdf
 python3 tools/agents/wiki-agent.py enhance --coverage
 python3 tools/agents/wiki-agent.py search --page "topic"
 python3 tools/agents/wiki-agent.py contradict
-python3 tools/agents/wiki-agent.py project --project <slug> --question "..."
 
 # Extra utilities
 python3 tools/wiki_extra.py next-id         # Generate next source ID

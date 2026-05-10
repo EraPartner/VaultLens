@@ -33,7 +33,7 @@ raw/          ← immutable ingested sources
        └─ projects/<slug>/   ← project workspaces (application layer)
 ```
 
-Each project has a `project.md` that declares its description, folder layout, rules, and linked wiki pages. The `project-assistant` agent reads `project.md` before answering any question, scoping its wiki search to the project's `wiki_refs` and `tags`.
+Each project has a `project.md` that declares its description, folder layout, rules, and linked wiki pages. The scaffold also drops an `AGENTS.md` (with `CLAUDE.md` and `opencode.json` shims) so any AI CLI launched from inside the project picks up the project's context plus the conventions in the root `AGENTS.md` (`## Working inside a project`).
 
 ### Scaffold a project
 
@@ -51,15 +51,9 @@ python3 tools/wiki.py project list
 python3 tools/wiki.py project show my-thesis
 ```
 
-### Ask the project-assistant
+### Work inside a project
 
-```bash
-python3 tools/agents/wiki-agent.py project \
-  --project my-thesis \
-  --question "Which attestation model fits our threat model?"
-```
-
-The agent saves durable Q&A artifacts to `projects/<slug>/queries/` by default. Project `## Rules` in `project.md` can redirect this path or add project-specific constraints.
+`cd` into `projects/<slug>/` and start your AI CLI of choice (Claude Code, opencode, Copilot CLI). The project's `AGENTS.md` instructs the agent to read `project.md` and the root schema; the root `## Working inside a project` section defines the wiki search ladder, citation discipline, and Q&A artifact convention. Durable Q&A lands in `projects/<slug>/queries/` by default, redirectable via `## Rules` in `project.md`.
 
 ### project.md schema
 

@@ -916,10 +916,10 @@ Describe what this project is, its goals, and why you're working on it.
 
 ## Layout
 
-This project owns its own folder structure. The `project-assistant` agent reads
-this section to understand where things live before answering questions.
+This project owns its own folder structure. AI tools working from this directory
+read this section to understand where things live before answering questions.
 
-- `queries/` — durable Q&A artifacts saved by `project-assistant` (default).
+- `queries/` — durable Q&A artifacts (default landing zone).
 <!-- Add your own folders here, e.g.:
 - `papers/` — relevant academic papers (PDFs + extracted notes)
 - `meetings/` — dated meeting notes and annotations
@@ -929,8 +929,9 @@ this section to understand where things live before answering questions.
 
 ## Rules
 
-Project-specific rules the `project-assistant` agent MUST follow. These override
-the agent's defaults when they conflict. Be specific.
+Project-specific rules agents working in this directory MUST follow. These
+override the defaults in the root `AGENTS.md` (`## Working inside a project`)
+when they conflict. Be specific.
 
 <!-- Examples:
 - Never summarize meeting notes from `meetings/` without asking first.
@@ -942,7 +943,7 @@ the agent's defaults when they conflict. Be specific.
 
 ## Key questions
 
-Open questions you want the `project-assistant` agent to answer using the wiki KB.
+Open questions you want to answer using the wiki KB.
 
 ## Context
 
@@ -972,9 +973,20 @@ This is a project workspace inside the Brain wiki.
 Before answering questions or editing files:
 1. Read `project.md` (this directory) — project description, layout, rules, current status.
 2. If not already loaded: read `../../AGENTS.md` — the full wiki operating schema
-   (directory contract, agents, search tools, write boundaries).
+   (directory contract, agents, search tools, write boundaries, project workflow conventions).
 
 Write only inside this project directory. Never modify `wiki/` or `raw/`.
+
+## Operating principles
+
+- **Project context wins ties.** If a wiki page recommends approach X but `project.md` (Rules, Context, prior decisions) explicitly rules it out, propose the project-compatible alternative instead.
+- **Don't fabricate around gaps.** If the wiki doesn't cover something the question requires, say so. Recommend running `wiki-ingest` (for a missing source) or `wiki-enhancer` (for shallow coverage) rather than inventing the answer.
+- **Hand off to specialists when warranted.** End answers with a follow-up note when:
+  - a wiki claim looks wrong vs. its source → recommend `wiki-source-verifier`
+  - two wiki pages appear to disagree → recommend `wiki-contradiction-detector`
+  - a referenced concept page is shallow → recommend `wiki-enhancer`
+  - a needed source isn't in the wiki yet → recommend `wiki-ingest` with the candidate path
+  - the question turns out to need no project context → suggest `wiki-search` instead
 """
 
 
