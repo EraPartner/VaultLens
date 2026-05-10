@@ -165,7 +165,7 @@ The LLM reads from `raw/` - symlinks are followed automatically. The wiki tools 
 
 `projects/` is the application layer that consumes the wiki as a knowledge base. Each subfolder is one project workspace.
 
-**Each project owns its own folder structure.** The scaffold creates `project.md`, `CLAUDE.md`, `AGENTS.md`, `opencode.json`, and a default `queries/` directory; the user defines whatever else the project needs (`papers/`, `meetings/`, `repos/`, `drafts/`, etc.). The project's layout and rules are documented inside `project.md` itself; agents operating in the project read them before answering.
+**Each project owns its own folder structure.** The scaffold creates `project.md`, `CLAUDE.md`, `AGENTS.md`, `opencode.json`, `TODO.md`, and a default `queries/` directory; the user defines whatever else the project needs (`papers/`, `meetings/`, `repos/`, `drafts/`, etc.). The project's layout and rules are documented inside `project.md` itself; agents operating in the project read them before answering.
 
 ### Minimum scaffolded structure
 
@@ -175,10 +175,13 @@ projects/<slug>/
   AGENTS.md           ← AI entrypoint: instructs any tool to read project.md + ../../AGENTS.md
   CLAUDE.md           ← Claude Code shim: @AGENTS.md (one line)
   opencode.json       ← opencode shim: instructions: ["AGENTS.md"]
+  TODO.md             ← per-project todo; embedded into projects/TODO.md
   queries/            ← default Q&A artifact landing zone (overridable in ## Rules)
 ```
 
 `AGENTS.md` is the single entrypoint for all AI tools. Claude Code imports it via `@AGENTS.md`; opencode loads it via `instructions`; Copilot CLI reads it automatically from CWD.
+
+`projects/TODO.md` aggregates each project's `TODO.md` via Obsidian embeds. The scaffold appends a new embed line each time `project new` runs, so the aggregator stays in sync without a build step.
 
 ### Common bespoke additions (user-created)
 

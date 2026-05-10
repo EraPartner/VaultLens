@@ -75,8 +75,10 @@ wiki_refs:
 ## Layout
 projects/my-thesis/
   project.md     ← metadata, description, layout, rules, wiki refs
-  context.md     ← model-agnostic AI entrypoint (auto-generated)
-  CLAUDE.md      ← Claude Code shim: @context.md (auto-generated)
+  AGENTS.md      ← AI entrypoint: read project.md + ../../AGENTS.md (auto-generated)
+  CLAUDE.md      ← Claude Code shim: @AGENTS.md (auto-generated)
+  opencode.json  ← opencode shim: instructions: ["AGENTS.md"] (auto-generated)
+  TODO.md        ← per-project todo; embedded into projects/TODO.md (auto-generated)
   queries/       ← Q&A artifacts
   papers/        ← relevant PDFs
   meetings/      ← dated meeting notes

@@ -1022,6 +1022,30 @@ def _project_list(as_json: bool) -> int:
     return 0
 
 
+def _append_to_projects_todo(slug: str) -> None:
+    """Append an Obsidian embed for the new project's TODO.md to projects/TODO.md.
+
+    Idempotent: skips if an embed for this slug already exists. Creates the
+    aggregator file with a header if it's missing.
+    """
+    aggregator = PROJECTS_DIR / "TODO.md"
+    embed_line = f"![[projects/{slug}/TODO]]"
+    header = (
+        "# Projects TODO\n\n"
+        "Aggregated view of every project's `TODO.md`, embedded live via Obsidian.\n"
+        "Edit per-project items in `projects/<slug>/TODO.md`; this file just composes them.\n"
+    )
+    existing = aggregator.read_text(encoding="utf-8") if aggregator.exists() else ""
+    if embed_line in existing:
+        return
+    if not existing.strip():
+        existing = header
+    if not existing.endswith("\n"):
+        existing += "\n"
+    existing += f"\n## {slug}\n{embed_line}\n"
+    aggregator.write_text(existing, encoding="utf-8")
+
+
 def _project_new(slug: str) -> int:
     cleaned = slug.strip().strip("/")
     if not cleaned or "/" in cleaned or cleaned.startswith("."):
@@ -1042,11 +1066,14 @@ def _project_new(slug: str) -> int:
     (project_dir / "CLAUDE.md").write_text(CLAUDE_MD_TEMPLATE, encoding="utf-8")
     (project_dir / "AGENTS.md").write_text(AGENTS_MD_TEMPLATE, encoding="utf-8")
     (project_dir / "opencode.json").write_text('{\n  "instructions": ["AGENTS.md"]\n}\n', encoding="utf-8")
+    (project_dir / "TODO.md").write_text("", encoding="utf-8")
+    _append_to_projects_todo(cleaned)
     print(f"Created project '{cleaned}' at {project_dir.relative_to(ROOT)}")
     print("  - project.md")
     print("  - AGENTS.md      (AI entrypoint → read project.md + ../../AGENTS.md)")
     print("  - CLAUDE.md      (Claude Code shim → @AGENTS.md)")
     print("  - opencode.json  (opencode shim → instructions: [AGENTS.md])")
+    print("  - TODO.md        (per-project todo; embedded into projects/TODO.md)")
     print("  - queries/       (default Q&A artifact dir; redefine in ## Rules if you want)")
     print(
         f"\nNext steps:\n"
