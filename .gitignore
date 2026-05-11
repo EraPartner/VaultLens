@@ -1,18 +1,24 @@
-.gitignore
 .DS_Store
 
 .claude
-.obsidian
 .ruff_cache
-.mcp.json
-opencode.json
 __pycache__
+
+# Obsidian: ignore workspace state and personal UI preferences. Carve out
+# scaffold-relevant plugin settings (Templater folder templates) so they
+# travel with the skeleton repo. Add more plugin data.json files here if
+# their settings become part of the scaffold.
+.obsidian/*
+!.obsidian/plugins/
+.obsidian/plugins/*
+!.obsidian/plugins/templater-obsidian/
+.obsidian/plugins/templater-obsidian/*
+!.obsidian/plugins/templater-obsidian/data.json
 
 raw/assets/*
 raw/inbox/*
 raw/sources/*
 raw/sources-text/*
-raw/.DS_Store
 wiki/comparisons/*
 wiki/concepts/*
 wiki/entities/*

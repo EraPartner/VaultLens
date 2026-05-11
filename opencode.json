@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "read": "allow",
+    "bash": "allow",
+    "write": "ask",
+    "edit": "ask"
+  },
+  "mcp": {
+    "qmd": {
+      "type": "local",
+      "command": ["qmd", "mcp"]
+    }
+  },
+  "instructions": ["AGENTS.md"]
+}

@@ -1,0 +1,70 @@
+{
+  "command_timeout": 5,
+  "templates_folder": "wiki/_templates",
+  "templates_pairs": [
+    [
+      "",
+      ""
+    ]
+  ],
+  "trigger_on_file_creation": true,
+  "auto_jump_to_cursor": true,
+  "enable_system_commands": false,
+  "shell_path": "",
+  "user_scripts_folder": "",
+  "enable_folder_templates": true,
+  "folder_templates": [
+    {
+      "folder": "wiki/sources",
+      "template": "wiki/_templates/source.md"
+    },
+    {
+      "folder": "wiki/entities",
+      "template": "wiki/_templates/entity.md"
+    },
+    {
+      "folder": "wiki/concepts",
+      "template": "wiki/_templates/concept.md"
+    },
+    {
+      "folder": "wiki/topics",
+      "template": "wiki/_templates/topic.md"
+    },
+    {
+      "folder": "wiki/syntheses",
+      "template": "wiki/_templates/synthesis.md"
+    },
+    {
+      "folder": "wiki/comparisons",
+      "template": "wiki/_templates/comparison.md"
+    },
+    {
+      "folder": "wiki/queries",
+      "template": "wiki/_templates/query.md"
+    },
+    {
+      "folder": "wiki/reports",
+      "template": "wiki/_templates/report.md"
+    },
+    {
+      "folder": "projects",
+      "template": "wiki/_templates/project-todo.md"
+    }
+  ],
+  "enable_file_templates": false,
+  "file_templates": [
+    {
+      "regex": ".*",
+      "template": ""
+    }
+  ],
+  "syntax_highlighting": true,
+  "syntax_highlighting_mobile": true,
+  "enabled_templates_hotkeys": [
+    ""
+  ],
+  "startup_templates": [
+    ""
+  ],
+  "intellisense_render": 1
+}
