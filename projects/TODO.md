@@ -1,7 +1,6 @@
-# Projects TODO
+# Projects TODO (live)
 
-Aggregated view of every project's `TODO.md`, embedded live via Obsidian.
-Edit per-project items in `projects/<slug>/TODO.md`; this file just composes them.
+Live aggregator: each section embeds the per-project `TODO.md` so edits propagate instantly in desktop Obsidian. The iOS Obsidian widget cannot render embeds, point it at `TODO-widget.md` instead. Per-project files use the Obsidian Tasks plugin emoji format: priority 🔺/⏫/🔼/🔽/⏬, dates 📅/🛫/⏳.
 
 ## dep-iteration-3
 ![[projects/dep-iteration-3/TODO]]
@@ -20,3 +19,4 @@ Edit per-project items in `projects/<slug>/TODO.md`; this file just composes the
 
 ## watchman
 ![[projects/watchman/TODO]]
+

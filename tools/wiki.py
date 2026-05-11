@@ -990,6 +990,19 @@ Write only inside this project directory. Never modify `wiki/` or `raw/`.
 """
 
 
+# Per-project TODO seed. Plain checkboxes in the Obsidian Tasks plugin emoji
+# format: add `⏫`/`🔺` priority, `📅 YYYY-MM-DD` due dates, etc. via the
+# editor autosuggest (`obsidian-tasks-plugin` is configured for this vault).
+# Mirrors `wiki/_templates/project-todo.md` (Templater), which auto-applies when
+# a TODO.md is created interactively in Obsidian; this constant is used when
+# the project is scaffolded via `wiki.py project new`.
+TODO_TEMPLATE = """\
+# {slug} TODO
+
+- [ ]
+"""
+
+
 def _project_list(as_json: bool) -> int:
     projects = list_projects()
     if as_json:
@@ -1022,28 +1035,17 @@ def _project_list(as_json: bool) -> int:
     return 0
 
 
-def _append_to_projects_todo(slug: str) -> None:
-    """Append an Obsidian embed for the new project's TODO.md to projects/TODO.md.
+def _rebuild_projects_todo() -> None:
+    """Regenerate the two project-TODO aggregators.
 
-    Idempotent: skips if an embed for this slug already exists. Creates the
-    aggregator file with a header if it's missing.
+    Writes both `projects/TODO.md` (live, embed-based for desktop Obsidian)
+    and `projects/TODO-widget.md` (P1-only inlined for the iOS widget).
+    Delegates to the shell script so the rebuild logic stays single-sourced.
     """
-    aggregator = PROJECTS_DIR / "TODO.md"
-    embed_line = f"![[projects/{slug}/TODO]]"
-    header = (
-        "# Projects TODO\n\n"
-        "Aggregated view of every project's `TODO.md`, embedded live via Obsidian.\n"
-        "Edit per-project items in `projects/<slug>/TODO.md`; this file just composes them.\n"
-    )
-    existing = aggregator.read_text(encoding="utf-8") if aggregator.exists() else ""
-    if embed_line in existing:
-        return
-    if not existing.strip():
-        existing = header
-    if not existing.endswith("\n"):
-        existing += "\n"
-    existing += f"\n## {slug}\n{embed_line}\n"
-    aggregator.write_text(existing, encoding="utf-8")
+    import subprocess
+
+    script = ROOT / "tools" / "scripts" / "rebuild-projects-todo.sh"
+    subprocess.run([str(script)], check=True)
 
 
 def _project_new(slug: str) -> int:
@@ -1066,14 +1068,16 @@ def _project_new(slug: str) -> int:
     (project_dir / "CLAUDE.md").write_text(CLAUDE_MD_TEMPLATE, encoding="utf-8")
     (project_dir / "AGENTS.md").write_text(AGENTS_MD_TEMPLATE, encoding="utf-8")
     (project_dir / "opencode.json").write_text('{\n  "instructions": ["AGENTS.md"]\n}\n', encoding="utf-8")
-    (project_dir / "TODO.md").write_text("", encoding="utf-8")
-    _append_to_projects_todo(cleaned)
+    (project_dir / "TODO.md").write_text(
+        TODO_TEMPLATE.format(slug=cleaned), encoding="utf-8"
+    )
+    _rebuild_projects_todo()
     print(f"Created project '{cleaned}' at {project_dir.relative_to(ROOT)}")
     print("  - project.md")
     print("  - AGENTS.md      (AI entrypoint → read project.md + ../../AGENTS.md)")
     print("  - CLAUDE.md      (Claude Code shim → @AGENTS.md)")
     print("  - opencode.json  (opencode shim → instructions: [AGENTS.md])")
-    print("  - TODO.md        (per-project todo; embedded into projects/TODO.md)")
+    print("  - TODO.md        (per-project todo; embedded into projects/TODO.md, P1 items surface in projects/TODO-widget.md)")
     print("  - queries/       (default Q&A artifact dir; redefine in ## Rules if you want)")
     print(
         f"\nNext steps:\n"
