@@ -49,36 +49,36 @@ WIDGET="$PROJECTS_DIR/TODO-widget.md"
 } > "$LIVE"
 
 # === Widget aggregator (filtered, inlined) ===
+# Flatten all matching blocks across projects, then sort alphabetically by
+# the parent line. Subtasks stay glued to their parent: each block is
+# emitted on a single line with internal newlines encoded as \v (vertical
+# tab), then decoded back to \n after sort.
 {
   echo "# Projects TODO (widget)"
   echo
-  echo "Filtered selection for the iOS Obsidian widget: items with a 📅 due date or ⏫/🔺 priority (plus their subtasks). Projects with no matches are omitted. Run \`tools/scripts/rebuild-projects-todo.sh\` to refresh."
-  echo
-  for dir in "$PROJECTS_DIR"/*/; do
-    slug="$(basename "$dir")"
-    todo="$dir/TODO.md"
-    [ -f "$todo" ] || continue
-    # Keep top-level items that have a due date or high/highest priority
-    # emoji, plus any indented subtask under such an item.
-    matched=$(awk '
-      /^- \[/ {
-        keep = ($0 ~ /⏫/ || $0 ~ /🔺/ || $0 ~ /📅/)
-        if (keep) print
-        next
-      }
-      /^[ \t]+- \[/ {
-        if (keep) print
-        next
-      }
-      { next }
-    ' "$todo")
-    if [ -n "$matched" ]; then
-      echo "## $slug"
-      echo
-      printf '%s\n' "$matched"
-      echo
-    fi
-  done
+  {
+    for dir in "$PROJECTS_DIR"/*/; do
+      todo="$dir/TODO.md"
+      [ -f "$todo" ] || continue
+      awk '
+        function flush() {
+          if (block != "") print block
+          block = ""
+        }
+        /^- \[/ {
+          flush()
+          keep = ($0 ~ /⏫/ || $0 ~ /🔺/ || $0 ~ /📅/)
+          if (keep) block = $0
+          next
+        }
+        /^[ \t]+- \[/ {
+          if (keep && block != "") block = block "\v" $0
+          next
+        }
+        END { flush() }
+      ' "$todo"
+    done
+  } | sort | tr '\v' '\n'
 } > "$WIDGET"
 
 echo "Wrote $LIVE"
