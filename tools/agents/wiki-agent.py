@@ -75,6 +75,40 @@ CLI_OPTIONS = {
     "copilot": "copilot",
 }
 
+# Per-agent runtime permissions. Used by the copilot and claude branches to
+# pass a minimal set of --allow-tool / --allowedTools / --add-dir flags.
+#   shell:         grant a curated read-only shell command set.
+#   write:         grant the file write/edit tool (+ extra shell tools needed to manage files).
+#   writable_dirs: paths (relative to ROOT) the agent must be able to modify. Empty for read-only
+#                  agents. CLIs that scope writes to specific directories use this list.
+AGENT_PERMISSIONS: dict[str, dict] = {
+    "quality":    {"shell": False, "write": False, "writable_dirs": []},
+    "verify":     {"shell": False, "write": False, "writable_dirs": []},
+    "search":     {"shell": True,  "write": False, "writable_dirs": []},
+    "contradict": {"shell": True,  "write": False, "writable_dirs": []},
+    "ingest":     {"shell": True,  "write": True,  "writable_dirs": ["wiki"]},
+    "enhance":    {"shell": True,  "write": True,  "writable_dirs": ["wiki"]},
+}
+
+# Shell commands granted to any agent with shell access. Strictly read-only;
+# helper utilities for navigation, text inspection, search, and wiki tooling.
+READ_ONLY_SHELL_COMMANDS = (
+    "ls", "find", "grep", "cat", "head", "tail", "wc",
+    "sort", "uniq", "cut", "tr", "date",
+    "python3", "qmd",
+)
+
+# Shell commands granted only to write-capable agents. Filesystem mutators
+# (mkdir/touch) and text editors used in scripted edits (sed/awk in-place).
+WRITE_SHELL_COMMANDS = ("touch", "mkdir", "mv", "cp", "sed", "awk")
+
+
+def _agent_permissions(agent: str) -> dict:
+    """Return the permission profile for an agent, defaulting to read-only."""
+    return AGENT_PERMISSIONS.get(
+        agent, {"shell": False, "write": False, "writable_dirs": []}
+    )
+
 STRATEGY_HINTS = {
     "coverage": (
         "Selection strategy: use **Strategy C — Sparse coverage** from "
@@ -427,36 +461,63 @@ def invoke_agent(
         if extra_args:
             paths = "\n".join(f"- {p}" for p in extra_args)
             full_prompt += f"\n\nFiles to read:\n{paths}"
-        cmd = ["copilot", "-p", full_prompt]
+        perms = _agent_permissions(agent)
+        # -C ROOT pins copilot's cwd to the repo root. Copilot's default path
+        # policy restricts file access to cwd and its subdirectories, so we get
+        # a repo-scoped sandbox without --allow-all-paths.
+        cmd = ["copilot", "-p", full_prompt, "-C", str(ROOT)]
         if model:
             cmd.extend(["--model", model])
         cmd.extend(effort_flags)
-        cmd.extend(
-            [
-                "--allow-all-paths",
-                "--allow-tool=read",
-                "--allow-tool=shell(ls:*)",
-                "--allow-tool=shell(find:*)",
-                "--allow-tool=shell(grep:*)",
-                "--allow-tool=shell(cat:*)",
-                "--allow-tool=shell(head:*)",
-                "--allow-tool=shell(tail:*)",
-                "--allow-tool=shell(wc:*)",
-                "--allow-tool=shell(python3:*)",
-                "--allow-tool=shell(qmd:*)",
-                "--allow-tool=qmd",
-            ]
-        )
+        # Reading source/wiki pages is always required.
+        cmd.append("--allow-tool=read")
+        # Shell allowlist — curated per profile, no blanket shell access.
+        if perms["shell"]:
+            for c in READ_ONLY_SHELL_COMMANDS:
+                cmd.append(f"--allow-tool=shell({c}:*)")
+            if perms["write"]:
+                for c in WRITE_SHELL_COMMANDS:
+                    cmd.append(f"--allow-tool=shell({c}:*)")
+        # The write tool covers create/edit/delete via the native file tool
+        # (separate from shell redirection, which --allow-all-tools would gate).
+        if perms["write"]:
+            cmd.append("--allow-tool=write")
+        # qmd MCP server is used by search/enhance agents for vector lookup.
+        cmd.append("--allow-tool=qmd")
+        # Belt-and-braces: explicitly add the writable subdirs. Redundant with
+        # -C ROOT for in-repo paths, but documents intent.
+        for d in perms.get("writable_dirs", []):
+            cmd.extend(["--add-dir", str(ROOT / d)])
 
     elif cli in ("claude", "ollama"):
         system_text, system_file = _prepare_system_prompt(agent_file, system_addon)
         if cli == "claude":
             # claude -p --model MODEL --system-prompt "text" "task"
+            perms = _agent_permissions(agent)
             cmd = ["claude", "-p"]
             if model:
                 cmd.extend(["--model", model])
             cmd.extend(effort_flags)
             cmd.extend(["--system-prompt", system_text])
+            # Build the --allowedTools list to match the agent's profile.
+            allowed_tools = ["Read"]
+            if perms["shell"]:
+                allowed_tools.extend(f"Bash({c} *)" for c in READ_ONLY_SHELL_COMMANDS)
+                if perms["write"]:
+                    allowed_tools.extend(f"Bash({c} *)" for c in WRITE_SHELL_COMMANDS)
+            if perms["write"]:
+                allowed_tools.extend(["Edit", "Write", "NotebookEdit"])
+            cmd.extend(["--allowedTools", ",".join(allowed_tools)])
+            # Scope writes to the agent's writable_dirs. Claude reads from the
+            # whole repo by default; --add-dir is needed when the writable
+            # target lives outside the launching directory.
+            for d in perms.get("writable_dirs", []):
+                cmd.extend(["--add-dir", str(ROOT / d)])
+            # Permission mode: acceptEdits allows non-interactive edits within
+            # the allowed tool set; default still prompts for anything else.
+            cmd.extend(
+                ["--permission-mode", "acceptEdits" if perms["write"] else "default"]
+            )
             cmd.extend(extra_args)
             cmd.append(prompt)
         else:
