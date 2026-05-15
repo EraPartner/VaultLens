@@ -2,8 +2,10 @@
 description: >-
   Enhance existing wiki pages by re-reading original source material into a
   canonical, dense reference structure. Strengthens cross-topic interlinking,
-  expands sparse coverage, and supports iterative loop mode (shallowest stub or
-  random page) for periodic continuous improvement.
+  expands sparse coverage, discovers topics present in sources but missing from
+  the wiki, and supports iterative loop mode (sparse coverage, source-gap
+  discovery, random page, shallowest stub, or agent-chosen) for periodic
+  continuous improvement.
 mode: all
 tools:
   bash: true
@@ -26,7 +28,7 @@ Think deeply. Be thorough. Prefer depth over breadth per run.
 - Source-fidelity verification of a single page without making fixes — that is `wiki-source-verifier`.
 - Cross-page conflict detection as its primary task — recommend `wiki-contradiction-detector` as a follow-up handoff.
 
-**Use this agent when**: an already-ingested source still has shallow coverage, the wiki has sparse subtopics flagged by `wiki.py coverage`, interlinking between concept pages is weak, or the user asks to "enhance / expand / continue building" the wiki / "next stub" / "random page" / "keep going on the knowledge base".
+**Use this agent when**: an already-ingested source still has shallow coverage, the wiki has sparse subtopics flagged by `wiki.py coverage`, an ingested source still has chapters/topics with no corresponding wiki page, interlinking between concept pages is weak, or the user asks to "enhance / expand / continue building" the wiki / "next stub" / "random page" / "fill gaps from source X" / "what's missing from this source" / "keep going on the knowledge base".
 
 ## Inputs you may receive
 
@@ -63,7 +65,33 @@ python3 tools/wiki.py coverage --json
 ```
 Pick the topic with the lowest coverage score where a dense source exists.
 
-If running multiple iterations in a session, alternate strategies (e.g. two shallowest stubs then one random page) to keep the knowledge base balanced.
+**D) Source-driven gap discovery** — for `--strategy source-gap`, "fill gaps from source X", "what's missing from this source", or when wiki coverage is shallow relative to a dense ingested source. **This is the strategy for catching topics the source covers well but the wiki has never created a page for.**
+
+Process:
+1. Pick a source. Prefer the **least-recently-enhanced** ingested source; otherwise random.
+   ```bash
+   tail -40 wiki/log.md                    # see what was enhanced recently
+   ls wiki/sources/src-*.md                # full list of ingested sources
+   python3 -c "import random, glob; print(random.choice(glob.glob('wiki/sources/src-*.md')))"
+   ```
+2. Read the source page (`wiki/sources/src-<slug>.md`) for the recorded `## Core Concepts` list and `## Coverage Notes`.
+3. Read the pre-extracted source text (`raw/sources-text/<stem>.md`) — scan its chapter/section structure and named concepts (Definitions, Theorems, Algorithms, named techniques).
+4. **Build a gap list**: for each significant topic in the source, check whether a concept page exists.
+   ```bash
+   ls wiki/concepts/ | grep -iE "topic-fragment"
+   qmd query "<topic question>" --json    # semantic match — catches synonyms
+   ```
+   A topic is "missing" if no page exists, or "shallow" if the page is < 100 lines while the source treats it across multiple sections.
+5. Rank gaps by value: depth of source treatment × centrality of the topic × absence of any cross-source coverage.
+6. Pick 2–5 highest-value gaps for this run. For each: either **create a new concept page** (workflow step 4) or **expand the shallow existing one** with this source's content (workflow step 3). Update the source page's `## Core Concepts` list afterward.
+
+This strategy is the primary complement to (C): (C) picks based on coverage *scores*, but (D) picks based on direct source-vs-wiki cross-referencing, which catches topics the coverage tool can't see because no page exists yet.
+
+**E) Mixed / agent-chosen** — for `--strategy auto` or "just enhance" / "do what's most useful":
+
+Read `tail -30 wiki/log.md` and glance at `wiki/concepts/` size distribution. Pick whichever of A–D would most benefit the wiki right now, avoiding the strategy used in the most recent log entry to keep variety. Bias toward (D) when the recent log shows several (A)/(B)/(C) passes in a row.
+
+**Alternation note:** if running multiple iterations in a session, alternate strategies to keep the knowledge base balanced. The wrapper's `--strategy alternate` cycles **C → D → B → A** across iterations (sparse coverage → source-gap → random → stub). Override with `--strategy auto` to let the agent pick each round.
 
 **Rewrite depth rule:** If the picked page is already > 150 lines, do a **targeted improvement pass** rather than a full rewrite — identify the weakest or missing sections and strengthen only those. A full rewrite is for stubs and thin pages.
 

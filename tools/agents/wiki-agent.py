@@ -2,8 +2,12 @@
 """Wiki agent wrapper - invoke AI agents with configurable models and effort."""
 
 import argparse
+import datetime as _dt
+import itertools
+import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -71,8 +75,61 @@ CLI_OPTIONS = {
     "copilot": "copilot",
 }
 
+STRATEGY_HINTS = {
+    "coverage": (
+        "Selection strategy: use **Strategy C — Sparse coverage** from "
+        "wiki-enhancer.agent.md. Run `python3 tools/wiki.py coverage --json` "
+        "and pick the topic with the lowest coverage score where a dense "
+        "source exists."
+    ),
+    "random": (
+        "Selection strategy: use **Strategy B — Random page** from "
+        "wiki-enhancer.agent.md. Pick a random concept page; first glance "
+        "at `tail -20 wiki/log.md` to avoid repeating recent work."
+    ),
+    "stub": (
+        "Selection strategy: use **Strategy A — Shallowest stub** from "
+        "wiki-enhancer.agent.md. Pick the concept page with the fewest lines."
+    ),
+    "source-gap": (
+        "Selection strategy: use **Strategy D — Source-driven gap discovery** "
+        "from wiki-enhancer.agent.md. Pick a source from wiki/sources/ "
+        "(prefer least-recently-enhanced per `tail -40 wiki/log.md`), read "
+        "its pre-extracted text at raw/sources-text/<stem>.md, build a gap "
+        "list of topics covered well in the source but missing or shallow "
+        "in wiki/concepts/, and create new pages or deeply expand the "
+        "existing shallow ones — 2-5 gaps per run."
+    ),
+    "auto": (
+        "Selection strategy: use **Strategy E — Mixed / agent-chosen** from "
+        "wiki-enhancer.agent.md. Read `tail -30 wiki/log.md`, glance at the "
+        "concept page size distribution, and pick whichever of Strategies "
+        "A-D would most benefit the wiki right now. Avoid the strategy "
+        "used in the most recent log entry."
+    ),
+}
+
+ALTERNATE_CYCLE = ["coverage", "source-gap", "random", "stub"]
+
+
+def _resolve_strategy(strategy: str | None, iteration_index: int) -> str | None:
+    """Resolve the per-iteration strategy.
+
+    'alternate' cycles through ALTERNATE_CYCLE (coverage -> source-gap ->
+    random -> stub) across iterations.
+    """
+    if strategy == "alternate":
+        return ALTERNATE_CYCLE[iteration_index % len(ALTERNATE_CYCLE)]
+    return strategy
+
+
 EFFORT_MAP = {
-    "low": {"opencode": ["--variant", "minimal"], "claude": [], "ollama": [], "copilot": ["--effort", "low"]},
+    "low": {
+        "opencode": ["--variant", "minimal"],
+        "claude": [],
+        "ollama": [],
+        "copilot": ["--effort", "low"],
+    },
     "medium": {"opencode": [], "claude": [], "ollama": [], "copilot": []},
     "high": {
         "opencode": ["--variant", "xhigh"],
@@ -106,6 +163,12 @@ Examples:
 
   # Run ingest with Ollama
   python3 tools/agents/wiki-agent.py ingest --source raw/sources/paper.pdf --cli ollama --model llama3
+
+  # Background enhancement loop (alternate strategies, never stop, survives errors)
+  python3 tools/agents/wiki-agent.py enhance --background &
+  disown
+  tail -f wiki/log/bg-enhance-*.log     # follow progress
+  kill <pid printed at startup>         # stop it
 """,
     )
 
@@ -123,7 +186,65 @@ Examples:
     parser.add_argument(
         "--coverage",
         action="store_true",
-        help="Enhance mode: let the agent pick the sparsest target from wiki.py coverage",
+        help="Enhance mode: shorthand for --strategy coverage (sparsest target from wiki.py coverage)",
+    )
+    parser.add_argument(
+        "--strategy",
+        choices=["coverage", "random", "stub", "source-gap", "auto", "alternate"],
+        help=(
+            "Enhance mode: selection strategy when no concrete target is given. "
+            "'coverage' = sparsest topic, 'random' = random concept page, "
+            "'stub' = shallowest stub, 'source-gap' = find topics in a source "
+            "that are missing or shallow in the wiki and add them, "
+            "'auto' = let the agent pick the most useful strategy this run, "
+            "'alternate' = cycle coverage -> source-gap -> random -> stub "
+            "across iterations. Defaults to 'alternate' when --iterations > 1."
+        ),
+    )
+    parser.add_argument(
+        "--iterations",
+        type=int,
+        default=1,
+        help="Enhance mode: run the agent N times in a loop (default: 1).",
+    )
+    parser.add_argument(
+        "--forever",
+        action="store_true",
+        help="Enhance mode: iterate indefinitely until Ctrl-C / kill (overrides --iterations).",
+    )
+    parser.add_argument(
+        "--continue-on-error",
+        dest="continue_on_error",
+        action="store_true",
+        help="Enhance mode: do not abort the loop when an iteration fails; log and continue.",
+    )
+    parser.add_argument(
+        "--max-failures",
+        dest="max_failures",
+        type=int,
+        default=5,
+        help=(
+            "Enhance mode: abort after N consecutive failed iterations even when "
+            "--continue-on-error is set (default: 5). Use 0 to disable."
+        ),
+    )
+    parser.add_argument(
+        "--log-file",
+        dest="log_file",
+        help=(
+            "Path to a log file. Stdout and stderr (including subprocess output) "
+            "are redirected here in append mode."
+        ),
+    )
+    parser.add_argument(
+        "--background",
+        action="store_true",
+        help=(
+            "Enhance mode: convenience flag that enables --continue-on-error, "
+            "--forever (unless --iterations N is set), and auto-routes output to "
+            "wiki/log/bg-enhance-<timestamp>.log. Combine with shell `&` and "
+            "`disown`, or `nohup ... &`, to detach from your shell."
+        ),
     )
     parser.add_argument(
         "--pdf",
@@ -132,8 +253,8 @@ Examples:
     parser.add_argument(
         "--cli",
         choices=list(CLI_OPTIONS.keys()),
-        default="opencode",
-        help="CLI to use (default: opencode)",
+        default="copilot",
+        help="CLI to use (default: copilot)",
     )
     parser.add_argument(
         "--model",
@@ -141,7 +262,7 @@ Examples:
     )
     parser.add_argument(
         "--effort",
-        choices=["low", "medium", "high"],
+        choices=["low", "medium", "high", "xhigh"],
         default="medium",
         help="Thinking effort (default: medium)",
     )
@@ -178,7 +299,14 @@ def validate_cli(cli: str) -> bool:
     return shutil.which(cli) is not None
 
 
-def build_prompt(agent: str, page: str, source: str, custom: str, cli: str = "") -> str:
+def build_prompt(
+    agent: str,
+    page: str,
+    source: str,
+    custom: str,
+    cli: str = "",
+    strategy: str | None = None,
+) -> str:
     """Build the task prompt - simple description, full instructions come from .agent.md via system prompt."""
     if custom:
         return custom
@@ -226,7 +354,10 @@ def build_prompt(agent: str, page: str, source: str, custom: str, cli: str = "")
             ),
         }
 
-    return prompts.get(agent, "Analyze and report.")
+    base = prompts.get(agent, "Analyze and report.")
+    if agent == "enhance" and strategy and strategy in STRATEGY_HINTS:
+        base = f"{base}\n\n{STRATEGY_HINTS[strategy]}"
+    return base
 
 
 def _prepare_system_prompt(agent_file: Path, system_addon: str) -> tuple[str, Path]:
@@ -300,20 +431,22 @@ def invoke_agent(
         if model:
             cmd.extend(["--model", model])
         cmd.extend(effort_flags)
-        cmd.extend([
-            "--allow-all-paths",
-            "--allow-tool=read",
-            "--allow-tool=shell(ls:*)",
-            "--allow-tool=shell(find:*)",
-            "--allow-tool=shell(grep:*)",
-            "--allow-tool=shell(cat:*)",
-            "--allow-tool=shell(head:*)",
-            "--allow-tool=shell(tail:*)",
-            "--allow-tool=shell(wc:*)",
-            "--allow-tool=shell(python3:*)",
-            "--allow-tool=shell(qmd:*)",
-            "--allow-tool=qmd",
-        ])
+        cmd.extend(
+            [
+                "--allow-all-paths",
+                "--allow-tool=read",
+                "--allow-tool=shell(ls:*)",
+                "--allow-tool=shell(find:*)",
+                "--allow-tool=shell(grep:*)",
+                "--allow-tool=shell(cat:*)",
+                "--allow-tool=shell(head:*)",
+                "--allow-tool=shell(tail:*)",
+                "--allow-tool=shell(wc:*)",
+                "--allow-tool=shell(python3:*)",
+                "--allow-tool=shell(qmd:*)",
+                "--allow-tool=qmd",
+            ]
+        )
 
     elif cli in ("claude", "ollama"):
         system_text, system_file = _prepare_system_prompt(agent_file, system_addon)
@@ -394,12 +527,14 @@ def _auto_log_ingest(source_path: str) -> None:
     )
 
 
-def run_agent(args) -> int:
+def run_agent(args, strategy: str | None = None) -> int:
     """Run the specified agent."""
     # Build prompt
     page = args.page or ""
     source = args.source or ""
-    prompt = build_prompt(args.agent, page, source, args.prompt or "", args.cli)
+    prompt = build_prompt(
+        args.agent, page, source, args.prompt or "", args.cli, strategy=strategy
+    )
 
     # Get model
     model = args.model or get_default_model(args.cli)
@@ -461,6 +596,34 @@ def run_agent(args) -> int:
     return rc
 
 
+_STOP_REQUESTED = False
+
+
+def _install_signal_handlers() -> None:
+    """Set _STOP_REQUESTED on SIGINT/SIGTERM so the loop exits between iterations."""
+
+    def _handler(signum, _frame):
+        global _STOP_REQUESTED
+        _STOP_REQUESTED = True
+        name = signal.Signals(signum).name
+        print(f"\n[wiki-agent] {name} received; finishing current iteration then exiting.")
+
+    signal.signal(signal.SIGINT, _handler)
+    signal.signal(signal.SIGTERM, _handler)
+
+
+def _redirect_output_to_log(log_path: Path) -> None:
+    """Send stdout, stderr, and inherited subprocess output to log_path (append)."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(log_path, "a", buffering=1, encoding="utf-8")
+    os.dup2(fh.fileno(), sys.stdout.fileno())
+    os.dup2(fh.fileno(), sys.stderr.fileno())
+
+
+def _ts() -> str:
+    return _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -473,16 +636,112 @@ def main(argv=None) -> int:
             parser.print_help()
             return 1
 
-    if args.agent == "enhance" and not (
-        args.page or args.topic or args.source or args.pdf or args.coverage
+    # --coverage is a shorthand for --strategy coverage
+    if args.agent == "enhance" and args.coverage and not args.strategy:
+        args.strategy = "coverage"
+
+    # --background bundles sensible defaults for fire-and-forget loops.
+    iterations_explicit = args.iterations != 1
+    if args.agent == "enhance" and args.background:
+        args.continue_on_error = True
+        if not iterations_explicit and not args.forever:
+            args.forever = True
+        if not args.log_file:
+            stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+            args.log_file = str(ROOT / "wiki" / "log" / f"bg-enhance-{stamp}.log")
+
+    # Multi-iteration / forever runs without a concrete target default to alternating.
+    has_concrete_target = bool(args.page or args.topic or args.source or args.pdf)
+    if (
+        args.agent == "enhance"
+        and (args.iterations > 1 or args.forever)
+        and not args.strategy
+        and not has_concrete_target
     ):
+        args.strategy = "alternate"
+
+    if args.agent == "enhance" and not (has_concrete_target or args.strategy):
         print(
-            "Error: enhance requires one of --page, --topic, --source, --pdf, or --coverage"
+            "Error: enhance requires one of --page, --topic, --source, --pdf, "
+            "--coverage, or --strategy"
         )
         parser.print_help()
         return 1
 
-    return run_agent(args)
+    if args.iterations < 1:
+        print("Error: --iterations must be >= 1")
+        return 1
+
+    if args.log_file:
+        log_path = Path(args.log_file).expanduser()
+        if not log_path.is_absolute():
+            log_path = ROOT / log_path
+        _redirect_output_to_log(log_path)
+        print(f"[wiki-agent] {_ts()} pid={os.getpid()} logging to {log_path}")
+        print(f"[wiki-agent] stop with: kill {os.getpid()}")
+
+    _install_signal_handlers()
+
+    is_enhance = args.agent == "enhance"
+    if is_enhance and args.forever:
+        iter_source = itertools.count()
+        total_label = "inf"
+    elif is_enhance:
+        iter_source = range(args.iterations)
+        total_label = str(args.iterations)
+    else:
+        iter_source = range(1)
+        total_label = "1"
+
+    last_rc = 0
+    successes = 0
+    failures = 0
+    consecutive_failures = 0
+    strategy_counts: dict[str, int] = {}
+    iter_count = 0
+
+    for i in iter_source:
+        if _STOP_REQUESTED:
+            break
+        iter_count = i + 1
+        per_iter_strategy = _resolve_strategy(args.strategy, i)
+        if is_enhance and (args.forever or args.iterations > 1):
+            label = per_iter_strategy or "default"
+            print(
+                f"\n=== [{_ts()}] Iteration {iter_count}/{total_label} "
+                f"— strategy: {label} ===\n"
+            )
+            strategy_counts[label] = strategy_counts.get(label, 0) + 1
+
+        last_rc = run_agent(args, strategy=per_iter_strategy)
+
+        if last_rc == 0:
+            successes += 1
+            consecutive_failures = 0
+        else:
+            failures += 1
+            consecutive_failures += 1
+            print(f"[wiki-agent] {_ts()} iteration {iter_count} failed with rc={last_rc}")
+            if not args.continue_on_error:
+                print("[wiki-agent] stopping loop (use --continue-on-error to keep going).")
+                break
+            if args.max_failures and consecutive_failures >= args.max_failures:
+                print(
+                    f"[wiki-agent] {consecutive_failures} consecutive failures "
+                    f">= --max-failures={args.max_failures}; aborting."
+                )
+                break
+
+    if is_enhance and iter_count > 1:
+        print(
+            f"\n[wiki-agent] {_ts()} loop ended — "
+            f"iterations={iter_count} successes={successes} failures={failures}"
+        )
+        if strategy_counts:
+            breakdown = ", ".join(f"{k}={v}" for k, v in sorted(strategy_counts.items()))
+            print(f"[wiki-agent] strategy breakdown: {breakdown}")
+
+    return last_rc
 
 
 if __name__ == "__main__":
