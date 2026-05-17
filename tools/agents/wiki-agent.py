@@ -474,6 +474,14 @@ def invoke_agent(
             paths = "\n".join(f"- {p}" for p in extra_args)
             full_prompt += f"\n\nFiles to read:\n{paths}"
         perms = _agent_permissions(agent)
+        # Known upstream bug (github/copilot-cli#1592): --allow-tool patterns
+        # are silently ignored in headless -p mode, so the granular flags below
+        # don't actually grant anything today — the model still tries to prompt
+        # and the run dies because there's no TTY. We rely on
+        # ~/.copilot/permissions-config.json to pre-approve the shell commands
+        # for this repo; run tools/scripts/setup-copilot-perms.sh once to seed
+        # it. The --allow-tool flags stay here so they take effect again the
+        # moment the upstream bug is fixed.
         # -C ROOT pins copilot's cwd to the repo root. Copilot's default path
         # policy restricts file access to cwd and its subdirectories, so we get
         # a repo-scoped sandbox without --allow-all-paths.
