@@ -185,7 +185,20 @@ After enhancing, update the source page (`wiki/sources/src-*.md`):
   ```bash
   ls wiki/concepts/ | grep -iE "fragment-of-broken-name"
   ```
-- Run `python3 tools/wiki.py append-log --operation enhance --title "<source or topic name>" --summary "<one line>" --page <each touched page> --source <pdf-path>` to record the enhancement.
+- Record the enhancement in `wiki/log.md`. **Always use the JSON-file path** — never put title/summary directly on the command line, because copilot rejects shell calls containing `&`, `;`, `(...)`, etc. (which are common in titles like "K&R2" or summaries with chapter refs like "(5.11)").
+
+  1. Write the entry to a temp JSON file (e.g. `/tmp/wiki-log.json`):
+     ```json
+     {
+       "operation": "enhance",
+       "title": "<source or topic name>",
+       "summary": "<one line>",
+       "pages": ["wiki/concepts/foo.md", "wiki/concepts/bar.md"],
+       "sources": ["raw/sources/some.pdf"],
+       "notes": ""
+     }
+     ```
+  2. Append it: `python3 tools/wiki.py append-log --from-json /tmp/wiki-log.json`
 
 **Good log summary**: name the specific sections added and key content — e.g. *"Added Huffman trie construction algorithm, Proposition T/U optimality proofs, and LZW worked example from Sedgewick §5.5; expanded Variants to cover adaptive Huffman and DEFLATE."*
 

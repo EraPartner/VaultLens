@@ -1296,15 +1296,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     log_parser = sub.add_parser("append-log", help="Append entry to wiki/log.md")
     log_parser.add_argument(
-        "--operation", required=True, help="ingest|query|lint|other"
+        "--operation", help="ingest|query|lint|other (omit when using --from-json)"
     )
-    log_parser.add_argument("--title", required=True, help="Entry title")
-    log_parser.add_argument("--summary", required=True, help="One-line summary")
+    log_parser.add_argument("--title", help="Entry title")
+    log_parser.add_argument("--summary", help="One-line summary")
     log_parser.add_argument("--page", action="append", default=[], help="Page path")
     log_parser.add_argument(
         "--source", action="append", default=[], help="Raw source path"
     )
     log_parser.add_argument("--notes", default="", help="Optional notes")
+    log_parser.add_argument(
+        "--from-json",
+        dest="from_json",
+        help=(
+            "Read fields from a JSON file with keys: operation, title, summary, "
+            "pages (list), sources (list), notes. Avoids shell-escaping issues "
+            "when titles/summaries contain `&`, `;`, `(...)`, etc."
+        ),
+    )
 
     preprocess_parser = sub.add_parser(
         "preprocess",
@@ -1368,6 +1377,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "validate-log":
         return validate_log()
     if args.command == "append-log":
+        if args.from_json:
+            json_path = Path(args.from_json)
+            payload = json.loads(json_path.read_text(encoding="utf-8"))
+            return append_log_entry(
+                operation=payload["operation"],
+                title=payload["title"],
+                summary=payload["summary"],
+                pages=payload.get("pages", []),
+                sources=payload.get("sources", []),
+                notes=payload.get("notes", ""),
+            )
+        missing = [
+            name
+            for name in ("operation", "title", "summary")
+            if not getattr(args, name)
+        ]
+        if missing:
+            parser.error(
+                f"append-log requires --{', --'.join(missing)} "
+                f"(or pass --from-json with these fields)"
+            )
         return append_log_entry(
             operation=args.operation,
             title=args.title,
