@@ -21,9 +21,14 @@ CONFIG="$HOME/.copilot/permissions-config.json"
 
 # Commands the wiki agents need. Keep in sync with
 # READ_ONLY_SHELL_COMMANDS + WRITE_SHELL_COMMANDS in tools/agents/wiki-agent.py.
+#
+# `set` is included because copilot wraps multi-line shell scripts with
+# `set -euo pipefail`, which makes `set` the first command identifier and
+# causes the whole script to be denied unless `set` is pre-approved.
 COMMANDS=(
   qmd
   python3
+  set
   ls find grep cat head tail wc sort uniq cut tr date
   touch mkdir mv cp sed awk
 )

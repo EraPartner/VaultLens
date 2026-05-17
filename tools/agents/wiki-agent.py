@@ -92,7 +92,11 @@ AGENT_PERMISSIONS: dict[str, dict] = {
 
 # Shell commands granted to any agent with shell access. Strictly read-only;
 # helper utilities for navigation, text inspection, search, and wiki tooling.
+# `set` is here because copilot wraps multi-line scripts with `set -euo
+# pipefail`, making `set` the first command identifier; without it, every
+# multi-line shell call is denied.
 READ_ONLY_SHELL_COMMANDS = (
+    "set",
     "ls",
     "find",
     "grep",
