@@ -82,20 +82,31 @@ CLI_OPTIONS = {
 #   writable_dirs: paths (relative to ROOT) the agent must be able to modify. Empty for read-only
 #                  agents. CLIs that scope writes to specific directories use this list.
 AGENT_PERMISSIONS: dict[str, dict] = {
-    "quality":    {"shell": False, "write": False, "writable_dirs": []},
-    "verify":     {"shell": False, "write": False, "writable_dirs": []},
-    "search":     {"shell": True,  "write": False, "writable_dirs": []},
-    "contradict": {"shell": True,  "write": False, "writable_dirs": []},
-    "ingest":     {"shell": True,  "write": True,  "writable_dirs": ["wiki"]},
-    "enhance":    {"shell": True,  "write": True,  "writable_dirs": ["wiki"]},
+    "quality": {"shell": False, "write": False, "writable_dirs": []},
+    "verify": {"shell": False, "write": False, "writable_dirs": []},
+    "search": {"shell": True, "write": False, "writable_dirs": []},
+    "contradict": {"shell": True, "write": False, "writable_dirs": []},
+    "ingest": {"shell": True, "write": True, "writable_dirs": ["wiki"]},
+    "enhance": {"shell": True, "write": True, "writable_dirs": ["wiki"]},
 }
 
 # Shell commands granted to any agent with shell access. Strictly read-only;
 # helper utilities for navigation, text inspection, search, and wiki tooling.
 READ_ONLY_SHELL_COMMANDS = (
-    "ls", "find", "grep", "cat", "head", "tail", "wc",
-    "sort", "uniq", "cut", "tr", "date",
-    "python3", "qmd",
+    "ls",
+    "find",
+    "grep",
+    "cat",
+    "head",
+    "tail",
+    "wc",
+    "sort",
+    "uniq",
+    "cut",
+    "tr",
+    "date",
+    "python3",
+    "qmd",
 )
 
 # Shell commands granted only to write-capable agents. Filesystem mutators
@@ -108,6 +119,7 @@ def _agent_permissions(agent: str) -> dict:
     return AGENT_PERMISSIONS.get(
         agent, {"shell": False, "write": False, "writable_dirs": []}
     )
+
 
 STRATEGY_HINTS = {
     "coverage": (
@@ -186,7 +198,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run quality review with opencode (default)
+  # Run quality review with opencode
   python3 tools/agents/wiki-agent.py quality --page wiki/concepts/my-concept.md
 
   # Run with Claude Sonnet
@@ -287,8 +299,8 @@ Examples:
     parser.add_argument(
         "--cli",
         choices=list(CLI_OPTIONS.keys()),
-        default="copilot",
-        help="CLI to use (default: copilot)",
+        default="claude",
+        help="CLI to use (default: claude)",
     )
     parser.add_argument(
         "--model",
@@ -667,7 +679,9 @@ def _install_signal_handlers() -> None:
         global _STOP_REQUESTED
         _STOP_REQUESTED = True
         name = signal.Signals(signum).name
-        print(f"\n[wiki-agent] {name} received; finishing current iteration then exiting.")
+        print(
+            f"\n[wiki-agent] {name} received; finishing current iteration then exiting."
+        )
 
     signal.signal(signal.SIGINT, _handler)
     signal.signal(signal.SIGTERM, _handler)
@@ -782,9 +796,13 @@ def main(argv=None) -> int:
         else:
             failures += 1
             consecutive_failures += 1
-            print(f"[wiki-agent] {_ts()} iteration {iter_count} failed with rc={last_rc}")
+            print(
+                f"[wiki-agent] {_ts()} iteration {iter_count} failed with rc={last_rc}"
+            )
             if not args.continue_on_error:
-                print("[wiki-agent] stopping loop (use --continue-on-error to keep going).")
+                print(
+                    "[wiki-agent] stopping loop (use --continue-on-error to keep going)."
+                )
                 break
             if args.max_failures and consecutive_failures >= args.max_failures:
                 print(
@@ -799,7 +817,9 @@ def main(argv=None) -> int:
             f"iterations={iter_count} successes={successes} failures={failures}"
         )
         if strategy_counts:
-            breakdown = ", ".join(f"{k}={v}" for k, v in sorted(strategy_counts.items()))
+            breakdown = ", ".join(
+                f"{k}={v}" for k, v in sorted(strategy_counts.items())
+            )
             print(f"[wiki-agent] strategy breakdown: {breakdown}")
 
     return last_rc
