@@ -65,27 +65,38 @@ python3 tools/wiki.py coverage --json
 ```
 Pick the topic with the lowest coverage score where a dense source exists.
 
-**D) Source-driven gap discovery** — for `--strategy source-gap`, "fill gaps from source X", "what's missing from this source", or when wiki coverage is shallow relative to a dense ingested source. **This is the strategy for catching topics the source covers well but the wiki has never created a page for.**
+**D) Source-driven gap discovery** — for `--strategy source-gap`, "fill gaps from source X", "what's missing from this source", or when wiki coverage is shallow relative to a dense ingested source. **This is a SOURCE-FIRST strategy: you start by selecting a source document, then walk its structure to discover topics that the wiki has never created a page for (or covers badly). Do NOT begin by picking a shallow concept page — that is Strategy A or C.**
 
 Process:
-1. Pick a source. Prefer the **least-recently-enhanced** ingested source; otherwise random.
-   ```bash
-   tail -40 wiki/log.md                    # see what was enhanced recently
-   ls wiki/sources/src-*.md                # full list of ingested sources
-   python3 -c "import random, glob; print(random.choice(glob.glob('wiki/sources/src-*.md')))"
-   ```
-2. Read the source page (`wiki/sources/src-<slug>.md`) for the recorded `## Core Concepts` list and `## Coverage Notes`.
-3. Read the pre-extracted source text (`raw/sources-text/<stem>.md`) — scan its chapter/section structure and named concepts (Definitions, Theorems, Algorithms, named techniques).
-4. **Build a gap list**: for each significant topic in the source, check whether a concept page exists.
+
+1. **Pick a source document** (`wiki/sources/src-*.md`). Two acceptable modes — pick whichever fits the moment, but commit to a source before looking at any concept pages:
+   - **Random source** — uniformly sample an ingested source.
+     ```bash
+     python3 -c "import random, glob; print(random.choice(glob.glob('wiki/sources/src-*.md')))"
+     ```
+   - **Reasoned source** — glance at `tail -40 wiki/log.md` and `ls wiki/sources/src-*.md`, then prefer a source that is dense, broad in scope, AND under-mined: e.g. least-recently-enhanced, or one whose `## Coverage Notes` admit large untouched chapters, or one with a small `## Core Concepts` list relative to the size of its raw text. Briefly state your reason in the eventual log entry.
+
+2. Read the source page (`wiki/sources/src-<slug>.md`) for the recorded `## Core Concepts` list and `## Coverage Notes`. Treat this as a *known-covered* baseline — anything not in this list is a candidate gap.
+
+3. Read the pre-extracted source text (`raw/sources-text/<stem>.md`) and **enumerate the topics the source itself treats**: walk its table of contents / chapter and section headings, then sweep for named units (Definitions, Theorems, Propositions, Algorithms, Stellingen, Definities, named techniques, named systems). Produce a flat list of ~15–40 candidate topics from the source structure — not from the wiki.
+
+4. **For each enumerated topic, cross-check the wiki** and classify it:
    ```bash
    ls wiki/concepts/ | grep -iE "topic-fragment"
-   qmd query "<topic question>" --json    # semantic match — catches synonyms
+   qmd query "<topic question>" --json     # semantic match — catches synonyms
+   python3 tools/wiki.py search "<keywords>"
    ```
-   A topic is "missing" if no page exists, or "shallow" if the page is < 100 lines while the source treats it across multiple sections.
-5. Rank gaps by value: depth of source treatment × centrality of the topic × absence of any cross-source coverage.
-6. Pick 2–5 highest-value gaps for this run. For each: either **create a new concept page** (workflow step 4) or **expand the shallow existing one** with this source's content (workflow step 3). Update the source page's `## Core Concepts` list afterward.
+   Classify each topic as one of:
+   - **MISSING** — no concept page exists for it anywhere in the wiki, under any alias.
+   - **BAD** — a page exists but its body materially misrepresents, omits, or contradicts the source's treatment (wrong claim, missing the central result, only mentions the topic in passing on an unrelated page).
+   - **THIN** — a page exists and is roughly correct but is < 100 lines while the source treats the topic across multiple sections with Definitions/Theorems/worked examples the page never imports.
+   - **COVERED** — a substantive page already reflects the source's treatment; skip.
 
-This strategy is the primary complement to (C): (C) picks based on coverage *scores*, but (D) picks based on direct source-vs-wiki cross-referencing, which catches topics the coverage tool can't see because no page exists yet.
+5. **Prioritize MISSING and BAD over THIN.** The whole point of this strategy is to surface topics the coverage tool cannot see because no page exists yet, or to fix pages that say wrong things. Rank within each tier by *centrality of the topic in the source* × *absence of cross-source coverage elsewhere in the wiki*. A run that produces only THIN expansions is a sign you drifted into Strategy A — restart from step 1 with a different source if your gap list contains zero MISSING or BAD entries.
+
+6. Pick 2–5 highest-value gaps for this run, with at least one MISSING or BAD entry if any exist in the gap list. For each: **create a new concept page** for MISSING (workflow step 4), **rewrite the wrong sections** of a BAD page citing the source, or **expand** a THIN page with this source's content (workflow step 3). Update the source page's `## Core Concepts` list and `## Coverage Notes` afterward to record the new coverage.
+
+This strategy is the primary complement to (C): (C) picks based on coverage *scores* over pages that already exist, while (D) picks based on direct source-structure-vs-wiki cross-referencing, which catches topics the coverage tool can't see because no page exists yet.
 
 **E) Mixed / agent-chosen** — for `--strategy auto` or "just enhance" / "do what's most useful":
 
