@@ -16,7 +16,13 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# Register both the logical path (`pwd`) and the symlink-resolved path
+# (`pwd -P`). wiki-agent.py invokes copilot with the resolved path because it
+# uses Path.resolve(); ad-hoc `copilot` calls from a shell `cd`'d into the
+# logical path use the logical entry. Keeping both entries in sync prevents the
+# allowlist from drifting between invocation styles.
+REPO_ROOT_LOGICAL="$(cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_ROOT_PHYS="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 CONFIG="$HOME/.copilot/permissions-config.json"
 
 # Commands the wiki agents need. Keep in sync with
@@ -45,27 +51,37 @@ fi
 
 cmds_json=$(printf '%s\n' "${COMMANDS[@]}" | jq -R . | jq -s .)
 
-tmp=$(mktemp)
-jq --arg path "$REPO_ROOT" --argjson cmds "$cmds_json" '
-  .locations[$path] //= {tool_approvals: []}
-  | .locations[$path].tool_approvals //= []
-  | (.locations[$path].tool_approvals
-      | map(select(.kind == "commands"))) as $existing
-  | if ($existing | length) == 0 then
-      .locations[$path].tool_approvals += [{kind: "commands", commandIdentifiers: $cmds}]
-    else
-      .locations[$path].tool_approvals |= map(
-        if .kind == "commands"
-        then .commandIdentifiers = ((.commandIdentifiers // []) + $cmds | unique)
-        else . end
-      )
-    end
-' "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
+# De-dupe logical vs physical when they're the same path.
+PATHS=("$REPO_ROOT_LOGICAL")
+if [ "$REPO_ROOT_PHYS" != "$REPO_ROOT_LOGICAL" ]; then
+  PATHS+=("$REPO_ROOT_PHYS")
+fi
+
+for path in "${PATHS[@]}"; do
+  tmp=$(mktemp)
+  jq --arg path "$path" --argjson cmds "$cmds_json" '
+    .locations[$path] //= {tool_approvals: []}
+    | .locations[$path].tool_approvals //= []
+    | (.locations[$path].tool_approvals
+        | map(select(.kind == "commands"))) as $existing
+    | if ($existing | length) == 0 then
+        .locations[$path].tool_approvals += [{kind: "commands", commandIdentifiers: $cmds}]
+      else
+        .locations[$path].tool_approvals |= map(
+          if .kind == "commands"
+          then .commandIdentifiers = ((.commandIdentifiers // []) + $cmds | unique)
+          else . end
+        )
+      end
+  ' "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
+done
 
 echo "Updated $CONFIG"
-echo "Granted commands for $REPO_ROOT:"
-jq -r --arg path "$REPO_ROOT" '
-  .locations[$path].tool_approvals[]
-  | select(.kind == "commands")
-  | .commandIdentifiers[]
-' "$CONFIG" | sed 's/^/  - /'
+for path in "${PATHS[@]}"; do
+  echo "Granted commands for $path:"
+  jq -r --arg path "$path" '
+    .locations[$path].tool_approvals[]
+    | select(.kind == "commands")
+    | .commandIdentifiers[]
+  ' "$CONFIG" | sed 's/^/  - /'
+done
