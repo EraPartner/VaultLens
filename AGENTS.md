@@ -138,7 +138,8 @@ Reads are auto-approved; writes require explicit confirmation. This is enforced 
 | Operation | Policy |
 |---|---|
 | Read files anywhere in the vault | auto-approved |
-| Run read-only shell commands (`ls`, `find`, `grep`, `cat`, `qmd query`, `wiki.py search`, …) | auto-approved |
+| Run read-only shell commands: `set`, `ls`, `find`, `grep`, `cat`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut`, `tr`, `date`, `python3`, `qmd` | auto-approved |
+| Run write shell commands (agents with write access only): `touch`, `mkdir`, `mv`, `cp`, `sed`, `awk` | auto-approved for write agents |
 | Write or edit files | requires confirmation |
 
 **Claude Code** — configured in `.claude/settings.json` via `allowedTools`.
@@ -396,10 +397,10 @@ which side is correct). Read the full agent `.agent.md` files for the exact
 handoff list.
 
 **CLI options**: `opencode`, `claude`, `ollama`, `copilot`
-**OpenCode models**: `opencode/minimax-m2.5-free` (default), `github-copilot/gpt-5.3-codex`
+**OpenCode models**: `github-copilot/gpt-5.2` (default), `opencode/minimax-m2.5-free`, `github-copilot/gpt-5.3-codex`
 **Claude models**: `sonnet` (default), `haiku`, `opus`
 **Ollama models**: `qwen3.5:4b` (default), `qwen3.5:9b`, `gemma4:e4b`
-**Copilot models**: `gpt-5.3-codex` (default), `claude-sonnet-4.6`, `gpt-5.2`
+**Copilot models**: `gpt-5.2` (default), `gpt-5.3-codex`, `claude-sonnet-4.6`
 **Effort levels**: `low` (fast), `medium` (default), `high` (deep thinking)
 
 ## Canonical operations

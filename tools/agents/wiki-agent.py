@@ -348,10 +348,10 @@ Examples:
 def get_default_model(cli: str) -> str:
     """Get default model for CLI."""
     defaults = {
-        "opencode": "github-copilot/gpt-5.3-codex",
+        "opencode": "github-copilot/gpt-5.2",
         "claude": "sonnet",
         "ollama": "qwen3.5:4b",
-        "copilot": "gpt-5.3-codex",
+        "copilot": "gpt-5.2",
     }
     return defaults.get(cli, "default")
 
