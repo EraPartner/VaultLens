@@ -206,8 +206,25 @@ The vault is bind-mounted at `/workspaces/Brain`, so wiki edits appear on the
 host (and sync via iCloud) immediately. The Claude config is **not** live-shared
 (a raw bind would expose host secrets and corrupt `~/.claude.json` under
 concurrent writes): the container gets its own writable copy seeded from the
-sanitized stage, refreshed read-only on each start. Use `brain-claude-sync push`
-to pull container-side config changes back to the host.
+sanitized stage. `brain-claude` now syncs automatically — it pulls the host
+config into the running container on launch, and on **session exit** runs the
+hardened `brain-claude-sync push` for you, so container-side config/memory edits
+land back on the host without a manual command. Pushing only after the session
+ends keeps a single writer (no `~/.claude.json` race). It's gated to interactive
+runs (`claude`/`bash`); set `BRAIN_AUTOSYNC=1` to force it for headless agent
+runs, or `BRAIN_AUTOSYNC=0` to disable. `brain-claude-sync push|pull|status`
+remains the manual fallback.
+
+The same launch step also seeds your host **copilot** and **opencode** config
+into the container (one-way, host → container): copilot's `settings.json`
+(model/theme/etc., with host plugin refs stripped — their binaries aren't in the
+sandbox), and opencode's `~/.config/opencode` (agents, model, theme, prompts,
+skills, themes), excluding `node_modules` and the npm `plugin` field that the
+egress lock would block. Auth is forwarded separately (Copilot token in env,
+opencode `auth.json` from the Keychain); the post-create-generated copilot
+`mcp-config.json`/`permissions-config.json` are left untouched. This direction is
+seed-only — those tools' in-container runtime state stays in their volumes and is
+not pushed back.
 
 ### qmd index + models (search-only, embed on the host)
 

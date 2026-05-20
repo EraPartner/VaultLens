@@ -209,6 +209,42 @@ stage_claude_config() {
   fi
   # ~/.claude.json seed staged as-is (mcpServers/hooks kept — user opted in).
   [[ -f "$HOME/.claude.json" ]] && cp "$HOME/.claude.json" "$dst/claude.json" 2>/dev/null || true
+
+  # --- copilot config (host -> container) --------------------------------------
+  # Stage the copilot CLI's user settings so the in-container copilot matches the
+  # host (model, theme, continueOnAutoMode). Auth is the forwarded
+  # COPILOT_GITHUB_TOKEN, never staged. Plugin refs are DROPPED: their binaries
+  # live in the host's ~/.copilot/installed-plugins (not in the sandbox) and would
+  # fail to load. mcp-config.json / permissions-config.json are generated
+  # in-container by post-create (keyed to /workspaces/Brain), so they are NOT
+  # staged here — seeding them would clobber the container-correct versions.
+  rm -rf "$dst/copilot"; mkdir -p "$dst/copilot"
+  if [[ -f "$HOME/.copilot/settings.json" ]] && command -v jq >/dev/null 2>&1; then
+    jq 'del(.installed_plugins, .installedPlugins, .enabledPlugins)' \
+      "$HOME/.copilot/settings.json" >"$dst/copilot/settings.json" 2>/dev/null || true
+  fi
+
+  # --- opencode global config (host -> container) ------------------------------
+  # ~/.config/opencode is a dotfiles symlink; copy the resolved config (agents,
+  # model, theme, prompts, skills, themes) but EXCLUDE node_modules + lockfiles
+  # (bloat / macOS-only binaries). The `plugin` field is dropped: opencode fetches
+  # plugins from npm at runtime, which the egress lock blocks (it would hang, like
+  # the qmd HuggingFace stall). State + auth live in ~/.local/share/opencode and
+  # are handled separately, not staged.
+  rm -rf "$dst/opencode"
+  ocsrc="$(cd "$HOME/.config/opencode" 2>/dev/null && pwd -P || true)"
+  if [[ -n "$ocsrc" && -d "$ocsrc" ]]; then
+    mkdir -p "$dst/opencode"
+    rsync -a \
+      --exclude='node_modules' --exclude='.git' --exclude='.gitignore' \
+      --exclude='bun.lock' --exclude='package.json' --exclude='package-lock.json' \
+      "$ocsrc/" "$dst/opencode/" 2>/dev/null || true
+    if [[ -f "$dst/opencode/opencode.json" ]] && command -v jq >/dev/null 2>&1; then
+      t="$(mktemp)" && jq 'del(.plugin)' "$dst/opencode/opencode.json" >"$t" 2>/dev/null \
+        && mv "$t" "$dst/opencode/opencode.json" || rm -f "$t"
+    fi
+    find "$dst/opencode" -name '.DS_Store' -delete 2>/dev/null || true
+  fi
 }
 stage_claude_config
 
@@ -218,6 +254,34 @@ devcontainer up \
   "${ID_LABEL_ARGS[@]}" \
   ${MOUNT_ARGS[@]+"${MOUNT_ARGS[@]}"} \
   --workspace-folder "$PROJECT_ROOT" >/dev/null
+
+# --- 2a) Resolve THIS container + auto-pull host config into it ---------------
+# Target the EXACT container by its profile id-labels (NOT `local_folder | head
+# -1`, which is ambiguous once several profiles run), so any later merge can't
+# touch the wrong container. Then re-apply the sanitized allowlist stage (built
+# above) into the live ~/.claude volume so host config edits land WITHOUT a
+# rebuild — previously only the create-time seed did this, so a running container
+# needed a manual `brain-claude-sync pull`. It's a newer-wins rsync (no --delete)
+# plus a key-merge of .claude.json where container values win, so it never
+# clobbers or deletes container-side state.
+CID="$(docker ps -q --filter "label=brain.root=$ROOT_HASH" --filter "label=brain.profile=$PROFILE_LABEL" 2>/dev/null | head -1 || true)"
+if [[ -n "$CID" ]]; then
+  docker exec -u dev "$CID" bash -c '
+    rsync -a --update --ignore-errors /home/dev/.claude-stage/dot-claude/ /home/dev/.claude/ >/dev/null 2>&1 || true
+    if [[ -f /home/dev/.claude-stage/claude.json && -f /home/dev/.claude.json ]]; then
+      t="$(mktemp)" && jq -s ".[1] * .[0]" /home/dev/.claude.json /home/dev/.claude-stage/claude.json >"$t" 2>/dev/null && mv "$t" /home/dev/.claude.json || rm -f "$t"
+    fi
+    # copilot + opencode global config (host -> container): additive, newer-wins,
+    # no deletes. Does not touch the post-create-generated copilot mcp/permissions.
+    if [[ -d /home/dev/.claude-stage/copilot ]]; then
+      mkdir -p /home/dev/.copilot
+      rsync -a --update --ignore-errors /home/dev/.claude-stage/copilot/ /home/dev/.copilot/ >/dev/null 2>&1 || true
+    fi
+    if [[ -d /home/dev/.claude-stage/opencode ]]; then
+      mkdir -p /home/dev/.config/opencode
+      rsync -a --update --ignore-errors /home/dev/.claude-stage/opencode/ /home/dev/.config/opencode/ >/dev/null 2>&1 || true
+    fi' >/dev/null 2>&1 || true
+fi
 
 # --- Keychain helper ---------------------------------------------------------
 kc() { security find-generic-password -s "$1" -w 2>/dev/null || true; }
@@ -292,10 +356,42 @@ if [[ -z "${BRAIN_NO_CHDIR:-}" ]]; then
   fi
 fi
 
+# --- 6) Auto-sync config/memory back to the host when the session ends --------
+# Replaces the manual `brain-claude-sync push`. We deliberately DON'T `exec` the
+# session: bash stays the parent, so when the command exits — normally OR via
+# Ctrl-C — the EXIT trap runs the SAME hardened push the manual wrapper uses
+# (snapshot-to-temp + abort-on-fail, per-file newer-wins, jq key-merge,
+# timestamped backups). Pushing only AFTER the session ends means a single writer
+# (no host/container race on .claude.json), so it cannot corrupt either copy.
+# Gated to interactive runs (claude/bash) by default so headless batch agents
+# don't pay a full docker-cp per invocation; force with BRAIN_AUTOSYNC=1 (or off
+# with BRAIN_AUTOSYNC=0).
+AUTOSYNC="${BRAIN_AUTOSYNC:-}"
+if [[ -z "$AUTOSYNC" ]]; then
+  case "${1:-claude}" in claude|bash) AUTOSYNC=1 ;; *) AUTOSYNC=0 ;; esac
+fi
+
+_autosync_done=0
+autosync_push() {
+  if [[ "$_autosync_done" == 1 ]]; then return 0; fi
+  _autosync_done=1
+  if [[ "$AUTOSYNC" != 1 || -z "$CID" ]]; then return 0; fi
+  command -v fish >/dev/null 2>&1 || return 0
+  fish -c "brain-claude-sync push $CID" \
+    || echo "agent (brain-wrapper): auto config-sync push failed — run 'brain-claude-sync push' to retry." >&2
+}
+trap autosync_push EXIT
+
 # Forward the command. The agent CLIs are interactive — stdin/tty flow through
 # devcontainer exec. Wrap in `bash -c` so we can cd into the resolved subdir,
-# then `exec` the real command (tty + signals pass straight through).
-exec devcontainer exec "${ID_LABEL_ARGS[@]}" --workspace-folder "$PROJECT_ROOT" \
+# then `exec` the real command (tty + signals pass straight through). NOTE: this
+# is intentionally NOT `exec devcontainer ...` — bash must outlive the session to
+# run the EXIT trap that syncs config/memory back to the host.
+set +e
+devcontainer exec "${ID_LABEL_ARGS[@]}" --workspace-folder "$PROJECT_ROOT" \
   ${EXEC_ARGS[@]+"${EXEC_ARGS[@]}"} \
   --remote-env "BRAIN_CWD=$CONTAINER_CWD" \
   bash -c 'cd "$BRAIN_CWD" 2>/dev/null || true; exec "$@"' bash "$@"
+_rc=$?
+set -e
+exit "$_rc"
