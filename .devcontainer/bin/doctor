@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Brain devcontainer readiness check. Run INSIDE the container:
+#   brain-shell        # then:  .devcontainer/bin/doctor
+#   # or directly:     devcontainer exec --workspace-folder <root> .devcontainer/bin/doctor
+#
+# Verifies the egress lock, the agent toolchain, qmd, the ollama hole, and auth.
+# Exit non-zero if any CRITICAL check fails.
+
+set -uo pipefail
+
+pass=0; warn=0; fail=0
+ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; pass=$((pass+1)); }
+note() { printf '  \033[33m!\033[0m %s\n' "$*"; warn=$((warn+1)); }
+bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; fail=$((fail+1)); }
+
+echo "== Egress lock =="
+if [[ -f /run/brain-firewall-ok ]]; then ok "firewall sentinel present"; else bad "firewall sentinel missing (/run/brain-firewall-ok)"; fi
+if pgrep -x squid >/dev/null 2>&1; then ok "squid running"; else bad "squid not running"; fi
+if (exec 3<>/dev/tcp/127.0.0.1/3128) 2>/dev/null; then ok "proxy listening on 127.0.0.1:3128"; else bad "proxy not listening on :3128"; fi
+if curl -sS --max-time 12 -o /dev/null -w '%{http_code}' https://api.anthropic.com/ 2>/dev/null | grep -qE '^[0-9]'; then
+  ok "allowed host reachable via proxy (api.anthropic.com)"
+else
+  note "could not reach api.anthropic.com (network detached? check 'docker logs')"
+fi
+if curl -sS --max-time 8 -o /dev/null https://example.com/ 2>/dev/null; then
+  bad "DENIED host example.com was reachable — allowlist not enforced!"
+else
+  ok "denied host blocked (example.com)"
+fi
+
+echo "== Ollama hole (host daemon) =="
+oll="${OLLAMA_HOST:-http://host.docker.internal:11434}"
+if curl -sS --max-time 6 -o /dev/null "${oll}/api/tags" 2>/dev/null; then
+  ok "host ollama reachable at ${oll}"
+else
+  note "host ollama not reachable at ${oll} (is 'ollama serve' running on the host?)"
+fi
+
+echo "== Agent toolchain =="
+for c in claude copilot opencode qmd python3 pdftotext qpdf gh jq rsync git; do
+  if command -v "$c" >/dev/null 2>&1; then ok "$c present"; else
+    case "$c" in claude|copilot|opencode|qmd|python3|pdftotext) bad "$c MISSING";; *) note "$c missing";; esac
+  fi
+done
+if command -v safe-chain >/dev/null 2>&1; then ok "safe-chain present"; else note "safe-chain missing (installs not screened)"; fi
+
+echo "== qmd search =="
+if command -v qmd >/dev/null 2>&1; then
+  ls /home/dev/.cache/qmd/models/*.gguf >/dev/null 2>&1 && ok "embedding models seeded" || note "no GGUF models in ~/.cache/qmd/models"
+  if qmd status >/dev/null 2>&1; then ok "qmd status OK"; else note "qmd status failed (run 'qmd update')"; fi
+fi
+
+echo "== Auth =="
+[[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" || -n "${ANTHROPIC_API_KEY:-}" ]] && ok "Claude token in env" || bad "no Claude token (set brain-claude-code-token in Keychain)"
+[[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}${COPILOT_GITHUB_TOKEN:-}" ]] && ok "GitHub/Copilot token in env" || note "no GH token (gh + copilot need brain-gh-token)"
+[[ -s "$HOME/.local/share/opencode/auth.json" ]] && ok "opencode auth.json present" || note "opencode auth.json missing (set brain-opencode-auth in Keychain)"
+gh auth status >/dev/null 2>&1 && ok "gh authenticated" || note "gh not authenticated"
+
+echo
+echo "Summary: ${pass} ok, ${warn} warn, ${fail} fail"
+(( fail == 0 ))

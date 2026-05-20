@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Thin shim: `claude` inside the Brain devcontainer.
+#
+# Kept as a separate entry (a) so the host fish walk-up logic, which looks for
+# .devcontainer/bin/claude to locate the project root, keeps working, and (b) so
+# a bare `claude` invocation routes into the container. All the real work
+# (staging, devcontainer up, credential forwarding) lives in `agent`.
+set -euo pipefail
+exec "$(dirname "$0")/agent" claude "$@"

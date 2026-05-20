@@ -1,0 +1,47 @@
+# Egress allowlist — single source of truth for squid.conf (both the
+# ssl::server_name SNI ACL and the dstdomain CONNECT-target ACL read this file).
+# One host per line; a leading dot matches the domain and all subdomains.
+# Changes require a container rebuild (squid.conf + this file are baked).
+#
+# NOT here on purpose:
+#   - ollama.com / registry.ollama.ai — inference goes to the HOST ollama daemon
+#     via host.docker.internal:11434 (a direct firewall hole, not this proxy).
+#   - huggingface.co — qmd's embedding models are seeded from the host cache, so
+#     they are never downloaded. Add huggingface.co + cdn-lfs.huggingface.co
+#     here and rebuild only if you switch to in-container `qmd embed` downloads.
+
+# Anthropic / Claude Code (API, auth, auto-updater, docs)
+api.anthropic.com
+console.anthropic.com
+platform.claude.com
+claude.ai
+code.claude.com
+docs.claude.com
+downloads.claude.ai
+
+# npm (installs qmd / copilot / opencode / safe-chain at runtime)
+registry.npmjs.org
+
+# GitHub (source / releases / API / container registry)
+github.com
+api.github.com
+codeload.github.com
+.githubusercontent.com
+ghcr.io
+pkg-containers.githubusercontent.com
+
+# GitHub Copilot (used by both the `copilot` CLI and opencode's
+# github-copilot/gpt-5.2 provider). github.com + api.github.com above cover the
+# OAuth/login path; .githubusercontent.com covers the proxy/telemetry CDN hosts.
+.githubcopilot.com
+collector.github.com
+default.exp-tas.com
+
+# opencode (self-update + platform binary download on npm install)
+opencode.ai
+
+# safe-chain malware list (supply-chain screening of npm/pip installs)
+malware-list.aikido.dev
+
+# Plugins: context7 MCP (npx @upstash/context7-mcp → context7 docs API)
+.context7.com

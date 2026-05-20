@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# Core wrapper: route an agent command into the Brain devcontainer.
+#
+# Usage:  agent <command> [args...]     (default command: claude)
+#   e.g.  agent claude --dangerously-skip-permissions
+#         agent copilot -p "..."
+#         agent opencode run ...
+#         agent python3 tools/agents/wiki-agent.py enhance --strategy coverage
+#         agent bash
+#
+# Responsibilities (all on the HOST, before entering the container):
+#   1. Stage a SANITIZED copy of ~/.claude into ~/.claude-brain-stage so the
+#      container never sees host secrets (.credentials.json). Only that staging
+#      dir is bind-mounted (read-only) into the container.
+#   2. `devcontainer up` (idempotent; fast when warm).
+#   3. Materialize the opencode github-copilot OAuth blob from the Keychain into
+#      the container's auth.json (only if missing — opencode refreshes it there).
+#   4. Forward the Claude OAuth token and the gh token from the macOS Keychain as
+#      env vars at exec time — neither is ever written to a file on the host.
+#      The gh token is forwarded as GH_TOKEN/GITHUB_TOKEN/COPILOT_GITHUB_TOKEN,
+#      which also authenticates the copilot CLI.
+
+set -euo pipefail
+
+find_project_root() {
+  local d="$PWD"
+  while [[ "$d" != "/" ]]; do
+    if [[ -f "$d/.devcontainer/devcontainer.json" ]]; then echo "$d"; return 0; fi
+    d="$(dirname "$d")"
+  done
+  return 1
+}
+
+if [[ -n "${BRAIN_PROJECT_ROOT:-}" && -f "${BRAIN_PROJECT_ROOT}/.devcontainer/devcontainer.json" ]]; then
+  PROJECT_ROOT="$BRAIN_PROJECT_ROOT"
+else
+  PROJECT_ROOT="$(find_project_root || true)"
+fi
+
+if [[ -z "$PROJECT_ROOT" ]]; then
+  echo "agent (brain-wrapper): no .devcontainer/devcontainer.json above $PWD." >&2
+  echo "  Set BRAIN_HOME / BRAIN_PROJECT_ROOT to the vault root." >&2
+  exit 1
+fi
+
+if ! command -v devcontainer >/dev/null 2>&1; then
+  echo "agent (brain-wrapper): @devcontainers/cli not installed." >&2
+  echo "  npm install -g @devcontainers/cli" >&2
+  exit 1
+fi
+
+# The command to run inside the container (default: claude).
+if [[ $# -eq 0 ]]; then
+  set -- claude
+fi
+
+# --- 1) Stage a sanitized ~/.claude for the read-only bind mount -------------
+# The container binds ~/.claude-brain-stage (NOT the raw ~/.claude), so secrets
+# never enter its view. settings.json / plugins are staged as-is (you opted into
+# running host-origin config in the sandbox during the hardening review).
+stage_claude_config() {
+  local src dst item jf f
+  src="$(cd "$HOME/.claude" 2>/dev/null && pwd -P || true)"   # resolve symlink
+  dst="$HOME/.claude-brain-stage"
+  # Rebuild from scratch each time so a removed host file doesn't linger.
+  rm -rf "$dst/dot-claude"; mkdir -p "$dst/dot-claude"
+  if [[ -n "$src" && -d "$src" ]]; then
+    # ALLOWLIST (not blocklist): copy only known config; everything else
+    # (.credentials.json, sessions/history, background-task state) is excluded.
+    for item in settings.json keybindings.json CLAUDE.md agents rules commands statusline status-line.sh plugins; do
+      [[ -e "$src/$item" ]] && cp -a "$src/$item" "$dst/dot-claude/" 2>/dev/null || true
+    done
+    # Trim VCS dirs from staged statusline/plugins (bloat only).
+    find "$dst/dot-claude/statusline" "$dst/dot-claude/plugins" -name .git -type d -prune -exec rm -rf {} + 2>/dev/null || true
+    # Plugin marketplace metadata stores ABSOLUTE host paths; rewrite to the
+    # container home so enabledPlugins resolve in-container.
+    for jf in known_marketplaces.json installed_plugins.json; do
+      f="$dst/dot-claude/plugins/$jf"
+      [[ -f "$f" ]] && sed -i '' -e "s#$HOME/.claude#/home/dev/.claude#g" -e "s#$src#/home/dev/.claude#g" "$f" 2>/dev/null || true
+    done
+    find "$dst/dot-claude" -name '.DS_Store' -delete 2>/dev/null || true
+  fi
+  # ~/.claude.json seed staged as-is (mcpServers/hooks kept — user opted in).
+  [[ -f "$HOME/.claude.json" ]] && cp "$HOME/.claude.json" "$dst/claude.json" 2>/dev/null || true
+}
+stage_claude_config
+
+# --- 2) Ensure the container is up (idempotent) ------------------------------
+devcontainer up --workspace-folder "$PROJECT_ROOT" >/dev/null
+
+# --- Keychain helper ---------------------------------------------------------
+kc() { security find-generic-password -s "$1" -w 2>/dev/null || true; }
+
+# --- 3) Materialize the opencode OAuth blob into the container (if missing) ---
+# opencode reads ~/.local/share/opencode/auth.json (it does not honor a plain
+# env token for github-copilot). Forward the host blob from the Keychain on
+# first use; opencode refreshes it in-place in the persistent volume thereafter,
+# so we only seed when the container's file is empty (avoids clobbering a fresh
+# refresh with a possibly-expired host snapshot).
+if command -v security >/dev/null 2>&1; then
+  oc_auth="$(kc 'brain-opencode-auth')"
+  if [[ -n "$oc_auth" ]]; then
+    printf '%s' "$oc_auth" | devcontainer exec --workspace-folder "$PROJECT_ROOT" bash -c '
+      f="$HOME/.local/share/opencode/auth.json"
+      if [[ ! -s "$f" ]]; then
+        mkdir -p "$(dirname "$f")" && cat > "$f" && chmod 600 "$f"
+      else
+        cat >/dev/null   # drain stdin; keep the in-container (refreshed) token
+      fi' 2>/dev/null || true
+  fi
+fi
+
+# --- 4) Forward credentials from the macOS Keychain at exec time -------------
+EXEC_ARGS=()
+if command -v security >/dev/null 2>&1; then
+  tok="$(kc 'brain-claude-code-token')"
+  [[ -n "$tok" ]] && EXEC_ARGS+=(--remote-env "CLAUDE_CODE_OAUTH_TOKEN=$tok")
+  gh_tok="$(kc 'brain-gh-token')"
+  if [[ -n "$gh_tok" ]]; then
+    EXEC_ARGS+=(--remote-env "GH_TOKEN=$gh_tok" \
+                --remote-env "GITHUB_TOKEN=$gh_tok" \
+                --remote-env "COPILOT_GITHUB_TOKEN=$gh_tok")
+  fi
+fi
+
+# Fallback: plain env vars from the host shell (if the Keychain entries absent).
+# ${EXEC_ARGS[@]+...} guards "unbound variable" on an empty array under `set -u`
+# (macOS default bash 3.2) when no token was found.
+have_claude=0
+for a in ${EXEC_ARGS[@]+"${EXEC_ARGS[@]}"}; do [[ "$a" == CLAUDE_CODE_OAUTH_TOKEN=* ]] && have_claude=1; done
+if (( ! have_claude )); then
+  for var in CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; do
+    val="${!var:-}"
+    [[ -n "$val" ]] && EXEC_ARGS+=(--remote-env "${var}=${val}")
+  done
+fi
+
+# Forward the command. The agent CLIs are interactive — stdin/tty flow through
+# devcontainer exec.
+exec devcontainer exec --workspace-folder "$PROJECT_ROOT" ${EXEC_ARGS[@]+"${EXEC_ARGS[@]}"} "$@"

@@ -1,0 +1,9 @@
+# Build context is .devcontainer/. Only these are COPY'd into the image:
+#   init-firewall.sh, perms-fix.sh, entrypoint.sh, squid.conf, allowlist.txt
+# Everything below is used on the host or at runtime (bind-mounted), not in the
+# build — keep it out of the daemon build context.
+README.md
+bin/
+devcontainer.json
+devcontainer-lock.json
+.dockerignore

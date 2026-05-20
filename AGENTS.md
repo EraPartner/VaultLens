@@ -403,6 +403,38 @@ handoff list.
 **Copilot models**: `gpt-5.2` (default), `gpt-5.3-codex`, `claude-sonnet-4.6`
 **Effort levels**: `low` (fast), `medium` (default), `high` (deep thinking)
 
+## Devcontainer sandbox
+
+The agents run inside a hardened devcontainer (`.devcontainer/`, see its
+`README.md`): egress is locked to an allowlist proxy, the agent CLIs run as a
+non-root user with `--dangerously-skip-permissions`, and the only host service
+reachable is the Ollama daemon. Launch from the host with the `brain-*`
+wrappers — `brain-wiki <agent> …`, `brain-claude`, `brain-copilot`,
+`brain-opencode`, `brain-shell`. `tools/agents/wiki-agent.py` refuses to run on
+the host; it must be invoked through `brain-wiki` (which executes it in the
+sandbox).
+
+### When running inside the devcontainer (`DEVCONTAINER=true`)
+
+The container's `~/.claude/` and `~/.claude.json` are independent copies, not
+bind-mounted live. The host auto-pulls into the container on every start
+(`post-start.sh`), but the reverse — container → host — is **manual and must be
+done explicitly**.
+
+**If you modify `~/.claude/` or `~/.claude.json` during this session** (adding
+or editing agents, plugins, slash commands, hooks, MCP servers, rules, or
+settings), **tell the user before ending your turn**:
+
+> Heads-up: I changed your in-container Claude config. To propagate those
+> changes back to the host safely, run in your host fish shell:
+> `brain-claude-sync push`
+
+This is mandatory — `brain-claude-sync push` backs up `~/.claude.json` before a
+newer-wins merge, so it is the safe way to sync. Without it, the changes only
+live in the container volume and are lost on the next container rebuild. Detect
+"inside the devcontainer" by checking `$DEVCONTAINER` (set to `true` by
+`devcontainer.json`). Outside the devcontainer this rule does not apply.
+
 ## Canonical operations
 
 ### Ingest

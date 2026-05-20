@@ -1,0 +1,66 @@
+{
+  "name": "Brain Dev",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "24"
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.12",
+      "installTools": false
+    },
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+  },
+  "init": true,
+  "overrideCommand": false,
+  "containerUser": "root",
+  "remoteUser": "dev",
+  "runArgs": [
+    "--cap-drop=ALL",
+    "--cap-add=NET_ADMIN",
+    "--cap-add=CHOWN",
+    "--cap-add=DAC_OVERRIDE",
+    "--cap-add=FOWNER",
+    "--cap-add=SETUID",
+    "--cap-add=SETGID",
+    "--cap-add=SETPCAP",
+    "--security-opt=no-new-privileges",
+    "--memory=6g",
+    "--cpus=4",
+    "--pids-limit=4096",
+    "--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=512m",
+    "--tmpfs=/var/tmp:rw,noexec,nosuid,nodev,size=256m",
+    "--add-host=host.docker.internal:host-gateway"
+  ],
+  "mounts": [
+    "source=brain-claude-${devcontainerId},target=/home/dev/.claude,type=volume",
+    "source=brain-copilot-${devcontainerId},target=/home/dev/.copilot,type=volume",
+    "source=brain-local-${devcontainerId},target=/home/dev/.local,type=volume",
+    "source=brain-config-${devcontainerId},target=/home/dev/.config,type=volume",
+    "source=brain-cache-${devcontainerId},target=/home/dev/.cache,type=volume",
+    "source=${localEnv:HOME}/.claude-brain-stage,target=/home/dev/.claude-stage,type=bind,readonly",
+    "source=${localEnv:HOME}/.cache/qmd,target=/home/dev/.qmd-seed,type=bind,readonly",
+    "source=${localEnv:HOME}/.gitconfig,target=/home/dev/.gitconfig-host,type=bind,readonly",
+    "source=${localEnv:HOME}/.ssh/github.pub,target=/home/dev/.ssh/host-signing.pub,type=bind,readonly",
+    "source=/run/host-services/ssh-auth.sock,target=/ssh-agent,type=bind"
+  ],
+  "containerEnv": {
+    "DEVCONTAINER": "true",
+    "DISABLE_TELEMETRY": "1",
+    "DISABLE_ERROR_REPORTING": "1",
+    "BASH_ENV": "/home/dev/.safe-chain/scripts/init-posix.sh",
+    "NODE_USE_ENV_PROXY": "1",
+    "HTTP_PROXY": "http://127.0.0.1:3128",
+    "HTTPS_PROXY": "http://127.0.0.1:3128",
+    "http_proxy": "http://127.0.0.1:3128",
+    "https_proxy": "http://127.0.0.1:3128",
+    "NO_PROXY": "localhost,127.0.0.1,::1,host.docker.internal",
+    "no_proxy": "localhost,127.0.0.1,::1,host.docker.internal",
+    "OLLAMA_HOST": "http://host.docker.internal:11434"
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postStartCommand": "bash .devcontainer/post-start.sh"
+}

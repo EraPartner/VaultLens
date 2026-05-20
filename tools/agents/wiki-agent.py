@@ -19,6 +19,35 @@ AGENTS_DIR = ROOT / "tools" / "agents"
 TOOLS_DIR = ROOT / "tools"
 
 
+def _in_container() -> bool:
+    """True when running inside the Brain devcontainer.
+
+    DEVCONTAINER=true is set by .devcontainer/devcontainer.json; /.dockerenv
+    exists in any Docker container. Either is sufficient.
+    """
+    return os.environ.get("DEVCONTAINER") == "true" or Path("/.dockerenv").exists()
+
+
+def _enforce_container(args) -> int | None:
+    """Refuse to invoke the agent CLIs outside the egress-locked sandbox.
+
+    This runner shells out to claude/copilot/opencode/ollama, which must only
+    run inside the container. --help and --debug (a dry run that prints the
+    command without executing) are still allowed on the host. Set
+    BRAIN_AGENT_ALLOW_HOST=1 to override (not recommended).
+    """
+    if _in_container() or args.debug or os.environ.get("BRAIN_AGENT_ALLOW_HOST") == "1":
+        return None
+    sys.stderr.write(
+        "wiki-agent.py must run inside the Brain devcontainer (it invokes the\n"
+        "agent CLIs in the egress-locked sandbox). Run it via:\n"
+        "    brain-wiki <agent> [args]     e.g. brain-wiki enhance --strategy coverage\n"
+        "Or pass --debug to dry-run on the host. Set BRAIN_AGENT_ALLOW_HOST=1 to\n"
+        "override the sandbox requirement (not recommended).\n"
+    )
+    return 2
+
+
 def _resolve_pdf_to_markdown(path_str: str) -> str:
     """If path_str points to a PDF in raw/sources/, return its raw/sources-text/ markdown sibling.
 
@@ -726,6 +755,11 @@ def _ts() -> str:
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # Refuse to run the agent CLIs on the host — they belong in the sandbox.
+    guard_rc = _enforce_container(args)
+    if guard_rc is not None:
+        return guard_rc
 
     # Validate required args
     if args.agent in ["quality", "verify", "ingest"]:
