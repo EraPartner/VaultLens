@@ -41,7 +41,7 @@ fi
 #    owner-match rule references the `proxy` user, which exists from image
 #    build, so this is valid even before squid starts. fail-closed: see
 #    init-firewall.sh.
-/usr/local/sbin/brain-firewall || log "WARN: firewall apply returned non-zero (egress stays default-DROP)."
+/usr/local/sbin/egress-firewall || log "WARN: firewall apply returned non-zero (egress stays default-DROP)."
 
 # 3) Ensure the squid TLS-bump cert + cert DB exist, then start squid (it
 #    egresses as the proxy UID, which the firewall above permits).

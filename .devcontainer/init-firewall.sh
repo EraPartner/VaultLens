@@ -1,42 +1,31 @@
 #!/usr/bin/env bash
-# Brain devcontainer egress firewall — proxy-only model (+ one ollama hole).
+# CANONICAL egress firewall — proxy-only model. Shared, identical across all
+# devcontainers. DO NOT edit per-project copies: edit THIS file in
+# Projects/.devcontainer-egress/ and run ./sync.sh, then rebuild.
 #
-# Baked into the image at /usr/local/sbin/brain-firewall; invoked by the root
-# entrypoint on every container start. The repo copy at
-# .devcontainer/init-firewall.sh is the source — edits require a rebuild.
+# Baked into each image at /usr/local/sbin/egress-firewall; invoked by the root
+# entrypoint on every start. Egress is locked to the squid proxy's UID only;
+# everything else must go through the proxy on 127.0.0.1:3128 where squid
+# enforces the hostname allowlist. A process that ignores HTTPS_PROXY and
+# connects directly is dropped here (its socket UID isn't `proxy`).
 #
-# Egress is locked to the squid proxy's UID only. Everything else in the
-# container (dev sessions, npm postinstalls, the agent CLIs, …) must go through
-# the proxy on 127.0.0.1:3128, where squid enforces the hostname allowlist (see
-# squid.conf). A process that ignores HTTPS_PROXY and tries to connect directly
-# is dropped here, because its socket UID is not `proxy`.
-#
-# THE ONE EXCEPTION: host.docker.internal:11434 (the host's ollama daemon) is
-# allowed directly for any UID. ollama inference is delegated to the host (the
-# Mac has the model weights + Metal GPU); the container's ollama CLI / python
-# reach it over this hole, with NO_PROXY=host.docker.internal so the client does
-# not try to route it through squid. This is a deliberate, user-approved
-# isolation tradeoff — the container can talk to exactly one host service.
-#
-# This replaces the older IP-allowlist/ipset approach: hostname enforcement now
-# lives in the proxy, so there is no DNS-resolution dance and no stale-IP
-# problem. iptables just answers "who is allowed to egress at all" (= proxy, +
-# the ollama host:port).
+# Per-project parameters are DATA, not code:
+#   - /etc/squid/allowlist.txt    : the hostname allowlist (per project)
+#   - /etc/egress/inbound-ports   : optional, one TCP port per line, for projects
+#                                   that publish services (Vision/Watchman). Absent
+#                                   = no inbound (Brain/git-agent).
 
 set -uo pipefail
 
 PROXY_USER="proxy"
-SENTINEL="/run/brain-firewall-ok"
-OLLAMA_PORT="11434"
+SENTINEL="/run/egress-firewall-ok"
+INBOUND_FILE="/etc/egress/inbound-ports"
+EXTRA_RULES="/etc/egress/extra-rules.sh"   # optional per-project OUTPUT exceptions
 
-# Stale sentinel must never outlive a re-apply: clear it up front so a partial
-# failure below can't leave a "verified" marker from a previous run.
+# Stale sentinel must never outlive a re-apply.
 rm -f "$SENTINEL" 2>/dev/null || true
 
-# --- FAIL-CLOSED FIRST ---
-# Set default-deny BEFORE flushing/adding anything. set -e is intentionally off
-# (best-effort apply), so if any rule below fails mid-way the netns is already
-# closed and stays closed — never silently fail-open.
+# --- FAIL-CLOSED FIRST: default-deny before flushing/adding anything. ---
 iptables  -P INPUT   DROP
 iptables  -P OUTPUT  DROP
 iptables  -P FORWARD DROP
@@ -46,17 +35,15 @@ ip6tables -P FORWARD DROP
 
 # --- Reset rules (policies set above stay DROP across a flush) ---
 iptables -F
-iptables -F BRAIN_DENY 2>/dev/null || true
-iptables -X BRAIN_DENY 2>/dev/null || true
+iptables -F EGRESS_DENY 2>/dev/null || true
+iptables -X EGRESS_DENY 2>/dev/null || true
 iptables -X 2>/dev/null || true
-# NOTE: we deliberately do NOT flush the NAT table. We add no NAT rules of our
-# own, and on plain Docker/bridge networking the embedded DNS (127.0.0.11) is
-# NAT-based — flushing it would break name resolution. Leaving NAT untouched
-# keeps this portable beyond Docker Desktop.
+# Do NOT flush NAT: embedded Docker DNS (127.0.0.11) is NAT-based; flushing
+# would break name resolution. We add no NAT rules of our own.
 ip6tables -F
 ip6tables -X 2>/dev/null || true
 
-# --- IPv6: loopback only (everything else stays default-DROP) ---
+# --- IPv6: loopback only ---
 ip6tables -A INPUT  -i lo -j ACCEPT
 ip6tables -A OUTPUT -o lo -j ACCEPT
 
@@ -66,32 +53,29 @@ iptables -A OUTPUT -o lo -j ACCEPT
 iptables -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
-# Only the proxy UID may originate outbound traffic (DNS, 80, 443, …).
-# Everything else must use the proxy over loopback.
+# Only the proxy UID may originate outbound traffic; everything else uses the
+# proxy over loopback.
 iptables -A OUTPUT -m owner --uid-owner "$PROXY_USER" -j ACCEPT
 
-# --- The ollama hole: allow direct egress to the host daemon only ---------
-# Docker Desktop injects host.docker.internal into /etc/hosts (and via
-# --add-host=host.docker.internal:host-gateway in runArgs), so getent resolves
-# it without needing the network. Allow TCP to that single IP:11434 for any UID.
-HOST_GW="$(getent hosts host.docker.internal 2>/dev/null | awk '{print $1; exit}')"
-if [[ -n "$HOST_GW" ]]; then
-  iptables -A OUTPUT -d "$HOST_GW" -p tcp --dport "$OLLAMA_PORT" -j ACCEPT
-  echo "[firewall] ollama hole: allow -> ${HOST_GW}:${OLLAMA_PORT} (host.docker.internal)."
-else
-  echo "[firewall] WARN: could not resolve host.docker.internal — ollama egress will be denied." >&2
+# Inbound on forwarded ports, if this project declares any (host browser -> app).
+if [[ -r "$INBOUND_FILE" ]]; then
+  while read -r port; do
+    [[ "$port" =~ ^[0-9]+$ ]] && iptables -A INPUT -p tcp --dport "$port" -j ACCEPT
+  done < "$INBOUND_FILE"
 fi
 
-# Logged-DROP for everything else, rate-limited so a loop can't flood dmesg.
-# Visible via `dmesg | grep brain-deny`.
-iptables -N BRAIN_DENY
-iptables -A BRAIN_DENY -m limit --limit 10/min -j LOG --log-prefix "brain-deny: " --log-level 4
-iptables -A BRAIN_DENY -j DROP
-iptables -A OUTPUT -j BRAIN_DENY
+# Project-specific extra OUTPUT allows (e.g. Brain's host-Ollama hole), run AFTER
+# the base allows and BEFORE the catch-all deny. Optional, project-owned file —
+# each rule it adds is a deliberate exception.
+[[ -x "$EXTRA_RULES" ]] && "$EXTRA_RULES" || true
 
-# --- Verify the lock actually took, then drop the sentinel ---
-# post-start.sh refuses to proceed if the sentinel is missing, and the
-# Dockerfile HEALTHCHECK independently re-checks the default policy.
+# Logged-DROP for everything else, rate-limited. Visible via `dmesg | grep egress-deny`.
+iptables -N EGRESS_DENY
+iptables -A EGRESS_DENY -m limit --limit 10/min -j LOG --log-prefix "egress-deny: " --log-level 4
+iptables -A EGRESS_DENY -j DROP
+iptables -A OUTPUT -j EGRESS_DENY
+
+# --- Verify the lock took, then drop the sentinel ---
 if iptables -S OUTPUT 2>/dev/null | grep -q '^-P OUTPUT DROP' \
    && iptables -C OUTPUT -m owner --uid-owner "$PROXY_USER" -j ACCEPT 2>/dev/null; then
   : > "$SENTINEL" 2>/dev/null || true

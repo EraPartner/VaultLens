@@ -31,7 +31,7 @@ else
 fi
 
 echo "== Egress lock =="
-if [[ -f /run/brain-firewall-ok ]]; then ok "firewall sentinel present"; else bad "firewall sentinel missing (/run/brain-firewall-ok)"; fi
+if [[ -f /run/egress-firewall-ok ]]; then ok "firewall sentinel present"; else bad "firewall sentinel missing (/run/egress-firewall-ok)"; fi
 if pgrep -x squid >/dev/null 2>&1; then ok "squid running"; else bad "squid not running"; fi
 if (exec 3<>/dev/tcp/127.0.0.1/3128) 2>/dev/null; then ok "proxy listening on 127.0.0.1:3128"; else bad "proxy not listening on :3128"; fi
 if curl -sS --max-time 12 -o /dev/null -w '%{http_code}' https://api.anthropic.com/ 2>/dev/null | grep -qE '^[0-9]'; then

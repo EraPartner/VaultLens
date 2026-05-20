@@ -55,13 +55,18 @@ RUN install -d -m 0755 /etc/apt/keyrings \
 # writable from inside the container). The repo copies under .devcontainer/ are
 # source-only — a rewrite there cannot affect the running container, which
 # closes an escalation path (rewrite workspace script -> trigger root re-apply).
-COPY init-firewall.sh /usr/local/sbin/brain-firewall
+COPY init-firewall.sh /usr/local/sbin/egress-firewall
 COPY perms-fix.sh     /usr/local/sbin/brain-perms-fix
 COPY entrypoint.sh    /usr/local/sbin/brain-entrypoint
 COPY squid.conf       /etc/squid/squid.conf
 COPY allowlist.txt    /etc/squid/allowlist.txt
-RUN chmod 0755 /usr/local/sbin/brain-firewall /usr/local/sbin/brain-perms-fix /usr/local/sbin/brain-entrypoint \
-  && chown root:root /usr/local/sbin/brain-firewall /usr/local/sbin/brain-perms-fix /usr/local/sbin/brain-entrypoint
+RUN chmod 0755 /usr/local/sbin/egress-firewall /usr/local/sbin/brain-perms-fix /usr/local/sbin/brain-entrypoint \
+  && chown root:root /usr/local/sbin/egress-firewall /usr/local/sbin/brain-perms-fix /usr/local/sbin/brain-entrypoint
+
+# Brain-only egress exception: the host-Ollama hole, applied by the canonical
+# egress-firewall via its /etc/egress/extra-rules.sh hook (host.docker.internal:11434).
+COPY extra-rules.sh /etc/egress/extra-rules.sh
+RUN chmod 0755 /etc/egress/extra-rules.sh
 
 # Pre-build the squid TLS-bump cert + cert DB so first start is fast (the
 # entrypoint regenerates either if missing, e.g. on a tmpfs). The key (and the
