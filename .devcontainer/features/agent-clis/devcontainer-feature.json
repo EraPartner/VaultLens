@@ -1,0 +1,11 @@
+{
+  "id": "agent-clis",
+  "version": "1.0.0",
+  "name": "Brain agent CLIs (copilot, opencode, qmd)",
+  "description": "Installs the npm-global agent CLIs and the native-build toolchain at IMAGE-BUILD time, where the network is unrestricted. The egress-locked runtime then never has to compile or download them (qmd pulls native modules — better-sqlite3, tree-sitter, node-llama-cpp — that need a C/C++ toolchain and node headers, neither reachable once the firewall is up).",
+  "installsAfter": [
+    "ghcr.io/devcontainers/features/node",
+    "ghcr.io/devcontainers/features/python",
+    "ghcr.io/anthropics/devcontainer-features/claude-code"
+  ]
+}

@@ -135,6 +135,29 @@ if (( ! have_claude )); then
   done
 fi
 
+# --- 5) Resolve the in-container working directory from the host PWD ----------
+# `devcontainer exec` always lands in the workspace root, so a bare wrapper
+# would open every agent at /workspaces/<root> regardless of where you invoked
+# it. Translate $PWD (relative to PROJECT_ROOT) into the matching path under the
+# container workspace, so `brain-claude` run from projects/ict-recht opens THERE
+# and picks up that project's AGENTS.md / CLAUDE.md / project.md.
+#
+# The orchestrator (brain-wiki) sets BRAIN_NO_CHDIR=1 to stay at the workspace
+# root — tools/wiki.py is invoked by a path relative to the root.
+CONTAINER_WS="/workspaces/$(basename "$PROJECT_ROOT")"
+CONTAINER_CWD="$CONTAINER_WS"
+if [[ -z "${BRAIN_NO_CHDIR:-}" ]]; then
+  rel="${PWD#"$PROJECT_ROOT"}"
+  if [[ "$rel" != "$PWD" && -n "$rel" ]]; then   # PWD is genuinely under the root
+    CONTAINER_CWD="$CONTAINER_WS/${rel#/}"
+  fi
+fi
+
 # Forward the command. The agent CLIs are interactive — stdin/tty flow through
-# devcontainer exec.
-exec devcontainer exec --workspace-folder "$PROJECT_ROOT" ${EXEC_ARGS[@]+"${EXEC_ARGS[@]}"} "$@"
+# devcontainer exec. Wrap in `bash -c` so we can cd into the resolved subdir,
+# then `exec` the real command (tty + signals pass straight through). BASH_ENV
+# (safe-chain) is still sourced for this non-interactive shell.
+exec devcontainer exec --workspace-folder "$PROJECT_ROOT" \
+  ${EXEC_ARGS[@]+"${EXEC_ARGS[@]}"} \
+  --remote-env "BRAIN_CWD=$CONTAINER_CWD" \
+  bash -c 'cd "$BRAIN_CWD" 2>/dev/null || true; exec "$@"' bash "$@"

@@ -4,6 +4,7 @@
 # build — keep it out of the daemon build context.
 README.md
 bin/
+features/
 devcontainer.json
 devcontainer-lock.json
 .dockerignore

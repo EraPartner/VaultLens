@@ -40,35 +40,22 @@ else
   echo "[post-create]   supply-chain screened. \`.devcontainer/bin/doctor\` will flag this." >&2
 fi
 
-# --- Agent CLIs (npm globals; honor HTTPS_PROXY → squid → registry.npmjs.org) -
-# Pin versions here if you want reproducible installs (e.g. opencode-ai@x.y.z).
-echo "[post-create] Installing agent CLIs (copilot, opencode, qmd)..."
-npm install -g @github/copilot opencode-ai @tobilu/qmd \
-  || echo "[post-create] ⚠ WARN: one or more agent CLIs failed to install — see \`.devcontainer/bin/doctor\`." >&2
+# --- Agent CLIs: installed at BUILD time by the agent-clis feature -----------
+# copilot, opencode, and qmd are baked into the image by
+# .devcontainer/features/agent-clis (the build phase has free network + a
+# toolchain). They are NOT installed here: post-create runs after egress is
+# locked, where qmd's native modules (better-sqlite3 / tree-sitter /
+# node-llama-cpp) can't fetch node headers or compile. Verify they're present.
+for c in qmd copilot opencode; do
+  command -v "$c" >/dev/null 2>&1 \
+    || echo "[post-create] ⚠ WARN: '$c' missing — rebuild the container so the agent-clis feature runs. See \`.devcontainer/bin/doctor\`." >&2
+done
 
-# --- qmd: seed cache from the host, then register collections ----------------
-# The host ~/.cache/qmd is bind-mounted read-only at ~/.qmd-seed. Copy the
-# embedding models (so nothing is downloaded from HuggingFace) and the existing
-# index as a head start (you chose seed-both). The cache itself is a named
-# volume, so this only runs on first create.
-SEED=/home/dev/.qmd-seed
-QMD_CACHE=/home/dev/.cache/qmd
-if [[ -d "$SEED" && ! -e "$QMD_CACHE/index.sqlite" ]]; then
-  echo "[post-create] Seeding qmd cache (models + index) from host..."
-  mkdir -p "$QMD_CACHE"
-  cp -an "$SEED/models" "$QMD_CACHE/" 2>/dev/null || true
-  cp -an "$SEED"/index.sqlite* "$QMD_CACHE/" 2>/dev/null || true
-  echo "[post-create] Seeded $(du -sh "$QMD_CACHE" 2>/dev/null | cut -f1) into ~/.cache/qmd."
-fi
-
-if command -v qmd >/dev/null 2>&1; then
-  echo "[post-create] Registering qmd collections for the container paths..."
-  qmd collection add wiki/ --name wiki 2>/dev/null || echo "[post-create]   wiki collection already present."
-  qmd collection add raw/  --name raw  2>/dev/null || echo "[post-create]   raw collection already present."
-  # Reconcile the seeded index with the mounted vault (incremental; reuses the
-  # seeded embeddings for unchanged docs, so no full re-embed/download).
-  qmd update 2>/dev/null || echo "[post-create]   qmd update skipped (run \`qmd update\` manually if search is stale)."
-fi
+# --- qmd: index + models are wired up by post-start (runs on every start) -----
+# Option B (search-only, embed-on-host): the index is snapshot-copied from the
+# host's live cache and the models are symlinked read-only to it. That logic
+# lives in post-start.sh so a host re-embed propagates on the next start, not
+# just at first create. Nothing qmd-related is seeded here.
 
 # --- copilot: seed the headless permission allowlist + qmd MCP ---------------
 # copilot ignores --allow-tool in headless (-p) mode (upstream bug), so the wiki

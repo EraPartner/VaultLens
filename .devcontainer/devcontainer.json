@@ -12,7 +12,8 @@
       "version": "3.12",
       "installTools": false
     },
-    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {},
+    "./features/agent-clis": {}
   },
   "init": true,
   "overrideCommand": false,
@@ -43,6 +44,10 @@
     "source=brain-cache-${devcontainerId},target=/home/dev/.cache,type=volume",
     "source=${localEnv:HOME}/.claude-brain-stage,target=/home/dev/.claude-stage,type=bind,readonly",
     "source=${localEnv:HOME}/.cache/qmd,target=/home/dev/.qmd-seed,type=bind,readonly",
+    "source=${localEnv:HOME}/Documents/School,target=${localEnv:HOME}/Documents/School,type=bind,readonly",
+    "source=${localEnv:HOME}/Documents/Personal/Scripts/Projects/Vision,target=${localEnv:HOME}/Documents/Personal/Scripts/Projects/Vision,type=bind,readonly",
+    "source=${localEnv:HOME}/Documents/Personal/Scripts/Projects/Watchman,target=${localEnv:HOME}/Documents/Personal/Scripts/Projects/Watchman,type=bind,readonly",
+    "source=${localEnv:HOME}/Documents/Personal/Scans/Finance/The Mad King,target=${localEnv:HOME}/Documents/Personal/Scans/Finance/The Mad King,type=bind,readonly",
     "source=${localEnv:HOME}/.gitconfig,target=/home/dev/.gitconfig-host,type=bind,readonly",
     "source=${localEnv:HOME}/.ssh/github.pub,target=/home/dev/.ssh/host-signing.pub,type=bind,readonly",
     "source=/run/host-services/ssh-auth.sock,target=/ssh-agent,type=bind"
@@ -59,7 +64,8 @@
     "https_proxy": "http://127.0.0.1:3128",
     "NO_PROXY": "localhost,127.0.0.1,::1,host.docker.internal",
     "no_proxy": "localhost,127.0.0.1,::1,host.docker.internal",
-    "OLLAMA_HOST": "http://host.docker.internal:11434"
+    "OLLAMA_HOST": "http://host.docker.internal:11434",
+    "QMD_EMBED_MODEL": "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf"
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "postStartCommand": "bash .devcontainer/post-start.sh"
