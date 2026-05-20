@@ -85,10 +85,6 @@ RUN mkdir -p /etc/squid/certs /var/lib/squid /var/log/squid /var/spool/squid \
 # you ever need runtime apt, route it through the proxy explicitly:
 #   apt-get -o Acquire::http::Proxy=http://127.0.0.1:3128 ...
 
-# Pre-create ~/.ssh with strict perms so the signing-key bind-mount lands in a
-# dev-owned dir (ssh-keygen rejects loose perms on .ssh).
-RUN install -d -o dev -g dev -m 0700 /home/dev/.ssh
-
 # Pre-create dirs backed by named volumes so a fresh volume inherits dev
 # ownership on first mount (the entrypoint's perms-fix is the runtime backstop).
 #   .claude         claude config (sanitized-stage seeded)
@@ -103,9 +99,8 @@ RUN install -d -o dev -g dev -m 0700 /home/dev/.claude /home/dev/.copilot \
 # Strip ALL setuid/setgid bits image-wide. Inert under no-new-privileges, but
 # clean defense-in-depth — and a generic find won't go stale like a hand-list
 # (it also catches ssh-keysign, unix_chkpwd, squid/pinger). We use `runuser`
-# (not setuid) for privilege drops, the forwarded host ssh-agent for signing,
-# and squid's pinger is unused (no cache peers), so nothing here needs elevated
-# bits.
+# (not setuid) for privilege drops and squid's pinger is unused (no cache peers),
+# so nothing here needs elevated bits.
 RUN find / -xdev -type f -perm /6000 -exec chmod -s {} + 2>/dev/null || true
 
 # Container process (PID 1 / entrypoint) runs as root so it can apply iptables

@@ -81,25 +81,15 @@ if [[ ! -f /home/dev/.copilot/mcp-config.json ]]; then
 JSON
 fi
 
-# --- git: writable ~/.gitconfig that includes the host config ----------------
-# - includes the read-only bind-mounted host gitconfig (user.name, user.email,
-#   commit.gpgsign, gpg.format=ssh, etc. carry over without hardcoding)
-# - marks /workspaces/Brain a safe.directory (the bind mount has non-dev
-#   ownership, which git would otherwise reject)
-# - overrides user.signingkey to the in-container public-key path
-# - rewrites the SSH remote (git@github.com:) to HTTPS so `git push` uses the
-#   forwarded GH_TOKEN — the SSH transport is blocked (only the ssh-agent socket
-#   is forwarded, for commit SIGNING, not git transport).
+# --- git: minimal ~/.gitconfig — read-only git only --------------------------
+# Just marks /workspaces/Brain a safe.directory so read-only git ops
+# (log/diff/status) work despite the bind mount's non-dev ownership. No identity,
+# signing, or push config: commits & pushes happen on the HOST, and the
+# in-container .git is read-only.
 if [[ ! -f /home/dev/.gitconfig || ! -s /home/dev/.gitconfig ]]; then
   cat > /home/dev/.gitconfig <<'EOF'
-[include]
-    path = /home/dev/.gitconfig-host
 [safe]
     directory = /workspaces/Brain
-[user]
-    signingkey = /home/dev/.ssh/host-signing.pub
-[url "https://github.com/"]
-    insteadOf = git@github.com:
 EOF
 fi
 

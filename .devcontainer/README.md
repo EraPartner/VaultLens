@@ -73,28 +73,27 @@ always runs at the workspace root (it sets `BRAIN_NO_CHDIR=1`).
 
 ### Choosing the Copilot account
 
-`GH_TOKEN`/`GITHUB_TOKEN` (used by `gh` and `git push` / `gh pr`) always come from
-the `brain-gh-token` Keychain entry, so pushes stay attributed to the repo owner.
-The **copilot** CLI authenticates separately, via `COPILOT_GITHUB_TOKEN` (its
-precedence is `COPILOT_GITHUB_TOKEN` > `GH_TOKEN` > `GITHUB_TOKEN`). By default
-that is the same `brain-gh-token`, but you can point Copilot at any other GitHub
-account you're logged into on the host — e.g. one that has a Copilot subscription
-— by setting `BRAIN_GH_ACCOUNT` for the run. The wrapper resolves it live with
-`gh auth token --user <account>`, so there's no second Keychain entry to keep
-fresh.
+No git push token is forwarded at all (commits/pushes happen on the host). The
+only GitHub token in the container is `COPILOT_GITHUB_TOKEN`, the **copilot** CLI's
+LLM auth — derived **live** from your host `gh` login, never stored in the
+Keychain. It defaults to the `talicaddy` account; set `BRAIN_GH_ACCOUNT` to use
+any other account you're logged into on the host (e.g. one with a Copilot
+subscription). The wrapper resolves it with `gh auth token --user <account>`.
+Prefer an account **without write access to `EraPartner/VaultLens`**, so even
+that token can't push.
 
 ```fish
-# default: copilot uses brain-gh-token (EraPartner), git pushes as EraPartner
+# default: copilot uses the talicaddy account
 brain-wiki enhance --strategy coverage
 
-# this run: copilot talks to the 'talicaddy' account; git still pushes as EraPartner
-BRAIN_GH_ACCOUNT=talicaddy brain-wiki enhance --strategy coverage
-BRAIN_GH_ACCOUNT=talicaddy brain-copilot -p "..."
+# this run: copilot talks to a different logged-in account
+BRAIN_GH_ACCOUNT=some-other-account brain-wiki enhance --strategy coverage
+BRAIN_GH_ACCOUNT=some-other-account brain-copilot -p "..."
 ```
 
 The account name must match one shown by `gh auth status`. If it isn't logged in,
-the wrapper fails fast (it never silently falls back to the default token) and
-lists the accounts it found.
+the wrapper warns and copilot runs unauthenticated (claude/opencode are
+unaffected).
 
 ## One-time host setup
 
@@ -106,30 +105,28 @@ npm install -g @devcontainers/cli
 claude setup-token        # prints sk-ant-… ; copy it
 security add-generic-password -s brain-claude-code-token -a "$USER" -w   # paste it
 
-# 3) GitHub token — the default for gh, git push, AND copilot. Must be a
-#    fine-grained PAT with the "Copilot Requests" permission, or a gh OAuth token
-#    (a classic ghp_ token will NOT work for copilot). To run copilot under a
-#    DIFFERENT account, leave this as your push account and use BRAIN_GH_ACCOUNT
-#    per run (see "Choosing the Copilot account" above).
-gh auth token | security add-generic-password -s brain-gh-token -a "$USER" -w
-#    (or paste a fine-grained PAT instead of `gh auth token`)
+# 3) Copilot LLM auth — NO Keychain token needed. The copilot CLI's token is
+#    derived live from your host `gh` login at exec time:
+#    `gh auth token --user ${BRAIN_GH_ACCOUNT:-talicaddy}`. Just be logged in:
+gh auth login                      # once, for the account you want copilot to use
+#    Pick a Copilot-enabled account; see "Choosing the Copilot account" above.
+#    NO git push credential is forwarded — commits/pushes happen on the HOST.
 
 # 4) opencode credential (the github-copilot OAuth blob it stores on the host)
 security add-generic-password -s brain-opencode-auth -a "$USER" \
   -w "$(cat ~/.local/share/opencode/auth.json)"
-
-# 5) Make sure the signing key is loaded in your host ssh-agent
-ssh-add ~/.ssh/github
 ```
 
-The `brain-*` wrappers retrieve these from the Keychain on every invocation and
-forward them at `devcontainer exec` time. The Claude and gh tokens go in as env
-vars: `CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN`/`GITHUB_TOKEN` (from `brain-gh-token`),
-and `COPILOT_GITHUB_TOKEN` (the same token by default, or the `BRAIN_GH_ACCOUNT`
-account's live `gh` token — see [Choosing the Copilot account](#choosing-the-copilot-account));
-the opencode blob is written to the container's `~/.local/share/opencode/auth.json`
-only if missing (opencode refreshes it in-place in the volume thereafter). No
-long-lived credential is ever written to a plaintext file on the host.
+The `brain-*` wrappers retrieve these on every invocation and forward them at
+`devcontainer exec` time. Only LLM auth crosses the boundary — **no git push
+credential**: `CLAUDE_CODE_OAUTH_TOKEN` (from `brain-claude-code-token`) and
+`COPILOT_GITHUB_TOKEN` (derived live via `gh auth token --user ${BRAIN_GH_ACCOUNT:-talicaddy}`
+— see [Choosing the Copilot account](#choosing-the-copilot-account)). `GH_TOKEN`/
+`GITHUB_TOKEN` are **not** forwarded and the root `.git` is mounted read-only, so
+no container can commit, rewrite history, or push (do that on the host). The
+opencode blob is written to the container's `~/.local/share/opencode/auth.json`
+only if missing (opencode refreshes it in-place thereafter). No long-lived
+credential is ever written to a plaintext file on the host.
 
 > **Keychain "Always Allow".** The first `security` read pops the standard
 > prompt. **Allow each time** is the more defensible choice for a
@@ -251,14 +248,23 @@ container so `post-start` snapshots the fresh index. A host `qmd status` showing
 "N need embedding" / a `qmd doctor` "legacy/stale fingerprint" means the stored
 vectors predate the current model/pipeline; fix it on the host first.
 
-## Git, GitHub, signed commits
+## Git (read-only inside; commit & push on the host)
+
+No container — not even `master` — can change git history. The root `.git` is
+mounted **read-only**, no git credential (`GH_TOKEN`/`GITHUB_TOKEN`) is forwarded,
+and the host ssh-agent is **not** forwarded, so a compromised agent can't commit,
+rewrite history, push, or sign/authenticate as you over SSH.
 
 | Operation | Works? | Notes |
 | --- | --- | --- |
-| `git status` / `diff` / `commit` | ✅ | on the bind-mounted vault |
-| `git commit -S` (SSH-signed) | ✅ | private key never enters the container; signing via the forwarded host ssh-agent (unlock it with `ssh-add` first) |
-| `git push` / `gh pr` | ✅ | the SSH remote is rewritten to HTTPS in-container so push uses the forwarded `GH_TOKEN`; `github.com` is allowlisted |
-| `git push` over SSH transport | ❌ | `~/.ssh` isn't mounted; the agent socket is for signing only. HTTPS is used instead. |
+| `git status` / `diff` / `log` / `show` | ✅ | read-only on the bind-mounted vault (`safe.directory` set) |
+| `git commit` / `rebase` / `reset` / `amend` | ❌ | root `.git` is read-only — EROFS, by design |
+| `git push` / `gh pr` | ❌ | no credential in the container; `git push` errors with "could not read Username" |
+| commit signing (ssh-agent) | ❌ (n/a) | no ssh-agent forwarded — commits happen on the host |
+
+The one exception is `projects/thesis`, which is its own nested repo: a
+`project:thesis` agent's RW hole covers `projects/thesis/.git`, so it **can**
+commit to the thesis repo. **Make changes inside, commit & push from the host.**
 
 ## Known limitations
 

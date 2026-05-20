@@ -1,8 +1,29 @@
+// SCOPED (read-only workspace) variant of ../devcontainer.json.
+//
+// Lives in its own subdir because the devcontainer CLI requires every config to
+// be named exactly `devcontainer.json`; bin/agent selects it with `--config` for
+// every profile EXCEPT `master` (reader, author, project:<X>, raw, projects).
+// The ONLY behavioural difference from ../devcontainer.json is `workspaceMount`
+// (read-only here): the vault is mounted read-only and bin/agent punches a single
+// read-write hole for the profile's scope via `devcontainer up --mount` (e.g.
+// wiki/ for author, projects/<X>/ for a project agent). reader gets no hole.
+//
+// build/feature paths are "../" because this file sits one level below the real
+// .devcontainer contents (Dockerfile, features/). Lifecycle commands stay
+// `.devcontainer/...` (they resolve against the workspace folder, not this file).
+//
+// KEEP IN SYNC with ../devcontainer.json — everything except workspaceMount /
+// workspaceFolder and the ../ build paths must mirror it.
 {
-  "name": "Brain Dev",
+  "name": "Brain Dev (scoped)",
+  // Container path is hardcoded (not ${containerWorkspaceFolder}): that variable
+  // is DERIVED from workspaceFolder, so referencing it from workspaceFolder/
+  // workspaceMount is circular and ends up passed to docker literally.
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/Brain,type=bind,readonly",
+  "workspaceFolder": "/workspaces/Brain",
   "build": {
-    "dockerfile": "Dockerfile",
-    "context": "."
+    "dockerfile": "../Dockerfile",
+    "context": ".."
   },
   "features": {
     "ghcr.io/devcontainers/features/node:1": {
@@ -13,7 +34,7 @@
       "installTools": false
     },
     "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {},
-    "./features/agent-clis": {}
+    "../features/agent-clis": {}
   },
   "init": true,
   "overrideCommand": false,
@@ -37,25 +58,13 @@
     "--add-host=host.docker.internal:host-gateway"
   ],
   "mounts": [
-    // SECURITY: re-mount .devcontainer READ-ONLY on top of the read-write
-    // workspace bind. The repo is mounted rw at /workspaces/Brain so the agents
-    // can edit wiki content, but that also exposes the sandbox's OWN definition
-    // (this file's runArgs, Dockerfile, features/) and the HOST-side launcher
-    // (bin/agent, bin/claude, bin/doctor). Without this overlay an in-container
-    // agent could rewrite runArgs (--privileged, -v /:/host, docker.sock) or the
-    // launcher, and the next host `agent` / `devcontainer up` would run it on the
-    // Mac with Keychain access -> trivial escape. The container can't undo this
-    // (no CAP_SYS_ADMIN, no-new-privileges, .devcontainer is a busy mountpoint),
-    // so edit .devcontainer on the HOST only, then rebuild.
-    "source=${localWorkspaceFolder}/.devcontainer,target=${containerWorkspaceFolder}/.devcontainer,type=bind,readonly",
-    // SECURITY: re-mount the ROOT .git read-only. Commits/pushes for VaultLens
-    // happen on the HOST, never inside a container, so no container (master
-    // included) needs to write history here. Read-only = no amend/rebase/reset/
-    // force is possible from inside (kernel-enforced, not a hook). NOTE: this
-    // covers only /workspaces/Brain/.git — the nested projects/thesis/.git is
-    // intentionally left writable so agents working in projects/thesis can commit
-    // to that separate repo.
-    "source=${localWorkspaceFolder}/.git,target=${containerWorkspaceFolder}/.git,type=bind,readonly",
+    // The whole workspace is already read-only via workspaceMount above; these
+    // overlays are redundant here but kept identical to ../devcontainer.json so
+    // the two files stay structurally parallel. .git stays read-only even when a
+    // profile's RW hole is elsewhere; the nested projects/thesis/.git is left
+    // writable (it falls under a project:thesis RW hole, not this overlay).
+    "source=${localWorkspaceFolder}/.devcontainer,target=/workspaces/Brain/.devcontainer,type=bind,readonly",
+    "source=${localWorkspaceFolder}/.git,target=/workspaces/Brain/.git,type=bind,readonly",
     "source=brain-claude-${devcontainerId},target=/home/dev/.claude,type=volume",
     "source=brain-copilot-${devcontainerId},target=/home/dev/.copilot,type=volume",
     "source=brain-local-${devcontainerId},target=/home/dev/.local,type=volume",

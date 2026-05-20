@@ -573,6 +573,15 @@ def invoke_agent(
             if perms["write"]:
                 allowed_tools.extend(["Edit", "Write", "NotebookEdit"])
             cmd.extend(["--allowedTools", ",".join(allowed_tools)])
+            # Hard "no subagents": a wiki agent must never spawn its own
+            # sub-agent. The orchestrator (this script) is the ONLY multi-agent
+            # layer; a self-spawned subagent would be a privilege/injection vector
+            # (e.g. a read-only agent reaching for a write-capable one) — and the
+            # container mount is the kernel-level backstop regardless, since any
+            # subagent runs in THIS profile's container. Task is already absent
+            # from the allowlist above; deny it explicitly so the intent survives
+            # future edits to allowed_tools.
+            cmd.extend(["--disallowedTools", "Task"])
             # Scope writes to the agent's writable_dirs. Claude reads from the
             # whole repo by default; --add-dir is needed when the writable
             # target lives outside the launching directory.
@@ -643,14 +652,19 @@ def _auto_log_ingest(source_path: str) -> None:
 
     name = Path(source_path).stem
     title = _slug_to_title(name)
-    append_log_entry(
-        operation="ingest",
-        title=title,
-        summary=f"Ingested {source_path} via wiki-agent.py",
-        pages=[],
-        sources=[source_path],
-        notes="Auto-logged by wiki-agent.py",
-    )
+    try:
+        append_log_entry(
+            operation="ingest",
+            title=title,
+            summary=f"Ingested {source_path} via wiki-agent.py",
+            pages=[],
+            sources=[source_path],
+            notes="Auto-logged by wiki-agent.py",
+        )
+    except OSError as exc:
+        # A read-only profile (vault mounted RO) can't persist the log; the
+        # ingest itself already wrote to wiki/, so just warn.
+        print(f"Warning: could not write ingest log ({exc}); skipping.")
 
 
 def run_agent(args, strategy: str | None = None) -> int:
@@ -740,12 +754,25 @@ def _install_signal_handlers() -> None:
     signal.signal(signal.SIGTERM, _handler)
 
 
-def _redirect_output_to_log(log_path: Path) -> None:
-    """Send stdout, stderr, and inherited subprocess output to log_path (append)."""
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    fh = open(log_path, "a", buffering=1, encoding="utf-8")
+def _redirect_output_to_log(log_path: Path) -> bool:
+    """Send stdout, stderr, and inherited subprocess output to log_path (append).
+
+    Returns False (leaving stdio untouched) when the log destination is not
+    writable — e.g. a reader/scoped profile where the vault is mounted read-only.
+    The run then continues with console output instead of crashing on EROFS.
+    """
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(log_path, "a", buffering=1, encoding="utf-8")
+    except OSError as exc:
+        sys.stderr.write(
+            f"[wiki-agent] WARN: cannot write log file {log_path} ({exc}); "
+            "continuing with console output (read-only profile?).\n"
+        )
+        return False
     os.dup2(fh.fileno(), sys.stdout.fileno())
     os.dup2(fh.fileno(), sys.stderr.fileno())
+    return True
 
 
 def _ts() -> str:
@@ -809,9 +836,9 @@ def main(argv=None) -> int:
         log_path = Path(args.log_file).expanduser()
         if not log_path.is_absolute():
             log_path = ROOT / log_path
-        _redirect_output_to_log(log_path)
-        print(f"[wiki-agent] {_ts()} pid={os.getpid()} logging to {log_path}")
-        print(f"[wiki-agent] stop with: kill {os.getpid()}")
+        if _redirect_output_to_log(log_path):
+            print(f"[wiki-agent] {_ts()} pid={os.getpid()} logging to {log_path}")
+            print(f"[wiki-agent] stop with: kill {os.getpid()}")
 
     _install_signal_handlers()
 

@@ -17,7 +17,7 @@ set -uo pipefail
 
 log() { echo "[entrypoint] $*"; }
 
-# 1) Repair ownership of named-volume mountpoints + ssh-agent socket.
+# 1) Repair ownership of named-volume mountpoints.
 /usr/local/sbin/brain-perms-fix || log "WARN: perms-fix returned non-zero."
 
 # Network pre-flight: if Docker Desktop detached us from the bridge (host
