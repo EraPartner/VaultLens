@@ -43,6 +43,16 @@ if [[ -z "$PROJECT_ROOT" ]]; then
   exit 1
 fi
 
+# Canonicalize the workspace folder (and the host PWD we derive the in-container
+# cwd from). ~/Documents/Brain is a SYMLINK to the iCloud vault, and the
+# devcontainer CLI keys container identity on the workspace-folder STRING — so
+# the symlink path and the real path each spawn their OWN container, and only the
+# real-path one carries the host bind mounts (School, qmd seed, …). Resolving to
+# the physical path makes every invocation, from either path, land in the SAME
+# sandbox. (Captured before any cd; pwd -P resolves symlinks on bash 3.2 too.)
+HOST_PWD="$(pwd -P)"
+PROJECT_ROOT="$(cd "$PROJECT_ROOT" 2>/dev/null && pwd -P || printf '%s' "$PROJECT_ROOT")"
+
 if ! command -v devcontainer >/dev/null 2>&1; then
   echo "agent (brain-wrapper): @devcontainers/cli not installed." >&2
   echo "  npm install -g @devcontainers/cli" >&2
@@ -147,8 +157,8 @@ fi
 CONTAINER_WS="/workspaces/$(basename "$PROJECT_ROOT")"
 CONTAINER_CWD="$CONTAINER_WS"
 if [[ -z "${BRAIN_NO_CHDIR:-}" ]]; then
-  rel="${PWD#"$PROJECT_ROOT"}"
-  if [[ "$rel" != "$PWD" && -n "$rel" ]]; then   # PWD is genuinely under the root
+  rel="${HOST_PWD#"$PROJECT_ROOT"}"
+  if [[ "$rel" != "$HOST_PWD" && -n "$rel" ]]; then   # PWD is genuinely under the root
     CONTAINER_CWD="$CONTAINER_WS/${rel#/}"
   fi
 fi

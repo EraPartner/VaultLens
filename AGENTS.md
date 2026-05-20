@@ -287,6 +287,8 @@ When operating from a `projects/<slug>/` directory (CWD or attached project), fo
 
 If `mcp__qmd__*` tools are exposed in the session, prefer them over the CLI.
 
+> **In the devcontainer (no GPU):** invert the ladder — lead with `qmd search` (BM25, instant). `qmd query`/`vsearch` and the `mcp__qmd__query` tool run an LLM expand+embed+rerank pipeline that costs 30s+ on the container's 4 CPU cores, and currently stalls for minutes because the snapshot index's chunks are stamped with an uncached embed model (`embeddinggemma-300M`) that qmd then tries to fetch through the locked egress. Fix the stall by re-embedding on the host (`qmd embed`, Metal-accelerated) so the chunks re-stamp to the cached Qwen3 model; it propagates to the container on next start. On the host, `qmd query` is fine as-is.
+
 **Citation discipline** — every load-bearing claim in a project answer carries an inline wikilink (`[[concepts/some-page]]`) to the wiki page that backs it. Mark anything not backed by the wiki as `[outside wiki — agent inference]`. A claim with no marker is treated as obviously general knowledge.
 
 **Adding a `wiki_ref`** — never hand-edit `project.md` frontmatter. Use `python3 tools/wiki.py project link <slug> <wiki-ref>`; it preserves YAML formatting and bumps `updated`.
