@@ -37,6 +37,17 @@
     "--add-host=host.docker.internal:host-gateway"
   ],
   "mounts": [
+    // SECURITY: re-mount .devcontainer READ-ONLY on top of the read-write
+    // workspace bind. The repo is mounted rw at /workspaces/Brain so the agents
+    // can edit wiki content, but that also exposes the sandbox's OWN definition
+    // (this file's runArgs, Dockerfile, features/) and the HOST-side launcher
+    // (bin/agent, bin/claude, bin/doctor). Without this overlay an in-container
+    // agent could rewrite runArgs (--privileged, -v /:/host, docker.sock) or the
+    // launcher, and the next host `agent` / `devcontainer up` would run it on the
+    // Mac with Keychain access -> trivial escape. The container can't undo this
+    // (no CAP_SYS_ADMIN, no-new-privileges, .devcontainer is a busy mountpoint),
+    // so edit .devcontainer on the HOST only, then rebuild.
+    "source=${localWorkspaceFolder}/.devcontainer,target=${containerWorkspaceFolder}/.devcontainer,type=bind,readonly",
     "source=brain-claude-${devcontainerId},target=/home/dev/.claude,type=volume",
     "source=brain-copilot-${devcontainerId},target=/home/dev/.copilot,type=volume",
     "source=brain-local-${devcontainerId},target=/home/dev/.local,type=volume",

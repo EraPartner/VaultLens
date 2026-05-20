@@ -181,6 +181,7 @@ for a one-shot readiness check (egress lock, toolchain, qmd, ollama, auth).
 | `brain-local-<id>` (volume) | `/home/dev/.local` | opencode data + `auth.json` |
 | `brain-config-<id>` (volume) | `/home/dev/.config` | qmd / gh config |
 | `brain-cache-<id>` (volume) | `/home/dev/.cache` | writable qmd index snapshot (models symlink to the seed) |
+| `.devcontainer` (host) | `/workspaces/Brain/.devcontainer` | **RO** overlay on the rw workspace so the sandbox config + host launcher can't be rewritten from inside (see Safety note) |
 | `~/.claude-brain-stage` (host) | `/home/dev/.claude-stage` | **RO** sanitized stage (no secrets) |
 | `~/.cache/qmd` (host) | `/home/dev/.qmd-seed` | **RO** live source: index snapshotted on start, models symlinked |
 | `~/Documents/School` (host) | same path | **RO** project source for symlinked coursework |
@@ -282,3 +283,19 @@ malicious source document or repo can exfiltrate anything **inside** the
 container, including the credential volumes. Treat this as *"host is isolated
 from the agents,"* not *"the agents are isolated from a hostile input."* Only
 ingest sources you trust.
+
+**Why `.devcontainer` is mounted read-only.** The vault is bind-mounted
+read-write at `/workspaces/Brain` so the agents can edit wiki content — but that
+same mount would otherwise expose the sandbox's own definition (`devcontainer.json`
+`runArgs`, `Dockerfile`, `features/`) and, critically, the **host-side launcher**
+(`bin/agent`, `bin/claude`, `bin/doctor`). Those run on your **Mac** with your
+shell and Keychain. A compromised in-container agent could add `--privileged` /
+`-v /:/host` / a `docker.sock` mount to `runArgs`, or just edit `bin/agent`, and
+the next time you ran `brain-*` (which calls `devcontainer up` and re-execs the
+launcher) it would execute on the host — a trivial full escape. To close that,
+`.devcontainer` is re-mounted **read-only on top of** the read-write workspace,
+so it is immutable from inside. The container cannot lift this: it has
+`cap-drop=ALL` (no `CAP_SYS_ADMIN`, so no remount/unmount), `no-new-privileges`,
+and `.devcontainer` is a busy mountpoint that can't be replaced — the protection
+re-applies on every `devcontainer up`. **Edit `.devcontainer` on the host only,**
+then rebuild.

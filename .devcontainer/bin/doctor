@@ -13,6 +13,23 @@ ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; pass=$((pass+1)); }
 note() { printf '  \033[33m!\033[0m %s\n' "$*"; warn=$((warn+1)); }
 bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; fail=$((fail+1)); }
 
+echo "== Sandbox integrity =="
+# The host-side launcher (.devcontainer/bin/agent|claude|doctor) and the sandbox
+# definition (devcontainer.json runArgs, Dockerfile) live under .devcontainer and
+# run on the HOST. If they are writable from inside, a compromised agent can
+# rewrite them and escape on the next launch. devcontainer.json re-mounts
+# .devcontainer read-only, but that only applies on container CREATE — a stale
+# container booted before the change leaves the door open. Prove it's live by
+# trying to write, not by trusting the config.
+DC_DIR="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd -P || echo /workspaces/Brain/.devcontainer)"
+_probe="$DC_DIR/.doctor-write-probe.$$"
+if ( : > "$_probe" ) 2>/dev/null; then
+  rm -f "$_probe" 2>/dev/null || true
+  bad ".devcontainer is WRITABLE from inside — host launcher + runArgs can be tampered. REBUILD: devcontainer up --remove-existing-container"
+else
+  ok ".devcontainer is read-only (host launcher + runArgs can't be rewritten from inside)"
+fi
+
 echo "== Egress lock =="
 if [[ -f /run/brain-firewall-ok ]]; then ok "firewall sentinel present"; else bad "firewall sentinel missing (/run/brain-firewall-ok)"; fi
 if pgrep -x squid >/dev/null 2>&1; then ok "squid running"; else bad "squid not running"; fi
