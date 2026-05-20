@@ -17,8 +17,10 @@
 #      the container's auth.json (only if missing — opencode refreshes it there).
 #   4. Forward the Claude OAuth token and the gh token from the macOS Keychain as
 #      env vars at exec time — neither is ever written to a file on the host.
-#      The gh token is forwarded as GH_TOKEN/GITHUB_TOKEN/COPILOT_GITHUB_TOKEN,
-#      which also authenticates the copilot CLI.
+#      GH_TOKEN/GITHUB_TOKEN come from `brain-gh-token` (EraPartner) for gh + git
+#      push. COPILOT_GITHUB_TOKEN (what the copilot CLI prefers) defaults to the
+#      same token, but BRAIN_GH_ACCOUNT=<gh-account> points Copilot at any other
+#      account you're logged into on the host, via a live `gh auth token`.
 
 set -euo pipefail
 
@@ -121,17 +123,49 @@ if command -v security >/dev/null 2>&1; then
 fi
 
 # --- 4) Forward credentials from the macOS Keychain at exec time -------------
+# Token split (decided 2026-05-20):
+#   GH_TOKEN / GITHUB_TOKEN  -> the Keychain `brain-gh-token` (EraPartner, the
+#       repo owner). Drives `gh` and `git push` / `gh pr` to EraPartner/VaultLens.
+#   COPILOT_GITHUB_TOKEN     -> what the copilot CLI prefers (its precedence is
+#       COPILOT_GITHUB_TOKEN || GH_TOKEN || GITHUB_TOKEN). Defaults to the same
+#       EraPartner token, but BRAIN_GH_ACCOUNT=<gh-account> swaps it for any OTHER
+#       account you're logged into on the host — e.g. one with a Copilot
+#       subscription — so git keeps pushing as EraPartner while Copilot talks to
+#       the chosen account.
 EXEC_ARGS=()
 if command -v security >/dev/null 2>&1; then
   tok="$(kc 'brain-claude-code-token')"
   [[ -n "$tok" ]] && EXEC_ARGS+=(--remote-env "CLAUDE_CODE_OAUTH_TOKEN=$tok")
-  gh_tok="$(kc 'brain-gh-token')"
-  if [[ -n "$gh_tok" ]]; then
-    EXEC_ARGS+=(--remote-env "GH_TOKEN=$gh_tok" \
-                --remote-env "GITHUB_TOKEN=$gh_tok" \
-                --remote-env "COPILOT_GITHUB_TOKEN=$gh_tok")
+fi
+
+gh_tok="$(kc 'brain-gh-token')"
+if [[ -n "$gh_tok" ]]; then
+  EXEC_ARGS+=(--remote-env "GH_TOKEN=$gh_tok" \
+              --remote-env "GITHUB_TOKEN=$gh_tok")
+fi
+
+# Copilot token: default to the EraPartner Keychain token; override per-run with
+# BRAIN_GH_ACCOUNT. The host `gh` (logged into each account) is the source of
+# truth, so there is no second Keychain entry to keep fresh. Fail loudly rather
+# than silently fall back — a silent fallback to EraPartner is exactly the bug
+# this guards against.
+copilot_tok="$gh_tok"
+if [[ -n "${BRAIN_GH_ACCOUNT:-}" ]]; then
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "agent (brain-wrapper): BRAIN_GH_ACCOUNT='$BRAIN_GH_ACCOUNT' is set but the gh CLI is not installed on the host." >&2
+    echo "  Install gh, or unset BRAIN_GH_ACCOUNT to use the Keychain brain-gh-token (EraPartner)." >&2
+    exit 1
+  fi
+  copilot_tok="$(gh auth token --user "$BRAIN_GH_ACCOUNT" 2>/dev/null || true)"
+  if [[ -z "$copilot_tok" ]]; then
+    echo "agent (brain-wrapper): no gh token for account '$BRAIN_GH_ACCOUNT'." >&2
+    echo "  Logged-in accounts on this host:" >&2
+    gh auth status 2>&1 | sed -n 's/.*Logged in to github.com account \([A-Za-z0-9_-]*\).*/    - \1/p' >&2 || true
+    echo "  Log in with:  gh auth login   (then retry)" >&2
+    exit 1
   fi
 fi
+[[ -n "$copilot_tok" ]] && EXEC_ARGS+=(--remote-env "COPILOT_GITHUB_TOKEN=$copilot_tok")
 
 # Fallback: plain env vars from the host shell (if the Keychain entries absent).
 # ${EXEC_ARGS[@]+...} guards "unbound variable" on an empty array under `set -u`

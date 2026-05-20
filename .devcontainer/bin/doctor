@@ -52,7 +52,14 @@ fi
 
 echo "== Auth =="
 [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" || -n "${ANTHROPIC_API_KEY:-}" ]] && ok "Claude token in env" || bad "no Claude token (set brain-claude-code-token in Keychain)"
-[[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}${COPILOT_GITHUB_TOKEN:-}" ]] && ok "GitHub/Copilot token in env" || note "no GH token (gh + copilot need brain-gh-token)"
+[[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]] && ok "gh/git token in env (GH_TOKEN)" || note "no GH_TOKEN (gh + git push need brain-gh-token)"
+if [[ -n "${COPILOT_GITHUB_TOKEN:-}" ]]; then
+  [[ "${COPILOT_GITHUB_TOKEN:-}" != "${GH_TOKEN:-}" ]] \
+    && ok "Copilot token in env (BRAIN_GH_ACCOUNT override active)" \
+    || ok "Copilot token in env (default: same account as gh/git)"
+else
+  note "no COPILOT_GITHUB_TOKEN (copilot needs brain-gh-token, or set BRAIN_GH_ACCOUNT)"
+fi
 [[ -s "$HOME/.local/share/opencode/auth.json" ]] && ok "opencode auth.json present" || note "opencode auth.json missing (set brain-opencode-auth in Keychain)"
 gh auth status >/dev/null 2>&1 && ok "gh authenticated" || note "gh not authenticated"
 

@@ -17,7 +17,7 @@ qmd cache seeding, and a single egress hole to the host Ollama daemon.
 | --- | --- | --- |
 | Python 3.12 orchestrator | `tools/wiki.py`, `tools/agents/wiki-agent.py` | stdlib only, no pip deps |
 | `claude` CLI | claude-code devcontainer feature | default agent (`sonnet`) |
-| `copilot` CLI | npm `@github/copilot` (agent-clis feature, build-time) | `gpt-5.2`; auth via `GH_TOKEN` |
+| `copilot` CLI | npm `@github/copilot` (agent-clis feature, build-time) | `gpt-5.2`; auth via `COPILOT_GITHUB_TOKEN` (see [Choosing the Copilot account](#choosing-the-copilot-account)) |
 | `opencode` CLI | npm `opencode-ai` (agent-clis feature, build-time) | `github-copilot/gpt-5.2` |
 | `ollama` CLI | host daemon via `host.docker.internal:11434` | not installed in-container |
 | `qmd` search (MCP) | npm `@tobilu/qmd` (agent-clis feature, build-time) | enabled for claude via `enabledMcpjsonServers`; search-only — index snapshotted + models live-linked from host on start |
@@ -71,6 +71,31 @@ from `projects/ict-recht` lands in `/workspaces/Brain/projects/ict-recht` and
 picks up that project's `AGENTS.md` / `CLAUDE.md` / `project.md`. `brain-wiki`
 always runs at the workspace root (it sets `BRAIN_NO_CHDIR=1`).
 
+### Choosing the Copilot account
+
+`GH_TOKEN`/`GITHUB_TOKEN` (used by `gh` and `git push` / `gh pr`) always come from
+the `brain-gh-token` Keychain entry, so pushes stay attributed to the repo owner.
+The **copilot** CLI authenticates separately, via `COPILOT_GITHUB_TOKEN` (its
+precedence is `COPILOT_GITHUB_TOKEN` > `GH_TOKEN` > `GITHUB_TOKEN`). By default
+that is the same `brain-gh-token`, but you can point Copilot at any other GitHub
+account you're logged into on the host — e.g. one that has a Copilot subscription
+— by setting `BRAIN_GH_ACCOUNT` for the run. The wrapper resolves it live with
+`gh auth token --user <account>`, so there's no second Keychain entry to keep
+fresh.
+
+```fish
+# default: copilot uses brain-gh-token (EraPartner), git pushes as EraPartner
+brain-wiki enhance --strategy coverage
+
+# this run: copilot talks to the 'talicaddy' account; git still pushes as EraPartner
+BRAIN_GH_ACCOUNT=talicaddy brain-wiki enhance --strategy coverage
+BRAIN_GH_ACCOUNT=talicaddy brain-copilot -p "..."
+```
+
+The account name must match one shown by `gh auth status`. If it isn't logged in,
+the wrapper fails fast (it never silently falls back to the default token) and
+lists the accounts it found.
+
 ## One-time host setup
 
 ```sh
@@ -81,9 +106,11 @@ npm install -g @devcontainers/cli
 claude setup-token        # prints sk-ant-… ; copy it
 security add-generic-password -s brain-claude-code-token -a "$USER" -w   # paste it
 
-# 3) GitHub token — authenticates BOTH gh and copilot. Must be a fine-grained
-#    PAT with the "Copilot Requests" permission, or the gh OAuth token (a
-#    classic ghp_ token will NOT work for copilot).
+# 3) GitHub token — the default for gh, git push, AND copilot. Must be a
+#    fine-grained PAT with the "Copilot Requests" permission, or a gh OAuth token
+#    (a classic ghp_ token will NOT work for copilot). To run copilot under a
+#    DIFFERENT account, leave this as your push account and use BRAIN_GH_ACCOUNT
+#    per run (see "Choosing the Copilot account" above).
 gh auth token | security add-generic-password -s brain-gh-token -a "$USER" -w
 #    (or paste a fine-grained PAT instead of `gh auth token`)
 
@@ -97,7 +124,9 @@ ssh-add ~/.ssh/github
 
 The `brain-*` wrappers retrieve these from the Keychain on every invocation and
 forward them at `devcontainer exec` time. The Claude and gh tokens go in as env
-vars (`CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN`/`GITHUB_TOKEN`/`COPILOT_GITHUB_TOKEN`);
+vars: `CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN`/`GITHUB_TOKEN` (from `brain-gh-token`),
+and `COPILOT_GITHUB_TOKEN` (the same token by default, or the `BRAIN_GH_ACCOUNT`
+account's live `gh` token — see [Choosing the Copilot account](#choosing-the-copilot-account));
 the opencode blob is written to the container's `~/.local/share/opencode/auth.json`
 only if missing (opencode refreshes it in-place in the volume thereafter). No
 long-lived credential is ever written to a plaintext file on the host.
