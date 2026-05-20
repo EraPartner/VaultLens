@@ -65,11 +65,15 @@
     // writable (it falls under a project:thesis RW hole, not this overlay).
     "source=${localWorkspaceFolder}/.devcontainer,target=/workspaces/Brain/.devcontainer,type=bind,readonly",
     "source=${localWorkspaceFolder}/.git,target=/workspaces/Brain/.git,type=bind,readonly",
-    "source=brain-claude-${devcontainerId},target=/home/dev/.claude,type=volume",
-    "source=brain-copilot-${devcontainerId},target=/home/dev/.copilot,type=volume",
-    "source=brain-local-${devcontainerId},target=/home/dev/.local,type=volume",
-    "source=brain-config-${devcontainerId},target=/home/dev/.config,type=volume",
-    "source=brain-cache-${devcontainerId},target=/home/dev/.cache,type=volume",
+    // Home volumes are keyed by ${localEnv:BRAIN_VOL_KEY} (set by bin/agent), NOT
+    // ${devcontainerId}: all project:<X> profiles share one key ("<root>-project")
+    // so switching projects reuses the seeded qmd index / claude config instead
+    // of re-seeding per project. reader/author/raw/projects keep their own key.
+    "source=brain-claude-${localEnv:BRAIN_VOL_KEY},target=/home/dev/.claude,type=volume",
+    "source=brain-copilot-${localEnv:BRAIN_VOL_KEY},target=/home/dev/.copilot,type=volume",
+    "source=brain-local-${localEnv:BRAIN_VOL_KEY},target=/home/dev/.local,type=volume",
+    "source=brain-config-${localEnv:BRAIN_VOL_KEY},target=/home/dev/.config,type=volume",
+    "source=brain-cache-${localEnv:BRAIN_VOL_KEY},target=/home/dev/.cache,type=volume",
     "source=${localEnv:HOME}/.claude-brain-stage,target=/home/dev/.claude-stage,type=bind,readonly",
     "source=${localEnv:HOME}/.cache/qmd,target=/home/dev/.qmd-seed,type=bind,readonly",
     "source=${localEnv:HOME}/Documents/School,target=${localEnv:HOME}/Documents/School,type=bind,readonly",

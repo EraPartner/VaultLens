@@ -140,6 +140,17 @@ else
 fi
 ID_LABEL_ARGS=(--id-label "brain.root=$ROOT_HASH" --id-label "brain.profile=$PROFILE_LABEL")
 
+# Home-volume key (read by scoped/devcontainer.json as ${localEnv:BRAIN_VOL_KEY}).
+# All project:<X> profiles SHARE one key so the qmd index / claude config is
+# seeded once, not per project; other profiles get their own. The per-project
+# .git/workspace mounts + id-label keep the containers isolated regardless.
+# (Single-user assumption: don't run two project agents at once — shared qmd db.)
+if [[ "$PROFILE" == "project" ]]; then
+  export BRAIN_VOL_KEY="${ROOT_HASH}-project"
+else
+  export BRAIN_VOL_KEY="${ROOT_HASH}-${PROFILE}"
+fi
+
 # master uses the default config (workspace RW); every other profile uses the
 # read-only-workspace twin and punches a single RW hole for its scope.
 CONFIG_ARGS=()
@@ -160,6 +171,7 @@ if [[ -n "${BRAIN_DRYRUN:-}" ]]; then
     echo "config       : .devcontainer/scoped/devcontainer.json (workspace RO)"
   fi
   echo "id-labels    : brain.root=$ROOT_HASH  brain.profile=$PROFILE_LABEL"
+  echo "home volumes : brain-*-$BRAIN_VOL_KEY"
   if [[ -n "$WRITE_PATH" ]]; then
     echo "rw mount     : $PROJECT_ROOT/$WRITE_PATH  ->  $CONTAINER_WS/$WRITE_PATH"
   else
