@@ -1,18 +1,226 @@
 #!/usr/bin/env bash
-# Dispatcher for the Brain agent launchers. Every brain-* wrapper (brain-claude,
-# brain-copilot, brain-opencode, brain-shell, brain-wiki) and the bin/claude shim
-# call THIS file, so a single switch flips — or reverts — every entry point:
-#
-#   default            -> agent-compose      (devcontainer-free Docker Compose)
-#   BRAIN_DEVCONTAINER=1 -> agent-devcontainer (legacy devcontainer launcher,
-#                                               kept as a known-good fallback)
-#
-# Both back-ends honour the same env (BRAIN_PROFILE, BRAIN_WRITE_PATH,
-# BRAIN_PROJECT_ROOT, BRAIN_AUTOSYNC, BRAIN_GH_ACCOUNT, BRAIN_DRYRUN, ...).
+# Compose launcher: route an agent command into the Brain sandbox WITHOUT
+# devcontainers. The devcontainer-free equivalent of bin/agent — same capability
+# profiles, enforced by docker compose files instead of `devcontainer up`:
+#   master   -> compose.yaml                              (workspace RW)
+#   reader   -> compose.yaml + compose.scoped.yaml        (workspace RO, no hole)
+#   author   -> + RW hole wiki/      (generated override)
+#   raw      -> + RW hole raw/
+#   projects -> + RW hole projects/
+#   project  -> + RW hole projects/<X>/
+# .git + .devcontainer stay RO in every profile. Per-profile isolation = a
+# distinct compose project name; project:<X> share home volumes via BRAIN_VOL_KEY.
+# bin/agent (devcontainer) stays as the fallback during the migration.
 set -euo pipefail
-here="$(cd "$(dirname "$0")" && pwd -P)"
-if [[ -n "${BRAIN_DEVCONTAINER:-}" ]]; then
-  exec "$here/agent-devcontainer" "$@"
+
+find_project_root() {
+  local d="$PWD"
+  while [[ "$d" != "/" ]]; do
+    [[ -f "$d/.devcontainer/compose.yaml" ]] && { echo "$d"; return 0; }
+    d="$(dirname "$d")"
+  done
+  return 1
+}
+
+if [[ -n "${BRAIN_PROJECT_ROOT:-}" && -f "${BRAIN_PROJECT_ROOT}/.devcontainer/compose.yaml" ]]; then
+  PROJECT_ROOT="$BRAIN_PROJECT_ROOT"
 else
-  exec "$here/agent-compose" "$@"
+  PROJECT_ROOT="$(find_project_root || true)"
 fi
+[[ -z "$PROJECT_ROOT" ]] && { echo "agent-compose: no .devcontainer/compose.yaml above $PWD." >&2; exit 1; }
+
+# Canonicalize (the vault root is a symlink); keep host PWD for cwd + profile math.
+HOST_PWD="$(pwd -P)"
+PROJECT_ROOT="$(cd "$PROJECT_ROOT" 2>/dev/null && pwd -P || printf '%s' "$PROJECT_ROOT")"
+DC="$PROJECT_ROOT/.devcontainer"
+CONTAINER_WS="/workspaces/$(basename "$PROJECT_ROOT")"
+
+command -v docker >/dev/null 2>&1 || { echo "agent-compose: docker not installed." >&2; exit 1; }
+docker compose version >/dev/null 2>&1 || { echo "agent-compose: docker compose v2 required." >&2; exit 1; }
+
+[[ $# -eq 0 ]] && set -- claude
+
+# --- 0) Resolve capability profile + writable scope (mirrors bin/agent) -------
+PROFILE="${BRAIN_PROFILE:-}"
+WRITE_PATH="${BRAIN_WRITE_PATH:-}"
+if [[ -z "$PROFILE" ]]; then
+  rel="${HOST_PWD#"$PROJECT_ROOT"}"; rel="${rel#/}"
+  case "$rel" in
+    projects/*) sub="${rel#projects/}"; sub="${sub%%/*}"
+      if [[ -n "$sub" ]]; then PROFILE="project"; WRITE_PATH="projects/$sub"; else PROFILE="master"; fi ;;
+    *) PROFILE="master" ;;
+  esac
+fi
+case "$PROFILE" in
+  master|reader)  WRITE_PATH="" ;;
+  author)         WRITE_PATH="${WRITE_PATH:-wiki}" ;;
+  raw)            WRITE_PATH="${WRITE_PATH:-raw}" ;;
+  projects)       WRITE_PATH="${WRITE_PATH:-projects}" ;;
+  project)        [[ -n "$WRITE_PATH" ]] || { echo "agent-compose: profile 'project' needs BRAIN_WRITE_PATH=projects/<X>." >&2; exit 1; } ;;
+  *) echo "agent-compose: unknown BRAIN_PROFILE='$PROFILE' (master reader author project raw projects)." >&2; exit 1 ;;
+esac
+if [[ -n "$WRITE_PATH" && ! -d "$PROJECT_ROOT/$WRITE_PATH" ]]; then
+  echo "agent-compose: writable scope '$WRITE_PATH' does not exist under $PROJECT_ROOT." >&2; exit 1
+fi
+
+ROOT_HASH="$(printf '%s' "$PROJECT_ROOT" | shasum 2>/dev/null | cut -c1-12 || echo brain)"
+if [[ "$PROFILE" == "project" ]]; then
+  PROFILE_LABEL="proj-$(printf '%s' "${WRITE_PATH#projects/}" | tr '/' '-')"
+  export BRAIN_VOL_KEY="${ROOT_HASH}-project"     # all project:<X> share home volumes
+else
+  PROFILE_LABEL="$PROFILE"
+  export BRAIN_VOL_KEY="${ROOT_HASH}-${PROFILE}"
+fi
+PROJECT_NAME="brain-${ROOT_HASH}-${PROFILE_LABEL}"   # distinct container per (root,profile)
+
+# --- 1) Compose file list + generated RW-hole override ------------------------
+COMPOSE_FILES=(-f "$DC/compose.yaml")
+[[ "$PROFILE" != "master" ]] && COMPOSE_FILES+=(-f "$DC/compose.scoped.yaml")
+HOLE=""
+if [[ -n "$WRITE_PATH" ]]; then
+  HOLE="${TMPDIR:-/tmp}/brain-compose-hole-${ROOT_HASH}-${PROFILE_LABEL}.yaml"
+  # Absolute source so it resolves regardless of which dir compose treats as base.
+  cat > "$HOLE" <<EOF
+services:
+  app:
+    volumes:
+      - type: bind
+        source: $PROJECT_ROOT/$WRITE_PATH
+        target: $CONTAINER_WS/$WRITE_PATH
+EOF
+  COMPOSE_FILES+=(-f "$HOLE")
+fi
+COMPOSE=(docker compose "${COMPOSE_FILES[@]}" -p "$PROJECT_NAME")
+
+if [[ -n "${BRAIN_DRYRUN:-}" ]]; then
+  echo "profile      : $PROFILE  (label: $PROFILE_LABEL)"
+  echo "writable hole: ${WRITE_PATH:-<none — read-only>}"
+  echo "project name : $PROJECT_NAME"
+  echo "volume key   : $BRAIN_VOL_KEY"
+  echo "compose files: ${COMPOSE_FILES[*]}"
+  echo "command      : $*"
+  exit 0
+fi
+
+# --- 2) Stage a sanitized ~/.claude (+ copilot/opencode config) --------------
+stage_claude_config() {
+  local src dst item jf f ocsrc
+  src="$(cd "$HOME/.claude" 2>/dev/null && pwd -P || true)"
+  dst="$HOME/.claude-brain-stage"
+  rm -rf "$dst/dot-claude"; mkdir -p "$dst/dot-claude"
+  if [[ -n "$src" && -d "$src" ]]; then
+    for item in settings.json keybindings.json CLAUDE.md agents rules commands statusline status-line.sh plugins; do
+      [[ -e "$src/$item" ]] && cp -a "$src/$item" "$dst/dot-claude/" 2>/dev/null || true
+    done
+    find "$dst/dot-claude/statusline" "$dst/dot-claude/plugins" -name .git -type d -prune -exec rm -rf {} + 2>/dev/null || true
+    for jf in known_marketplaces.json installed_plugins.json; do
+      f="$dst/dot-claude/plugins/$jf"
+      [[ -f "$f" ]] && sed -i '' -e "s#$HOME/.claude#/home/dev/.claude#g" -e "s#$src#/home/dev/.claude#g" "$f" 2>/dev/null || true
+    done
+    find "$dst/dot-claude" -name '.DS_Store' -delete 2>/dev/null || true
+  fi
+  [[ -f "$HOME/.claude.json" ]] && cp "$HOME/.claude.json" "$dst/claude.json" 2>/dev/null || true
+  # copilot settings (host plugin refs stripped); opencode global config (no
+  # node_modules / .git / npm plugin field).
+  rm -rf "$dst/copilot"; mkdir -p "$dst/copilot"
+  if [[ -f "$HOME/.copilot/settings.json" ]] && command -v jq >/dev/null 2>&1; then
+    jq 'del(.installed_plugins, .installedPlugins, .enabledPlugins)' \
+      "$HOME/.copilot/settings.json" >"$dst/copilot/settings.json" 2>/dev/null || true
+  fi
+  rm -rf "$dst/opencode"
+  ocsrc="$(cd "$HOME/.config/opencode" 2>/dev/null && pwd -P || true)"
+  if [[ -n "$ocsrc" && -d "$ocsrc" ]]; then
+    mkdir -p "$dst/opencode"
+    rsync -a --exclude='node_modules' --exclude='.git' --exclude='.gitignore' \
+      --exclude='bun.lock' --exclude='package.json' --exclude='package-lock.json' \
+      "$ocsrc/" "$dst/opencode/" 2>/dev/null || true
+    if [[ -f "$dst/opencode/opencode.json" ]] && command -v jq >/dev/null 2>&1; then
+      t="$(mktemp)" && jq 'del(.plugin)' "$dst/opencode/opencode.json" >"$t" 2>/dev/null && mv "$t" "$dst/opencode/opencode.json" || rm -f "$t"
+    fi
+    find "$dst/opencode" -name '.DS_Store' -delete 2>/dev/null || true
+  fi
+}
+stage_claude_config
+
+# --- 3) Build + start (idempotent) -------------------------------------------
+SVC=app
+"${COMPOSE[@]}" up -d --build >/dev/null
+CID="$("${COMPOSE[@]}" ps -q "$SVC" 2>/dev/null | head -1 || true)"
+
+# --- 4) Lifecycle as dev (post-create once, post-start every start) + config --
+"${COMPOSE[@]}" exec -u dev -T "$SVC" bash -lc '
+  set -e
+  cd /workspaces/Brain
+  if [[ ! -f /home/dev/.postcreate-done ]]; then
+    bash .devcontainer/post-create.sh && touch /home/dev/.postcreate-done
+  fi
+  bash .devcontainer/post-start.sh
+  if [[ -d /home/dev/.claude-stage/copilot ]]; then
+    mkdir -p /home/dev/.copilot
+    rsync -a --update --ignore-errors /home/dev/.claude-stage/copilot/ /home/dev/.copilot/ >/dev/null 2>&1 || true
+  fi
+  if [[ -d /home/dev/.claude-stage/opencode ]]; then
+    mkdir -p /home/dev/.config/opencode
+    rsync -a --update --ignore-errors /home/dev/.claude-stage/opencode/ /home/dev/.config/opencode/ >/dev/null 2>&1 || true
+  fi'
+
+# --- 5) Forward credentials (LLM auth only; never a git push token) -----------
+kc() { security find-generic-password -s "$1" -w 2>/dev/null || true; }
+# opencode OAuth blob: materialize into the volume on first use (it refreshes there).
+if command -v security >/dev/null 2>&1; then
+  oc_auth="$(kc 'brain-opencode-auth')"
+  if [[ -n "$oc_auth" ]]; then
+    printf '%s' "$oc_auth" | "${COMPOSE[@]}" exec -u dev -T "$SVC" bash -c '
+      f="$HOME/.local/share/opencode/auth.json"
+      if [[ ! -s "$f" ]]; then mkdir -p "$(dirname "$f")" && cat > "$f" && chmod 600 "$f"; else cat >/dev/null; fi' 2>/dev/null || true
+  fi
+fi
+EXEC_ENV=()
+if command -v security >/dev/null 2>&1; then
+  tok="$(kc 'brain-claude-code-token')"
+  [[ -n "$tok" ]] && EXEC_ENV+=(-e "CLAUDE_CODE_OAUTH_TOKEN=$tok")
+fi
+have_claude=0
+for a in ${EXEC_ENV[@]+"${EXEC_ENV[@]}"}; do [[ "$a" == "CLAUDE_CODE_OAUTH_TOKEN="* ]] && have_claude=1; done
+if (( ! have_claude )); then
+  for var in CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; do
+    val="${!var:-}"; [[ -n "$val" ]] && EXEC_ENV+=(-e "${var}=${val}")
+  done
+fi
+copilot_acct="${BRAIN_GH_ACCOUNT:-talicaddy}"
+if command -v gh >/dev/null 2>&1; then
+  copilot_tok="$(gh auth token --user "$copilot_acct" 2>/dev/null || true)"
+  [[ -n "$copilot_tok" ]] && EXEC_ENV+=(-e "COPILOT_GITHUB_TOKEN=$copilot_tok") \
+    || echo "agent-compose: no gh token for Copilot account '$copilot_acct' — copilot unauthenticated (claude/opencode unaffected)." >&2
+fi
+
+# --- 6) Resolve the in-container working dir from the host PWD ----------------
+CONTAINER_CWD="$CONTAINER_WS"
+if [[ -z "${BRAIN_NO_CHDIR:-}" ]]; then
+  rel="${HOST_PWD#"$PROJECT_ROOT"}"
+  [[ "$rel" != "$HOST_PWD" && -n "$rel" ]] && CONTAINER_CWD="$CONTAINER_WS/${rel#/}"
+fi
+
+# --- 7) Auto config-sync push on exit (pull-on-launch done by post-start) -----
+AUTOSYNC="${BRAIN_AUTOSYNC:-}"
+if [[ -z "$AUTOSYNC" ]]; then
+  case "${1:-claude}" in claude|bash) AUTOSYNC=1 ;; *) AUTOSYNC=0 ;; esac
+fi
+_autosync_done=0
+autosync_push() {
+  if [[ "$_autosync_done" == 1 ]]; then return 0; fi
+  _autosync_done=1
+  if [[ "$AUTOSYNC" != 1 || -z "$CID" ]]; then return 0; fi
+  command -v fish >/dev/null 2>&1 || return 0
+  fish -c "brain-claude-sync push $CID" \
+    || echo "agent-compose: auto config-sync push failed — run 'brain-claude-sync push' to retry." >&2
+}
+trap autosync_push EXIT
+
+set +e
+"${COMPOSE[@]}" exec -u dev ${EXEC_ENV[@]+"${EXEC_ENV[@]}"} \
+  -e "BRAIN_CWD=$CONTAINER_CWD" "$SVC" \
+  bash -c 'cd "$BRAIN_CWD" 2>/dev/null || true; exec "$@"' bash "$@"
+_rc=$?
+set -e
+exit "$_rc"

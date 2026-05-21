@@ -39,7 +39,12 @@ Base image: digest-pinned `debian:bookworm-slim`. Container user: `dev` (UID 100
 
 ## How to use
 
-Prerequisite (one-time): `npm install -g @devcontainers/cli`.
+This sandbox runs on **Docker Compose** (no devcontainer CLI). Prerequisite:
+Docker Desktop with Compose v2 (`docker compose version`). Each `brain-*` wrapper
+calls `.devcontainer/bin/agent`, which resolves the capability profile, selects
+the compose files (`compose.yaml` + `compose.scoped.yaml` + a generated RW-hole
+override), runs `docker compose up -d --build`, replays the lifecycle, forwards
+LLM tokens, and auto-syncs `~/.claude` on exit.
 
 Host fish functions (in `~/.config/fish/functions/`, version-controlled in your
 dotfiles). They walk up to find `.devcontainer/`, fall back to `$BRAIN_HOME`,
@@ -98,8 +103,7 @@ unaffected).
 ## One-time host setup
 
 ```sh
-# 1) @devcontainers/cli (if not already installed)
-npm install -g @devcontainers/cli
+# 1) Docker Desktop with Compose v2 (verify: docker compose version)
 
 # 2) Claude OAuth token (long-lived; uses your subscription)
 claude setup-token        # prints sk-ant-… ; copy it
@@ -118,7 +122,7 @@ security add-generic-password -s brain-opencode-auth -a "$USER" \
 ```
 
 The `brain-*` wrappers retrieve these on every invocation and forward them at
-`devcontainer exec` time. Only LLM auth crosses the boundary — **no git push
+`docker compose exec` time. Only LLM auth crosses the boundary — **no git push
 credential**: `CLAUDE_CODE_OAUTH_TOKEN` (from `brain-claude-code-token`) and
 `COPILOT_GITHUB_TOKEN` (derived live via `gh auth token --user ${BRAIN_GH_ACCOUNT:-talicaddy}`
 — see [Choosing the Copilot account](#choosing-the-copilot-account)). `GH_TOKEN`/
@@ -198,7 +202,7 @@ exfiltrated; read-only means the agents can't alter your real coursework/source.
 
 **Adding a project with a new symlink target:** if its target isn't already
 under one of the mounted ancestors, add a matching
-`source=…,target=…,type=bind,readonly` line to `mounts` in `devcontainer.json`
+read-only bind mount under `services.app.volumes` in `compose.yaml`
 and rebuild. List current targets with:
 `find projects -maxdepth 3 -type l -exec readlink {} \; | sort -u`.
 
@@ -309,16 +313,16 @@ ingest sources you trust.
 
 **Why `.devcontainer` is mounted read-only.** The vault is bind-mounted
 read-write at `/workspaces/Brain` so the agents can edit wiki content — but that
-same mount would otherwise expose the sandbox's own definition (`devcontainer.json`
-`runArgs`, `Dockerfile`, `features/`) and, critically, the **host-side launcher**
+same mount would otherwise expose the sandbox's own definition (`compose.yaml`,
+`Dockerfile`) and, critically, the **host-side launcher**
 (`bin/agent`, `bin/claude`, `bin/doctor`). Those run on your **Mac** with your
-shell and Keychain. A compromised in-container agent could add `--privileged` /
-`-v /:/host` / a `docker.sock` mount to `runArgs`, or just edit `bin/agent`, and
-the next time you ran `brain-*` (which calls `devcontainer up` and re-execs the
+shell and Keychain. A compromised in-container agent could add a privileged
+option or a `docker.sock` mount to `compose.yaml`, or just edit `bin/agent`, and
+the next time you ran `brain-*` (which calls `docker compose up` and re-execs the
 launcher) it would execute on the host — a trivial full escape. To close that,
 `.devcontainer` is re-mounted **read-only on top of** the read-write workspace,
 so it is immutable from inside. The container cannot lift this: it has
 `cap-drop=ALL` (no `CAP_SYS_ADMIN`, so no remount/unmount), `no-new-privileges`,
 and `.devcontainer` is a busy mountpoint that can't be replaced — the protection
-re-applies on every `devcontainer up`. **Edit `.devcontainer` on the host only,**
+re-applies on every `docker compose up`. **Edit `.devcontainer` on the host only,**
 then rebuild.
