@@ -1,0 +1,122 @@
+# Docker Compose flow for the Brain (VaultLens) sandbox — devcontainer-free
+# equivalent of .devcontainer/devcontainer.json (+ scoped/devcontainer.json).
+# Driven by .devcontainer/bin/agent-compose, which sets the env vars below per
+# capability profile and selects the right compose files / project name.
+#
+# Profile model (mirrors bin/agent):
+#   - BRAIN_WS_RO=false (master)  -> workspace read-WRITE.
+#   - BRAIN_WS_RO=true  (scoped)  -> workspace read-ONLY; the launcher adds a
+#     single RW "hole" via a generated override (compose.hole.yaml) for
+#     author/raw/projects/project:<X>. reader gets no hole.
+#   - BRAIN_VOL_KEY keys the home volumes so project:<X> profiles share one set
+#     and the others are isolated (matches the devcontainer's localEnv:BRAIN_VOL_KEY).
+#   - per-profile isolation = a distinct compose project name (`-p brain-<profile>`).
+#
+# PID1 entrypoint runs as root (iptables + squid + ollama hole); sessions use
+# `exec -u dev` (= containerUser=root + remoteUser=dev). Commits happen on the
+# HOST: .git is read-only and no git push token is ever forwarded.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.compose
+    init: true
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, SETPCAP]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 6g
+    cpus: 4
+    pids_limit: 4096
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=512m
+      - /var/tmp:rw,noexec,nosuid,nodev,size=256m
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      DEVCONTAINER: "true"
+      DISABLE_TELEMETRY: "1"
+      DISABLE_ERROR_REPORTING: "1"
+      BASH_ENV: /home/dev/.safe-chain/scripts/init-posix.sh
+      NODE_USE_ENV_PROXY: "1"
+      HTTP_PROXY: http://127.0.0.1:3128
+      HTTPS_PROXY: http://127.0.0.1:3128
+      http_proxy: http://127.0.0.1:3128
+      https_proxy: http://127.0.0.1:3128
+      NO_PROXY: localhost,127.0.0.1,::1,host.docker.internal
+      no_proxy: localhost,127.0.0.1,::1,host.docker.internal
+      OLLAMA_HOST: http://host.docker.internal:11434
+      QMD_EMBED_MODEL: hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf
+    volumes:
+      # Workspace: read-WRITE here (master). Scoped profiles overlay
+      # compose.scoped.yaml, which re-declares this mount read-only.
+      - type: bind
+        source: ..
+        target: /workspaces/Brain
+        read_only: false
+      # SECURITY: .git + .devcontainer always read-only (history + anti-tamper).
+      - type: bind
+        source: ../.git
+        target: /workspaces/Brain/.git
+        read_only: true
+      - type: bind
+        source: .
+        target: /workspaces/Brain/.devcontainer
+        read_only: true
+      # Home volumes, keyed by BRAIN_VOL_KEY (project:<X> share; others isolated).
+      - type: volume
+        source: claude
+        target: /home/dev/.claude
+      - type: volume
+        source: copilot
+        target: /home/dev/.copilot
+      - type: volume
+        source: local
+        target: /home/dev/.local
+      - type: volume
+        source: config
+        target: /home/dev/.config
+      - type: volume
+        source: cache
+        target: /home/dev/.cache
+      # Sanitized host config staging (built by the launcher), read-only.
+      - type: bind
+        source: ${HOME}/.claude-brain-stage
+        target: /home/dev/.claude-stage
+        read_only: true
+      # qmd seed: host cache (models + index) read-only; post-start snapshots it.
+      - type: bind
+        source: ${HOME}/.cache/qmd
+        target: /home/dev/.qmd-seed
+        read_only: true
+      # Symlink targets outside the vault, bind-mounted RO at identical host paths
+      # so the in-vault project symlinks resolve with no rewriting.
+      - type: bind
+        source: ${HOME}/Documents/School
+        target: ${HOME}/Documents/School
+        read_only: true
+      - type: bind
+        source: ${HOME}/Documents/Personal/Scripts/Projects/Vision
+        target: ${HOME}/Documents/Personal/Scripts/Projects/Vision
+        read_only: true
+      - type: bind
+        source: ${HOME}/Documents/Personal/Scripts/Projects/Watchman
+        target: ${HOME}/Documents/Personal/Scripts/Projects/Watchman
+        read_only: true
+      - type: bind
+        source: ${HOME}/Documents/Personal/Scans/Finance/The Mad King
+        target: ${HOME}/Documents/Personal/Scans/Finance/The Mad King
+        read_only: true
+
+volumes:
+  claude:
+    name: brain-claude-cmp-${BRAIN_VOL_KEY}
+  copilot:
+    name: brain-copilot-cmp-${BRAIN_VOL_KEY}
+  local:
+    name: brain-local-cmp-${BRAIN_VOL_KEY}
+  config:
+    name: brain-config-cmp-${BRAIN_VOL_KEY}
+  cache:
+    name: brain-cache-cmp-${BRAIN_VOL_KEY}

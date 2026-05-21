@@ -1,0 +1,397 @@
+#!/usr/bin/env bash
+# Core wrapper: route an agent command into the Brain devcontainer.
+#
+# Usage:  agent <command> [args...]     (default command: claude)
+#   e.g.  agent claude --dangerously-skip-permissions
+#         agent copilot -p "..."
+#         agent opencode run ...
+#         agent python3 tools/agents/wiki-agent.py enhance --strategy coverage
+#         agent bash
+#
+# CAPABILITY PROFILES (least privilege, kernel-enforced via mounts)
+# ----------------------------------------------------------------
+# The vault is the same single git repo (VaultLens), but WHAT a given run can
+# write is decided by a profile, enforced by the container's mounts (not by the
+# agent's self-restraint). A profile selects a devcontainer config + an optional
+# read-write "hole" punched into an otherwise read-only workspace:
+#
+#   master   -> devcontainer.json        : whole vault RW, EXCEPT .devcontainer
+#               (escape surface) and the root .git (history) which stay RO.
+#   reader   -> scoped/devcontainer.json : whole vault RO, no RW hole. Nothing it
+#               spawns (subagent, another CLI, an injected `;cmd`) can write —
+#               write is a property of the CONTAINER, not the agent.
+#   author   -> scoped/devcontainer.json : RO vault + RW hole at wiki/.
+#   project  -> scoped/devcontainer.json : RO vault + RW hole at projects/<X>/.
+#   raw      -> scoped/devcontainer.json : RO vault + RW hole at raw/ (pdf prep).
+#   projects -> scoped/devcontainer.json : RO vault + RW hole at projects/.
+#
+# Profile is taken from $BRAIN_PROFILE (set by the brain-* fish wrappers); if
+# unset it is inferred from $PWD (under projects/<X> -> project:<X>, else master).
+# Each (root, profile) is a SEPARATE container (distinct --id-label -> distinct
+# ${devcontainerId} -> its own home volumes), so profiles can run concurrently
+# without sharing the qmd sqlite or ~/.claude.json.
+#
+# CREDENTIALS (commits happen on the HOST; no container can push)
+# ----------------------------------------------------------------
+#   - Claude OAuth token: forwarded at exec time from the macOS Keychain
+#     (brain-claude-code-token). Never written to disk.
+#   - Copilot LLM token: derived LIVE per run from the host gh login via
+#     `gh auth token --user ${BRAIN_GH_ACCOUNT:-talicaddy}` and forwarded as
+#     COPILOT_GITHUB_TOKEN (the copilot CLI's LLM auth — NOT git). No gh token is
+#     stored in the Keychain and GH_TOKEN/GITHUB_TOKEN are NOT forwarded, so
+#     `git push` has no credential inside any container.
+#   - opencode github-copilot OAuth blob: materialized once into the container
+#     volume from the Keychain (brain-opencode-auth); opencode refreshes it there.
+#
+# Set BRAIN_DRYRUN=1 to print the resolved `devcontainer up`/`exec` invocation
+# for the selected profile and exit without touching any container.
+
+set -euo pipefail
+
+find_project_root() {
+  local d="$PWD"
+  while [[ "$d" != "/" ]]; do
+    if [[ -f "$d/.devcontainer/devcontainer.json" ]]; then echo "$d"; return 0; fi
+    d="$(dirname "$d")"
+  done
+  return 1
+}
+
+if [[ -n "${BRAIN_PROJECT_ROOT:-}" && -f "${BRAIN_PROJECT_ROOT}/.devcontainer/devcontainer.json" ]]; then
+  PROJECT_ROOT="$BRAIN_PROJECT_ROOT"
+else
+  PROJECT_ROOT="$(find_project_root || true)"
+fi
+
+if [[ -z "$PROJECT_ROOT" ]]; then
+  echo "agent (brain-wrapper): no .devcontainer/devcontainer.json above $PWD." >&2
+  echo "  Set BRAIN_HOME / BRAIN_PROJECT_ROOT to the vault root." >&2
+  exit 1
+fi
+
+# Canonicalize the workspace folder (and the host PWD we derive the in-container
+# cwd + profile from). ~/Documents/Brain is a SYMLINK to the iCloud vault, and
+# the devcontainer CLI keys container identity on the workspace-folder STRING — so
+# resolving to the physical path makes every invocation, from either path, land
+# in the SAME sandbox. (Captured before any cd; pwd -P resolves symlinks on bash
+# 3.2 too.)
+HOST_PWD="$(pwd -P)"
+PROJECT_ROOT="$(cd "$PROJECT_ROOT" 2>/dev/null && pwd -P || printf '%s' "$PROJECT_ROOT")"
+CONTAINER_WS="/workspaces/$(basename "$PROJECT_ROOT")"
+
+if ! command -v devcontainer >/dev/null 2>&1; then
+  echo "agent (brain-wrapper): @devcontainers/cli not installed." >&2
+  echo "  npm install -g @devcontainers/cli" >&2
+  exit 1
+fi
+
+# The command to run inside the container (default: claude).
+if [[ $# -eq 0 ]]; then
+  set -- claude
+fi
+
+# --- 0) Resolve the capability profile + writable scope ----------------------
+# $BRAIN_PROFILE wins (set by brain-* wrappers); else infer from the host PWD.
+PROFILE="${BRAIN_PROFILE:-}"
+WRITE_PATH="${BRAIN_WRITE_PATH:-}"   # repo-relative dir to mount RW (empty = none)
+
+if [[ -z "$PROFILE" ]]; then
+  rel="${HOST_PWD#"$PROJECT_ROOT"}"; rel="${rel#/}"
+  case "$rel" in
+    projects/*)
+      sub="${rel#projects/}"; sub="${sub%%/*}"
+      if [[ -n "$sub" ]]; then PROFILE="project"; WRITE_PATH="projects/$sub"; else PROFILE="master"; fi
+      ;;
+    *) PROFILE="master" ;;
+  esac
+fi
+
+# Per-profile defaults for the writable hole.
+case "$PROFILE" in
+  master|reader)      WRITE_PATH="" ;;
+  author)             WRITE_PATH="${WRITE_PATH:-wiki}" ;;
+  raw)                WRITE_PATH="${WRITE_PATH:-raw}" ;;
+  projects)           WRITE_PATH="${WRITE_PATH:-projects}" ;;
+  project)
+    if [[ -z "$WRITE_PATH" ]]; then
+      echo "agent (brain-wrapper): profile 'project' needs BRAIN_WRITE_PATH=projects/<X>." >&2
+      exit 1
+    fi ;;
+  *)
+    echo "agent (brain-wrapper): unknown BRAIN_PROFILE='$PROFILE'." >&2
+    echo "  Expected one of: master reader author project raw projects." >&2
+    exit 1 ;;
+esac
+
+# Validate the writable target exists (a missing bind source would otherwise be
+# silently created as an empty dir by Docker, masking a typo).
+if [[ -n "$WRITE_PATH" && ! -d "$PROJECT_ROOT/$WRITE_PATH" ]]; then
+  echo "agent (brain-wrapper): writable scope '$WRITE_PATH' does not exist under $PROJECT_ROOT." >&2
+  exit 1
+fi
+
+# A stable, symlink-proof id-label per (root, profile). The profile label encodes
+# the scope so e.g. projects/dep and projects/sa are distinct containers.
+ROOT_HASH="$(printf '%s' "$PROJECT_ROOT" | shasum 2>/dev/null | cut -c1-12 || echo brain)"
+if [[ "$PROFILE" == "project" ]]; then
+  PROFILE_LABEL="proj-$(printf '%s' "${WRITE_PATH#projects/}" | tr '/' '-')"
+else
+  PROFILE_LABEL="$PROFILE"
+fi
+ID_LABEL_ARGS=(--id-label "brain.root=$ROOT_HASH" --id-label "brain.profile=$PROFILE_LABEL")
+
+# Home-volume key (read by scoped/devcontainer.json as ${localEnv:BRAIN_VOL_KEY}).
+# All project:<X> profiles SHARE one key so the qmd index / claude config is
+# seeded once, not per project; other profiles get their own. The per-project
+# .git/workspace mounts + id-label keep the containers isolated regardless.
+# (Single-user assumption: don't run two project agents at once — shared qmd db.)
+if [[ "$PROFILE" == "project" ]]; then
+  export BRAIN_VOL_KEY="${ROOT_HASH}-project"
+else
+  export BRAIN_VOL_KEY="${ROOT_HASH}-${PROFILE}"
+fi
+
+# master uses the default config (workspace RW); every other profile uses the
+# read-only-workspace twin and punches a single RW hole for its scope.
+CONFIG_ARGS=()
+MOUNT_ARGS=()
+if [[ "$PROFILE" != "master" ]]; then
+  CONFIG_ARGS=(--config "$PROJECT_ROOT/.devcontainer/scoped/devcontainer.json")
+fi
+if [[ -n "$WRITE_PATH" ]]; then
+  MOUNT_ARGS=(--mount "type=bind,source=$PROJECT_ROOT/$WRITE_PATH,target=$CONTAINER_WS/$WRITE_PATH")
+fi
+
+if [[ -n "${BRAIN_DRYRUN:-}" ]]; then
+  echo "profile      : $PROFILE  (label: $PROFILE_LABEL)"
+  echo "writable hole: ${WRITE_PATH:-<none — read-only>}"
+  if [[ "$PROFILE" == "master" ]]; then
+    echo "config       : <default devcontainer.json (workspace RW; .devcontainer + .git RO)>"
+  else
+    echo "config       : .devcontainer/scoped/devcontainer.json (workspace RO)"
+  fi
+  echo "id-labels    : brain.root=$ROOT_HASH  brain.profile=$PROFILE_LABEL"
+  echo "home volumes : brain-*-$BRAIN_VOL_KEY"
+  if [[ -n "$WRITE_PATH" ]]; then
+    echo "rw mount     : $PROJECT_ROOT/$WRITE_PATH  ->  $CONTAINER_WS/$WRITE_PATH"
+  else
+    echo "rw mount     : <none — fully read-only vault>"
+  fi
+  echo "command      : $*"
+  exit 0
+fi
+
+# --- 1) Stage a sanitized ~/.claude for the read-only bind mount -------------
+# The container binds ~/.claude-brain-stage (NOT the raw ~/.claude), so secrets
+# never enter its view. settings.json / plugins are staged as-is (you opted into
+# running host-origin config in the sandbox during the hardening review).
+stage_claude_config() {
+  local src dst item jf f
+  src="$(cd "$HOME/.claude" 2>/dev/null && pwd -P || true)"   # resolve symlink
+  dst="$HOME/.claude-brain-stage"
+  # Rebuild from scratch each time so a removed host file doesn't linger.
+  rm -rf "$dst/dot-claude"; mkdir -p "$dst/dot-claude"
+  if [[ -n "$src" && -d "$src" ]]; then
+    # ALLOWLIST (not blocklist): copy only known config; everything else
+    # (.credentials.json, sessions/history, background-task state) is excluded.
+    for item in settings.json keybindings.json CLAUDE.md agents rules commands statusline status-line.sh plugins; do
+      [[ -e "$src/$item" ]] && cp -a "$src/$item" "$dst/dot-claude/" 2>/dev/null || true
+    done
+    # Trim VCS dirs from staged statusline/plugins (bloat only).
+    find "$dst/dot-claude/statusline" "$dst/dot-claude/plugins" -name .git -type d -prune -exec rm -rf {} + 2>/dev/null || true
+    # Plugin marketplace metadata stores ABSOLUTE host paths; rewrite to the
+    # container home so enabledPlugins resolve in-container.
+    for jf in known_marketplaces.json installed_plugins.json; do
+      f="$dst/dot-claude/plugins/$jf"
+      [[ -f "$f" ]] && sed -i '' -e "s#$HOME/.claude#/home/dev/.claude#g" -e "s#$src#/home/dev/.claude#g" "$f" 2>/dev/null || true
+    done
+    find "$dst/dot-claude" -name '.DS_Store' -delete 2>/dev/null || true
+  fi
+  # ~/.claude.json seed staged as-is (mcpServers/hooks kept — user opted in).
+  [[ -f "$HOME/.claude.json" ]] && cp "$HOME/.claude.json" "$dst/claude.json" 2>/dev/null || true
+
+  # --- copilot config (host -> container) --------------------------------------
+  # Stage the copilot CLI's user settings so the in-container copilot matches the
+  # host (model, theme, continueOnAutoMode). Auth is the forwarded
+  # COPILOT_GITHUB_TOKEN, never staged. Plugin refs are DROPPED: their binaries
+  # live in the host's ~/.copilot/installed-plugins (not in the sandbox) and would
+  # fail to load. mcp-config.json / permissions-config.json are generated
+  # in-container by post-create (keyed to /workspaces/Brain), so they are NOT
+  # staged here — seeding them would clobber the container-correct versions.
+  rm -rf "$dst/copilot"; mkdir -p "$dst/copilot"
+  if [[ -f "$HOME/.copilot/settings.json" ]] && command -v jq >/dev/null 2>&1; then
+    jq 'del(.installed_plugins, .installedPlugins, .enabledPlugins)' \
+      "$HOME/.copilot/settings.json" >"$dst/copilot/settings.json" 2>/dev/null || true
+  fi
+
+  # --- opencode global config (host -> container) ------------------------------
+  # ~/.config/opencode is a dotfiles symlink; copy the resolved config (agents,
+  # model, theme, prompts, skills, themes) but EXCLUDE node_modules + lockfiles
+  # (bloat / macOS-only binaries). The `plugin` field is dropped: opencode fetches
+  # plugins from npm at runtime, which the egress lock blocks (it would hang, like
+  # the qmd HuggingFace stall). State + auth live in ~/.local/share/opencode and
+  # are handled separately, not staged.
+  rm -rf "$dst/opencode"
+  ocsrc="$(cd "$HOME/.config/opencode" 2>/dev/null && pwd -P || true)"
+  if [[ -n "$ocsrc" && -d "$ocsrc" ]]; then
+    mkdir -p "$dst/opencode"
+    rsync -a \
+      --exclude='node_modules' --exclude='.git' --exclude='.gitignore' \
+      --exclude='bun.lock' --exclude='package.json' --exclude='package-lock.json' \
+      "$ocsrc/" "$dst/opencode/" 2>/dev/null || true
+    if [[ -f "$dst/opencode/opencode.json" ]] && command -v jq >/dev/null 2>&1; then
+      t="$(mktemp)" && jq 'del(.plugin)' "$dst/opencode/opencode.json" >"$t" 2>/dev/null \
+        && mv "$t" "$dst/opencode/opencode.json" || rm -f "$t"
+    fi
+    find "$dst/opencode" -name '.DS_Store' -delete 2>/dev/null || true
+  fi
+}
+stage_claude_config
+
+# --- 2) Ensure the container is up (idempotent) ------------------------------
+devcontainer up \
+  ${CONFIG_ARGS[@]+"${CONFIG_ARGS[@]}"} \
+  "${ID_LABEL_ARGS[@]}" \
+  ${MOUNT_ARGS[@]+"${MOUNT_ARGS[@]}"} \
+  --workspace-folder "$PROJECT_ROOT" >/dev/null
+
+# --- 2a) Resolve THIS container + auto-pull host config into it ---------------
+# Target the EXACT container by its profile id-labels (NOT `local_folder | head
+# -1`, which is ambiguous once several profiles run), so any later merge can't
+# touch the wrong container. Then re-apply the sanitized allowlist stage (built
+# above) into the live ~/.claude volume so host config edits land WITHOUT a
+# rebuild — previously only the create-time seed did this, so a running container
+# needed a manual `brain-claude-sync pull`. It's a newer-wins rsync (no --delete)
+# plus a key-merge of .claude.json where container values win, so it never
+# clobbers or deletes container-side state.
+CID="$(docker ps -q --filter "label=brain.root=$ROOT_HASH" --filter "label=brain.profile=$PROFILE_LABEL" 2>/dev/null | head -1 || true)"
+if [[ -n "$CID" ]]; then
+  docker exec -u dev "$CID" bash -c '
+    rsync -a --update --ignore-errors /home/dev/.claude-stage/dot-claude/ /home/dev/.claude/ >/dev/null 2>&1 || true
+    if [[ -f /home/dev/.claude-stage/claude.json && -f /home/dev/.claude.json ]]; then
+      t="$(mktemp)" && jq -s ".[1] * .[0]" /home/dev/.claude.json /home/dev/.claude-stage/claude.json >"$t" 2>/dev/null && mv "$t" /home/dev/.claude.json || rm -f "$t"
+    fi
+    # copilot + opencode global config (host -> container): additive, newer-wins,
+    # no deletes. Does not touch the post-create-generated copilot mcp/permissions.
+    if [[ -d /home/dev/.claude-stage/copilot ]]; then
+      mkdir -p /home/dev/.copilot
+      rsync -a --update --ignore-errors /home/dev/.claude-stage/copilot/ /home/dev/.copilot/ >/dev/null 2>&1 || true
+    fi
+    if [[ -d /home/dev/.claude-stage/opencode ]]; then
+      mkdir -p /home/dev/.config/opencode
+      rsync -a --update --ignore-errors /home/dev/.claude-stage/opencode/ /home/dev/.config/opencode/ >/dev/null 2>&1 || true
+    fi' >/dev/null 2>&1 || true
+fi
+
+# --- Keychain helper ---------------------------------------------------------
+kc() { security find-generic-password -s "$1" -w 2>/dev/null || true; }
+
+# --- 3) Materialize the opencode OAuth blob into the container (if missing) ---
+# opencode reads ~/.local/share/opencode/auth.json (it does not honor a plain
+# env token for github-copilot). Forward the host blob from the Keychain on
+# first use; opencode refreshes it in-place in the persistent volume thereafter.
+if command -v security >/dev/null 2>&1; then
+  oc_auth="$(kc 'brain-opencode-auth')"
+  if [[ -n "$oc_auth" ]]; then
+    printf '%s' "$oc_auth" | devcontainer exec "${ID_LABEL_ARGS[@]}" --workspace-folder "$PROJECT_ROOT" bash -c '
+      f="$HOME/.local/share/opencode/auth.json"
+      if [[ ! -s "$f" ]]; then
+        mkdir -p "$(dirname "$f")" && cat > "$f" && chmod 600 "$f"
+      else
+        cat >/dev/null   # drain stdin; keep the in-container (refreshed) token
+      fi' 2>/dev/null || true
+  fi
+fi
+
+# --- 4) Forward credentials from the macOS Keychain at exec time -------------
+# NO git credential is ever forwarded (GH_TOKEN/GITHUB_TOKEN are intentionally
+# absent): commits/pushes happen on the HOST. Only LLM auth crosses the boundary.
+EXEC_ARGS=()
+if command -v security >/dev/null 2>&1; then
+  tok="$(kc 'brain-claude-code-token')"
+  [[ -n "$tok" ]] && EXEC_ARGS+=(--remote-env "CLAUDE_CODE_OAUTH_TOKEN=$tok")
+fi
+
+# Copilot LLM token: derived LIVE from the host gh login for the chosen account
+# (default talicaddy). This is the copilot CLI's *model* auth, not a git push
+# credential — and to keep it from doubling as one, point BRAIN_GH_ACCOUNT at an
+# account WITHOUT write access to EraPartner/VaultLens. Non-fatal: claude/opencode
+# don't need it.
+copilot_acct="${BRAIN_GH_ACCOUNT:-talicaddy}"
+copilot_tok=""
+if command -v gh >/dev/null 2>&1; then
+  copilot_tok="$(gh auth token --user "$copilot_acct" 2>/dev/null || true)"
+fi
+if [[ -n "$copilot_tok" ]]; then
+  EXEC_ARGS+=(--remote-env "COPILOT_GITHUB_TOKEN=$copilot_tok")
+else
+  echo "agent (brain-wrapper): no gh token for Copilot account '$copilot_acct' — copilot will be unauthenticated." >&2
+  echo "  (claude/opencode are unaffected.) Logged-in accounts:" >&2
+  gh auth status 2>&1 | sed -n 's/.*account \([A-Za-z0-9_-]*\).*/    - \1/p' >&2 || true
+  echo "  Fix: gh auth login, or set BRAIN_GH_ACCOUNT=<account>." >&2
+fi
+
+# Fallback: plain env vars from the host shell (if the Keychain entry absent).
+# ${EXEC_ARGS[@]+...} guards "unbound variable" on an empty array under `set -u`
+# (macOS default bash 3.2) when no token was found.
+have_claude=0
+for a in ${EXEC_ARGS[@]+"${EXEC_ARGS[@]}"}; do [[ "$a" == CLAUDE_CODE_OAUTH_TOKEN=* ]] && have_claude=1; done
+if (( ! have_claude )); then
+  for var in CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; do
+    val="${!var:-}"
+    [[ -n "$val" ]] && EXEC_ARGS+=(--remote-env "${var}=${val}")
+  done
+fi
+
+# --- 5) Resolve the in-container working directory from the host PWD ----------
+# `devcontainer exec` always lands in the workspace root, so translate $PWD
+# (relative to PROJECT_ROOT) into the matching path under the container workspace
+# so `brain-claude` run from projects/ict-recht opens THERE. The orchestrator
+# (brain-wiki) sets BRAIN_NO_CHDIR=1 to stay at the workspace root.
+CONTAINER_CWD="$CONTAINER_WS"
+if [[ -z "${BRAIN_NO_CHDIR:-}" ]]; then
+  rel="${HOST_PWD#"$PROJECT_ROOT"}"
+  if [[ "$rel" != "$HOST_PWD" && -n "$rel" ]]; then   # PWD is genuinely under the root
+    CONTAINER_CWD="$CONTAINER_WS/${rel#/}"
+  fi
+fi
+
+# --- 6) Auto-sync config/memory back to the host when the session ends --------
+# Replaces the manual `brain-claude-sync push`. We deliberately DON'T `exec` the
+# session: bash stays the parent, so when the command exits — normally OR via
+# Ctrl-C — the EXIT trap runs the SAME hardened push the manual wrapper uses
+# (snapshot-to-temp + abort-on-fail, per-file newer-wins, jq key-merge,
+# timestamped backups). Pushing only AFTER the session ends means a single writer
+# (no host/container race on .claude.json), so it cannot corrupt either copy.
+# Gated to interactive runs (claude/bash) by default so headless batch agents
+# don't pay a full docker-cp per invocation; force with BRAIN_AUTOSYNC=1 (or off
+# with BRAIN_AUTOSYNC=0).
+AUTOSYNC="${BRAIN_AUTOSYNC:-}"
+if [[ -z "$AUTOSYNC" ]]; then
+  case "${1:-claude}" in claude|bash) AUTOSYNC=1 ;; *) AUTOSYNC=0 ;; esac
+fi
+
+_autosync_done=0
+autosync_push() {
+  if [[ "$_autosync_done" == 1 ]]; then return 0; fi
+  _autosync_done=1
+  if [[ "$AUTOSYNC" != 1 || -z "$CID" ]]; then return 0; fi
+  command -v fish >/dev/null 2>&1 || return 0
+  fish -c "brain-claude-sync push $CID" \
+    || echo "agent (brain-wrapper): auto config-sync push failed — run 'brain-claude-sync push' to retry." >&2
+}
+trap autosync_push EXIT
+
+# Forward the command. The agent CLIs are interactive — stdin/tty flow through
+# devcontainer exec. Wrap in `bash -c` so we can cd into the resolved subdir,
+# then `exec` the real command (tty + signals pass straight through). NOTE: this
+# is intentionally NOT `exec devcontainer ...` — bash must outlive the session to
+# run the EXIT trap that syncs config/memory back to the host.
+set +e
+devcontainer exec "${ID_LABEL_ARGS[@]}" --workspace-folder "$PROJECT_ROOT" \
+  ${EXEC_ARGS[@]+"${EXEC_ARGS[@]}"} \
+  --remote-env "BRAIN_CWD=$CONTAINER_CWD" \
+  bash -c 'cd "$BRAIN_CWD" 2>/dev/null || true; exec "$@"' bash "$@"
+_rc=$?
+set -e
+exit "$_rc"
