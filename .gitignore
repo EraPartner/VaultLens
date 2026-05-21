@@ -1,5 +1,11 @@
 .DS_Store
 
+# iCloud sync conflict copies of sandbox files (e.g. ".devcontainer/squid 2.conf").
+# Scoped to .devcontainer so it can't swallow legit vault notes like "Chapter 2.md".
+# The git remote is the source of truth for these scripts.
+.devcontainer/* [0-9].*
+.devcontainer/* [0-9]
+
 .claude
 .ruff_cache
 __pycache__
