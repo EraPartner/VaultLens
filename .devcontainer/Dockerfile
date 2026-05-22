@@ -48,11 +48,18 @@ RUN set -eux; \
     mkdir -p /usr/local/share/npm-global
 
 # --- Python 3.12 (replaces the `python:1` feature) — python-build-standalone --
+# Prebuilt relocatable CPython (the build uv/rye use): python3 + pip + venv + ssl,
+# no compile. Downloaded DIRECTLY from a pinned release asset, NOT resolved via the
+# GitHub API: the unauthenticated api.github.com 60-req/hr limit gets exhausted when
+# several images build in a row, returning 403 and failing the build (curl exit 22).
+# Asset downloads from the releases/download host don't count against that limit.
+# Bump by editing PY_RELEASE/PY_VERSION (asset = cpython-<ver>+<release>-<arch>...).
+ARG PY_RELEASE=20260510
+ARG PY_VERSION=3.12.13
 RUN set -eux; \
     case "$(dpkg --print-architecture)" in arm64) pa=aarch64 ;; amd64) pa=x86_64 ;; *) exit 1 ;; esac; \
-    rel="$(curl -fsSL https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest)"; \
-    url="$(printf '%s' "$rel" | jq -r --arg pa "$pa" '.assets[].browser_download_url | select(endswith($pa + "-unknown-linux-gnu-install_only.tar.gz")) | select(contains("/cpython-3.12."))' | head -1)"; \
-    test -n "$url"; echo "python-build-standalone: $url"; \
+    url="https://github.com/astral-sh/python-build-standalone/releases/download/${PY_RELEASE}/cpython-${PY_VERSION}+${PY_RELEASE}-${pa}-unknown-linux-gnu-install_only.tar.gz"; \
+    echo "python-build-standalone: $url"; \
     curl -fsSLo /tmp/py.tar.gz "$url"; \
     mkdir -p /opt/python; \
     tar -xzf /tmp/py.tar.gz --strip-components=1 -C /opt/python; \
