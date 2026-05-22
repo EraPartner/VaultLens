@@ -137,7 +137,7 @@ For every PDF in `raw/sources/`, a sibling exists at `raw/sources-text/<same-ste
 - Read the attached `raw/sources-text/*.md` with the Read tool. Treat it as ground truth.
 - Do NOT attempt to Read any `.pdf` file — most models cannot parse PDF input directly, and the sandbox blocks shelling out to `pdftotext`.
 - If a source you need is not yet preprocessed, run from the Bash tool: `python3 tools/wiki.py preprocess --pdf raw/sources/<file>.pdf`. This is the only sanctioned way to materialize source text.
-- Layout artifacts (page-number lines, broken paragraphs, table noise) are expected — read past them. Never write to `/tmp/` or anywhere outside the project root.
+- Layout artifacts (page-number lines, broken paragraphs, table noise) are expected — read past them. Do not write extracts, scratch files, or outputs anywhere outside the project tree — the one sanctioned exception is the transient log-entry JSON written under `/tmp/` in step 7 (Maintenance).
 
 **Source identification when the page lists none** (`requires: []`, no `## Sources`): infer from the page title and tags. Then search across all raw sources:
 ```bash

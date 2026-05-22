@@ -959,9 +959,11 @@ python3 tools/wiki.py project link {slug} concepts/some-page
 """
 
 
-# Claude Code shim: imports the project AGENTS.md (which instructs reading project.md
-# and the root ../../AGENTS.md schema).
-CLAUDE_MD_TEMPLATE = "@AGENTS.md\n"
+# Claude Code shim: import the project AGENTS.md (instructions + handoff conventions)
+# and project.md (deterministically — it's the per-project source of truth, so don't
+# leave loading it to the agent's discretion). The root ../../AGENTS.md schema stays a
+# lazy "read if needed" instruction inside AGENTS.md to avoid loading it every session.
+CLAUDE_MD_TEMPLATE = "@AGENTS.md\n@project.md\n"
 
 # Project-level AGENTS.md shim: points tools that look for AGENTS.md in the
 # working directory to the root schema rather than duplicating it.
@@ -1075,7 +1077,7 @@ def _project_new(slug: str) -> int:
     print(f"Created project '{cleaned}' at {project_dir.relative_to(ROOT)}")
     print("  - project.md")
     print("  - AGENTS.md      (AI entrypoint → read project.md + ../../AGENTS.md)")
-    print("  - CLAUDE.md      (Claude Code shim → @AGENTS.md)")
+    print("  - CLAUDE.md      (Claude Code shim → @AGENTS.md + @project.md)")
     print("  - opencode.json  (opencode shim → instructions: [AGENTS.md])")
     print("  - TODO.md        (per-project todo; embedded into projects/TODO.md, P1 items surface in projects/TODO-widget.md)")
     print("  - queries/       (default Q&A artifact dir; redefine in ## Rules if you want)")
