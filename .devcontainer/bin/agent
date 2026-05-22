@@ -118,6 +118,14 @@ stage_claude_config() {
       [[ -f "$f" ]] && sed -i '' -e "s#$HOME/.claude#/home/dev/.claude#g" -e "s#$src#/home/dev/.claude#g" "$f" 2>/dev/null || true
     done
     find "$dst/dot-claude" -name '.DS_Store' -delete 2>/dev/null || true
+    # The PreToolUse safety guard reaches the sandbox out-of-band via the
+    # root-owned /etc/claude-code/managed-settings.json policy (see compose.yaml).
+    # Strip hooks from the staged USER settings so the host's host-path hook
+    # entry can't dangle here or duplicate the managed one. Mirrors the sync pull.
+    if [[ -f "$dst/dot-claude/settings.json" ]] && command -v jq >/dev/null 2>&1; then
+      local hjt; hjt="$(mktemp)"
+      jq 'del(.hooks)' "$dst/dot-claude/settings.json" >"$hjt" 2>/dev/null && mv "$hjt" "$dst/dot-claude/settings.json" || rm -f "$hjt"
+    fi
   fi
   [[ -f "$HOME/.claude.json" ]] && cp "$HOME/.claude.json" "$dst/claude.json" 2>/dev/null || true
   # copilot settings (host plugin refs stripped); opencode global config (no
