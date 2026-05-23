@@ -7,6 +7,8 @@ updated: <% tp.date.now("YYYY-MM-DD") %>
 summary: 
 domain: 
 tags: []
+confidence: 
+volatility: 
 ---
 
 # <% tp.file.title %>

@@ -10,6 +10,8 @@ comparisons:
   - item_b
 domain: 
 tags: []
+confidence: 
+volatility: 
 ---
 
 # <% tp.file.title %>

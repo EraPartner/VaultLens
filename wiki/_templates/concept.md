@@ -8,6 +8,8 @@ summary:
 aliases: []
 domain: 
 tags: []
+confidence: 
+volatility: 
 ---
 
 # <% tp.file.title %>
