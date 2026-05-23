@@ -354,8 +354,8 @@ Examples:
     parser.add_argument(
         "--effort",
         choices=["low", "medium", "high", "xhigh"],
-        default="medium",
-        help="Thinking effort (default: medium)",
+        default="high",
+        help="Thinking effort (default: high)",
     )
     parser.add_argument(
         "--system",
