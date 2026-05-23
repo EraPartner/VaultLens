@@ -183,7 +183,7 @@ for a one-shot readiness check (egress lock, toolchain, qmd, ollama, auth).
 | `brain-config-<id>` (volume) | `/home/dev/.config` | qmd / gh config |
 | `brain-cache-<id>` (volume) | `/home/dev/.cache` | writable qmd index snapshot (models symlink to the seed) |
 | `.devcontainer` (host) | `/workspaces/Brain/.devcontainer` | **RO** overlay on the rw workspace so the sandbox config + host launcher can't be rewritten from inside (see Safety note) |
-| `~/.claude-brain-stage` (host) | `/home/dev/.claude-stage` | **RO** sanitized stage (no secrets) |
+| `~/.claude-sandbox/stage/brain` (host) | `/home/dev/.claude-stage` | **RO** sanitized stage (no secrets) |
 | `~/.cache/qmd` (host) | `/home/dev/.qmd-seed` | **RO** live source: index snapshotted on start, models symlinked |
 | `~/Documents/School` (host) | same path | **RO** project source for symlinked coursework |
 | `~/Documents/Personal/Scripts/Projects/{Vision,Watchman}` | same path | **RO** project source |

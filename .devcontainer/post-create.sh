@@ -95,7 +95,7 @@ fi
 
 # --- Seed ~/.claude from the SANITIZED stage the host wrapper produced --------
 # The host wrapper strips secrets (.credentials.json) before staging into
-# ~/.claude-brain-stage (bind RO at /home/dev/.claude-stage).
+# ~/.claude-sandbox/stage/brain (bind RO at /home/dev/.claude-stage).
 STAGE=/home/dev/.claude-stage
 if [[ ! -f /home/dev/.claude/settings.json && -d "$STAGE/dot-claude" ]]; then
   echo "[post-create] Seeding ~/.claude from sanitized stage..."

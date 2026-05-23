@@ -106,7 +106,7 @@ fi
 stage_claude_config() {
   local src dst item jf f ocsrc
   src="$(cd "$HOME/.claude" 2>/dev/null && pwd -P || true)"
-  dst="$HOME/.claude-brain-stage"
+  dst="$HOME/.claude-sandbox/stage/brain"
   rm -rf "$dst/dot-claude"; mkdir -p "$dst/dot-claude"
   if [[ -n "$src" && -d "$src" ]]; then
     for item in settings.json keybindings.json CLAUDE.md agents rules commands statusline status-line.sh plugins; do

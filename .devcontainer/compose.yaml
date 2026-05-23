@@ -83,7 +83,7 @@ services:
         target: /home/dev/.cache
       # Sanitized host config staging (built by the launcher), read-only.
       - type: bind
-        source: ${HOME}/.claude-brain-stage
+        source: ${HOME}/.claude-sandbox/stage/brain
         target: /home/dev/.claude-stage
         read_only: true
       # Safety guard: the canonical PreToolUse Bash hook, shared with the host
