@@ -205,6 +205,7 @@ After enhancing, update the source page (`wiki/sources/src-*.md`):
   ```bash
   ls wiki/concepts/ | grep -iE "fragment-of-broken-name"
   ```
+- Run `python3 tools/wiki.py links --fix --write` to add portable markdown mirrors to any new wikilinks (the tool computes relative paths; never hand-write the `([Title](path.md))` mirror), then `python3 tools/wiki.py index --rebuild` if you added or removed pages.
 - Record the enhancement in `wiki/log.md`. **Always use the JSON-file path** — never put title/summary directly on the command line, because copilot rejects shell calls containing `&`, `;`, `(...)`, etc. (which are common in titles like "K&R2" or summaries with chapter refs like "(5.11)").
 
   1. Write the entry to a temp JSON file (e.g. `/tmp/wiki-log.json`):

@@ -30,6 +30,7 @@ Maintain a durable wiki in `wiki/` from immutable source material in `raw/`.
   `wiki/entities/` person/org/tool/place/artifact · `wiki/concepts/` concept/method pages ·
   `wiki/topics/` thematic syntheses · `wiki/syntheses/` cross-topic analyses ·
   `wiki/comparisons/` side-by-side · `wiki/queries/` preserved Q&A · `wiki/reports/` lint/audit outputs ·
+  `wiki/inventory/<kind>/` tracked intentions (ingest-candidate/question/task/watch/corpus/artifact/item) ·
   `wiki/_templates/` page templates
 - `projects/<slug>/` one folder per project · `project.md` metadata · `notes/` scratch · `queries/` durable Q&A
 - `tools/wiki.py` core utility · `tools/wiki_extra.py` extras · `tools/scripts/` setup helpers ·
@@ -38,9 +39,13 @@ Maintain a durable wiki in `wiki/` from immutable source material in `raw/`.
 ## Required page metadata
 
 All content pages need YAML frontmatter with at least: `title`, `type` (page/source/entity/concept/
-topic/synthesis/comparison/query/project), `status` (active/superseded/archived/draft), `created`
+topic/synthesis/comparison/query/project/inventory), `status` (active/superseded/archived/draft), `created`
 (`YYYY-MM-DD`), `updated`, `summary` (one falsifiable sentence). Optional: `domain`
-(personal/research/work/learning), `tags`.
+(personal/research/work/learning), `tags`, `confidence` (high/medium/low — evidential trust),
+`volatility` (hot/warm/cold — refresh cadence; drives staleness thresholds 60/180/365 days).
+
+- Analytical pages (`concepts/`, `topics/`, `syntheses/`, `comparisons/`) should set `confidence`
+  and `volatility`; `lint` validates the values and flags low-confidence pages for follow-up.
 
 - `wiki/sources/*` also need: `source_id` (e.g. `src-2026-04-11-001`), `source_type`
   (article/paper/book/pdf/video/podcast/dataset/note/other), `origin`, `ingested_on`.
@@ -220,21 +225,37 @@ devcontainer this does not apply.
 - **Ingest** — `wiki-ingest`: extraction, source-page creation, concept/topic updates, lint, log entry.
 - **Query** — `wiki-search` (general); for project-scoped Q&A run any AI CLI from `projects/<slug>/`.
   Durable answers → `wiki/queries/` (general) or `projects/<slug>/queries/` (project).
-- **Lint / health check** — programmatic (fast): `wiki.py lint` (links/metadata/staleness),
-  `lint --strict` (orphans too), `validate-log`. Semantic (thorough): `wiki-agent.py quality` /
+- **Lint / health check** — programmatic (fast): `wiki.py lint` (links, metadata, status/date
+  validity, confidence/volatility, volatility-aware staleness), `lint --strict` (orphans too),
+  `lint --json` (CI/agents), `lint --fix` (case-normalise enum/status), `validate-log`. Tests:
+  `python3 tools/tests/test_wiki.py`. Semantic (thorough): `wiki-agent.py quality` /
   `contradict` / `verify`. Write findings to `wiki/reports/`; fix highest-priority issues.
 
 ## Conventions
 
-**Links/citations:** Obsidian wikilinks `[[path/to/page]]`; explicit path-based links when ambiguous;
+**Links/citations:** write Obsidian path-based wikilinks `[[path/to/page]]` (the canonical form);
 source citations in a `## Sources` section listing `[[sources/...]]`; keep external URLs on source
-pages and reference sources indirectly from concept/topic pages.
+pages and reference sources indirectly from concept/topic pages. For portability outside Obsidian
+(GitHub, plain-markdown viewers, headless agents) wikilinks carry a **dual-link** markdown mirror —
+`[[concepts/foo]] ([Foo Title](../concepts/foo.md))`. Do **not** hand-write the `([Title](path.md))`
+mirror (relative paths are error-prone); write the bare `[[...]]` and run
+`python3 tools/wiki.py links --fix --write`, which adds mirrors deterministically and idempotently.
+`python3 tools/wiki.py links` reports coverage without writing.
 
 **Change quality:** preserve validated content unless superseded by stronger evidence; mark superseded
 claims `status: superseded` (don't silently delete history); keep summaries concise + falsifiable;
 favor incremental edits across related pages over isolated notes; bump `updated` when editing.
 
-**Index/log:** `wiki/index.md` (Dataview) updates automatically — no rebuild. `wiki/log.md` is
+**Archiving:** to retire a page without deleting it, use `python3 tools/wiki.py archive page <ref>
+--reason "…"` (sets `status: archived`, records it in `wiki/system/archive-registry.json`). Archived
+pages stay on disk so existing wikilinks keep resolving, but are excluded from staleness/orphan checks
+and from `search` (pass `--include-archived` to include them). Reverse with `archive restore <ref>`.
+
+**Index/log:** `wiki/index.md` (Dataview) updates automatically inside Obsidian — no rebuild.
+For headless agents (devcontainer, CI, plain markdown viewers) the derived `wiki/_index.md` +
+`wiki/<category>/_index.md` files are the readable mirror: regenerate with
+`python3 tools/wiki.py index --rebuild` after adding/removing pages (`index` alone reports
+staleness). These `_index.md` files are generated — never hand-edit them. `wiki/log.md` is
 append-only; headings `## [YYYY-MM-DD] operation | title`.
 
 ## Search
@@ -270,11 +291,27 @@ subfolder; Dataview tables update automatically from frontmatter (JS API enabled
 
 ```bash
 # Core maintenance
-python3 tools/wiki.py lint                       # links, metadata, projects, staleness (>180d)
+python3 tools/wiki.py lint                       # links, metadata, status/date validity, staleness, confidence/volatility
 python3 tools/wiki.py lint --strict              # + orphan pages
+python3 tools/wiki.py lint --json                # machine-readable report (errors/warnings split)
+python3 tools/wiki.py lint --fix                 # case-normalise confidence/volatility/status values
+python3 tools/tests/test_wiki.py                 # tooling test suite (golden + per-rule defect fixtures)
 python3 tools/wiki.py search "term"              # substring search (qmd preferred — see Search)
 python3 tools/wiki.py tags <tag> [<tag>...]      # AND-filter pages by tag
 python3 tools/wiki.py coverage                   # rank sparse / underlinked pages
+python3 tools/wiki.py index                      # report stale _index.md mirrors
+python3 tools/wiki.py index --rebuild            # regenerate headless-readable _index.md files
+python3 tools/wiki.py links                       # report wikilink dual-link coverage
+python3 tools/wiki.py links --fix --write         # add portable markdown mirrors to wikilinks
+python3 tools/wiki.py archive list                # list archived pages (+ registry drift)
+python3 tools/wiki.py archive page concepts/foo --reason "superseded by bar"   # archive a page
+python3 tools/wiki.py archive restore concepts/foo   # un-archive a page
+python3 tools/wiki.py search "term" --include-archived   # search incl. archived (excluded by default)
+
+# Inventory — track intentions distinct from raw/ and wiki/ (ingest-candidate/question/task/watch/...)
+python3 tools/wiki.py inventory list                      # all records (filter: inventory list <kind> / --status X)
+python3 tools/wiki.py inventory new question how-x-works --priority p1 --summary "..."
+python3 tools/wiki.py inventory show question/how-x-works
 python3 tools/wiki.py validate-log               # check log format
 python3 tools/wiki.py append-log ...             # add a log entry
 python3 tools/wiki.py preprocess                 # pre-extract raw/sources/*.pdf -> raw/sources-text/*.md

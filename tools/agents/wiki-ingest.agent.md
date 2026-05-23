@@ -66,6 +66,8 @@ Do not run any other shell command (no curl, no git, no rm).
 
 ### 4. Maintenance
 - Run `python3 tools/wiki.py lint` and fix issues
+- Run `python3 tools/wiki.py index --rebuild` so the headless `_index.md` mirrors include the new pages
+- Run `python3 tools/wiki.py links --fix --write` to add portable markdown mirrors to the wikilinks you wrote (the tool computes correct relative paths — never hand-write the `([Title](path.md))` mirror)
 - Append log entry
 
 ## Source-type specific extraction
