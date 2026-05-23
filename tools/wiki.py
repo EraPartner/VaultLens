@@ -23,7 +23,7 @@ RAW_SOURCES_DIR = ROOT / "raw" / "sources"
 RAW_SOURCES_TEXT_DIR = ROOT / "raw" / "sources-text"
 
 IGNORE_DIRS = {"_templates", ".obsidian"}
-IGNORE_FILES = {"index.md", "log.md"}
+IGNORE_FILES = {"index.md", "_index.md", "log.md"}
 SPECIAL_LINK_TARGETS = {"index", "log", "home", "category", "page-name", "path", "to"}
 PROJECT_REQUIRED_FIELDS = {"title", "type", "status", "created", "updated", "summary"}
 
@@ -78,6 +78,24 @@ class Page:
         if len(self.rel.parts) == 1:
             return "root"
         return self.rel.parts[0]
+
+    @property
+    def status(self) -> str:
+        return self._scalar("status").strip().lower()
+
+    @property
+    def is_archived(self) -> bool:
+        return self.status == "archived"
+
+    @property
+    def confidence(self) -> str:
+        """Trust signal: high|medium|low (empty when unset). Lowercased."""
+        return self._scalar("confidence").strip().lower()
+
+    @property
+    def volatility(self) -> str:
+        """Refresh cadence: hot|warm|cold (empty when unset). Lowercased."""
+        return self._scalar("volatility").strip().lower()
 
 
 @dataclass
@@ -297,13 +315,24 @@ def compute_inbound_links(
 
 
 STALENESS_DAYS = 180
+# Volatility-aware staleness thresholds: hot pages go stale faster, cold ones slower.
+# Pages without a `volatility` field fall back to the default warm cadence.
+STALENESS_DAYS_BY_VOLATILITY = {"hot": 60, "warm": 180, "cold": 365}
+
+CONFIDENCE_VALUES = {"high", "medium", "low"}
+VOLATILITY_VALUES = {"hot", "warm", "cold"}
+
+
+def staleness_threshold(page: Page) -> int:
+    """Days-until-stale for a page, based on its `volatility` (default warm)."""
+    return STALENESS_DAYS_BY_VOLATILITY.get(page.volatility, STALENESS_DAYS)
 
 
 def check_staleness(pages: list[Page]) -> list[str]:
     stale: list[str] = []
     today = dt.date.today()
     for page in pages:
-        if page.category in {"system", "root"}:
+        if page.category in {"system", "root", "inventory"} or page.is_archived:
             continue
         raw = page.updated.strip()
         if not raw:
@@ -313,9 +342,43 @@ def check_staleness(pages: list[Page]) -> list[str]:
         except ValueError:
             continue
         age = (today - updated).days
-        if age > STALENESS_DAYS:
-            stale.append(f"{page.rel.as_posix()}: last updated {raw} ({age} days ago)")
+        threshold = staleness_threshold(page)
+        if age > threshold:
+            vol = f", volatility {page.volatility}" if page.volatility else ""
+            stale.append(
+                f"{page.rel.as_posix()}: last updated {raw} "
+                f"({age} days ago, threshold {threshold}{vol})"
+            )
     return stale
+
+
+def check_field_enums(pages: list[Page]) -> tuple[list[str], list[str]]:
+    """Validate `confidence`/`volatility` values when present.
+
+    Returns (invalid_values, low_confidence_pages). Invalid values are lint
+    errors; low-confidence pages are surfaced informationally so the enhancer
+    or source-verifier can be pointed at them.
+    """
+    invalid: list[str] = []
+    low_confidence: list[str] = []
+    for page in pages:
+        if page.category in {"system", "root"}:
+            continue
+        conf = page.confidence
+        if conf and conf not in CONFIDENCE_VALUES:
+            invalid.append(
+                f"{page.rel.as_posix()}: confidence '{conf}' not in "
+                f"{sorted(CONFIDENCE_VALUES)}"
+            )
+        elif conf == "low":
+            low_confidence.append(page.rel.as_posix())
+        vol = page.volatility
+        if vol and vol not in VOLATILITY_VALUES:
+            invalid.append(
+                f"{page.rel.as_posix()}: volatility '{vol}' not in "
+                f"{sorted(VOLATILITY_VALUES)}"
+            )
+    return invalid, low_confidence
 
 
 def validate_log() -> int:
@@ -354,101 +417,11 @@ LINK_VALIDATION_SKIP_CATEGORIES = {"system"}
 ORPHAN_EXEMPT = {"home", "system/schema"}
 
 
-def lint(strict: bool) -> int:
-    pages = list_content_pages()
-    canonical, basename_map = build_page_indexes(pages)
+def lint(strict: bool, as_json: bool = False, fix: bool = False) -> int:
+    """Validate the wiki. Heavy lifting lives in wiki_lint to keep this file lean."""
+    from wiki_lint import run_lint
 
-    missing_fields: list[str] = []
-    for page in pages:
-        if page.category in {"system", "root"}:
-            continue
-        need = set(REQUIRED_FRONTMATTER_BASE)
-        need.update(REQUIRED_FRONTMATTER_BY_CATEGORY.get(page.category, set()))
-        missing = sorted(key for key in need if key not in page.frontmatter)
-        if missing:
-            missing_fields.append(
-                f"{page.rel.as_posix()}: missing {', '.join(missing)}"
-            )
-
-    inbound, broken_links, ambiguous_links = compute_inbound_links(
-        pages,
-        canonical,
-        basename_map,
-        skip_categories=LINK_VALIDATION_SKIP_CATEGORIES,
-    )
-
-    orphan_pages: list[str] = []
-    for page in pages:
-        key = page.rel.with_suffix("").as_posix()
-        if key in ORPHAN_EXEMPT:
-            continue
-        if inbound.get(key, 0) == 0:
-            orphan_pages.append(page.rel.as_posix())
-
-    stale_pages = check_staleness(pages)
-
-    projects = list_projects()
-    project_missing, project_broken_refs = lint_projects(projects, canonical, basename_map)
-
-    print(f"Pages checked: {len(pages)}")
-    print(f"Missing frontmatter fields: {len(missing_fields)}")
-    print(f"Broken links: {len(broken_links)}")
-    print(f"Ambiguous links: {len(ambiguous_links)}")
-    print(f"Orphans: {len(orphan_pages)}")
-    print(f"Stale pages (>{STALENESS_DAYS} days): {len(stale_pages)}")
-    print(f"Projects checked: {len(projects)}")
-    print(f"Project missing fields: {len(project_missing)}")
-    print(f"Project broken wiki_refs: {len(project_broken_refs)}")
-
-    if missing_fields:
-        print("\nMissing fields:")
-        for row in missing_fields:
-            print(f"- {row}")
-
-    if broken_links:
-        print("\nBroken links:")
-        for row in broken_links:
-            print(f"- {row}")
-
-    if ambiguous_links:
-        print("\nAmbiguous links:")
-        for row in ambiguous_links:
-            print(f"- {row}")
-
-    if orphan_pages:
-        print("\nOrphan pages:")
-        for row in orphan_pages:
-            print(f"- {row}")
-
-    if stale_pages:
-        print("\nStale pages:")
-        for row in stale_pages:
-            print(f"- {row}")
-
-    if project_missing:
-        print("\nProject missing fields:")
-        for row in project_missing:
-            print(f"- {row}")
-
-    if project_broken_refs:
-        print("\nProject broken wiki_refs:")
-        for row in project_broken_refs:
-            print(f"- {row}")
-
-    print("\nNote: Contradiction and semantic quality checks require agent review.")
-    print("Run: python3 tools/agents/wiki-agent.py contradict")
-
-    has_errors = bool(
-        missing_fields
-        or broken_links
-        or ambiguous_links
-        or project_missing
-        or project_broken_refs
-    )
-    if strict:
-        has_errors = has_errors or bool(orphan_pages)
-
-    return 1 if has_errors else 0
+    return run_lint(strict=strict, as_json=as_json, fix=fix)
 
 
 def _body_word_count(body: str) -> int:
@@ -483,7 +456,7 @@ def coverage(as_json: bool, limit: int) -> int:
 
     rows: list[dict] = []
     for page in pages:
-        if page.category in {"system", "root", "entities"}:
+        if page.category in {"system", "root", "entities", "inventory"}:
             continue
         key = page.rel.with_suffix("").as_posix()
         word_count = _body_word_count(page.body)
@@ -568,13 +541,15 @@ def coverage(as_json: bool, limit: int) -> int:
     return 0
 
 
-def search(query: str, limit: int) -> int:
+def search(query: str, limit: int, include_archived: bool = False) -> int:
     terms = [token for token in re.findall(r"[A-Za-z0-9_\-]+", query.lower()) if token]
     if not terms:
         print("No query terms found")
         return 1
 
     pages = list_content_pages()
+    if not include_archived:
+        pages = [page for page in pages if not page.is_archived]
     scored: list[tuple[int, Page]] = []
     for page in pages:
         text = page.text.lower()
@@ -1256,10 +1231,24 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Treat orphan pages as failures",
     )
+    lint_parser.add_argument(
+        "--json", action="store_true", help="Emit a machine-readable JSON report"
+    )
+    lint_parser.add_argument(
+        "--fix",
+        action="store_true",
+        help="Apply unambiguous repairs (case-normalise confidence/volatility/status)",
+    )
 
     search_parser = sub.add_parser("search", help="Search wiki content")
     search_parser.add_argument("query", help="Search query")
     search_parser.add_argument("--limit", type=int, default=10, help="Max results")
+    search_parser.add_argument(
+        "--include-archived",
+        dest="include_archived",
+        action="store_true",
+        help="Include pages with status: archived (excluded by default)",
+    )
 
     coverage_parser = sub.add_parser(
         "coverage",
@@ -1356,6 +1345,74 @@ def build_parser() -> argparse.ArgumentParser:
         help="Emit machine-readable JSON for list/show",
     )
 
+    index_parser = sub.add_parser(
+        "index",
+        help="Generate/check plain-markdown _index.md files (headless-readable mirror of Dataview)",
+    )
+    index_parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Regenerate all _index.md files (default: check for staleness only)",
+    )
+
+    archive_parser = sub.add_parser(
+        "archive",
+        help="Archive lifecycle (list/page/restore) via status: archived + registry",
+    )
+    archive_parser.add_argument(
+        "action", choices=["list", "page", "restore"], help="Archive subaction"
+    )
+    archive_parser.add_argument(
+        "ref", nargs="?", help="Page reference (e.g. concepts/foo) for page/restore"
+    )
+    archive_parser.add_argument(
+        "--reason", default="", help="Why the page is being archived (recorded in registry)"
+    )
+    archive_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON for list"
+    )
+
+    inventory_parser = sub.add_parser(
+        "inventory",
+        help="Track ingest-candidates / questions / tasks / watch items (list/new/show)",
+    )
+    inventory_parser.add_argument(
+        "action", choices=["list", "new", "show"], help="Inventory subaction"
+    )
+    inventory_parser.add_argument(
+        "kind",
+        nargs="?",
+        help="Kind for new (item/ingest-candidate/question/task/watch/corpus/artifact), "
+        "kind filter for list, or kind/slug for show",
+    )
+    inventory_parser.add_argument("slug", nargs="?", help="Slug (required for new)")
+    inventory_parser.add_argument("--title", default="", help="Record title")
+    inventory_parser.add_argument(
+        "--status", default="", help="Status (filter for list; default proposed for new)"
+    )
+    inventory_parser.add_argument(
+        "--priority", default="", help="Priority p0-p4 (default p2 for new)"
+    )
+    inventory_parser.add_argument("--summary", default="", help="One-line summary for new")
+    inventory_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON for list/show"
+    )
+
+    links_parser = sub.add_parser(
+        "links",
+        help="Report wikilink dual-link coverage; --fix adds portable markdown mirrors",
+    )
+    links_parser.add_argument(
+        "--fix",
+        action="store_true",
+        help="Add a markdown mirror after each resolvable bare wikilink (dry-run unless --write)",
+    )
+    links_parser.add_argument(
+        "--write",
+        action="store_true",
+        help="With --fix, persist changes to disk (otherwise preview only)",
+    )
+
     return parser
 
 
@@ -1364,9 +1421,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "lint":
-        return lint(strict=args.strict)
+        return lint(strict=args.strict, as_json=args.json, fix=args.fix)
     if args.command == "search":
-        return search(args.query, args.limit)
+        return search(args.query, args.limit, include_archived=args.include_archived)
     if args.command == "coverage":
         return coverage(as_json=args.json, limit=args.limit)
     if args.command == "tags":
@@ -1415,6 +1472,33 @@ def main(argv: list[str] | None = None) -> int:
             action=args.action,
             slug=args.slug,
             ref=args.ref,
+            as_json=args.json,
+        )
+    if args.command == "index":
+        from wiki_index import cmd_index
+
+        return cmd_index(rebuild=args.rebuild)
+    if args.command == "links":
+        from wiki_links import cmd_links
+
+        return cmd_links(fix=args.fix, write=args.write)
+    if args.command == "archive":
+        from wiki_archive import cmd_archive
+
+        return cmd_archive(
+            action=args.action, ref=args.ref, reason=args.reason, as_json=args.json
+        )
+    if args.command == "inventory":
+        from wiki_inventory import cmd_inventory
+
+        return cmd_inventory(
+            action=args.action,
+            kind=args.kind,
+            slug=args.slug,
+            title=args.title,
+            status=args.status,
+            priority=args.priority,
+            summary=args.summary,
             as_json=args.json,
         )
 
