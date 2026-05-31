@@ -4,6 +4,8 @@
 # build — keep it out of the daemon build context.
 README.md
 bin/
+!bin/verify-pins
+launcher-common.sh
 features/
 devcontainer.json
 devcontainer-lock.json

@@ -16,26 +16,29 @@ qmd cache seeding, and a single egress hole to the host Ollama daemon.
 | Component | Where it runs | Notes |
 | --- | --- | --- |
 | Python 3.12 orchestrator | `tools/wiki.py`, `tools/agents/wiki-agent.py` | stdlib only, no pip deps |
-| `claude` CLI | claude-code devcontainer feature | default agent (`sonnet`) |
-| `copilot` CLI | npm `@github/copilot` (agent-clis feature, build-time) | `gpt-5.2`; auth via `COPILOT_GITHUB_TOKEN` (see [Choosing the Copilot account](#choosing-the-copilot-account)) |
-| `opencode` CLI | npm `opencode-ai` (agent-clis feature, build-time) | `github-copilot/gpt-5.2` |
+| `claude` CLI | npm `@anthropic-ai/claude-code` (Dockerfile, build-time) | default agent (`sonnet`) |
+| `copilot` CLI | npm `@github/copilot` (Dockerfile, build-time) | `gpt-5.2`; auth via `COPILOT_GITHUB_TOKEN` (see [Choosing the Copilot account](#choosing-the-copilot-account)) |
+| `opencode` CLI | npm `opencode-ai` (Dockerfile, build-time) | `github-copilot/gpt-5.2` |
 | `ollama` CLI | host daemon via `host.docker.internal:11434` | not installed in-container |
-| `qmd` search (MCP) | npm `@tobilu/qmd` (agent-clis feature, build-time) | enabled for claude via `enabledMcpjsonServers`; search-only — index snapshotted + models live-linked from host on start |
+| `qmd` search (MCP) | npm `@tobilu/qmd` (Dockerfile, build-time) | exposed to claude via `.mcp.json` and to opencode via `opencode.json` `mcp`; search-only — index snapshotted + models live-linked from host on start |
 | PDF ingest | `pdftotext` (poppler) + `qpdf` (apt) | for `wiki.py preprocess` |
 | GitHub CLI (`gh`) | apt | push over HTTPS via `GH_TOKEN` |
 
 Base image: digest-pinned `debian:bookworm-slim`. Container user: `dev` (UID 1000).
 
-> **Why the CLIs install at build time.** `copilot`/`opencode`/`qmd` are
-> installed by the local **`./features/agent-clis`** feature, not `post-create`.
-> qmd pulls native modules (`better-sqlite3`, `tree-sitter`, `node-llama-cpp`)
-> that need a C/C++ toolchain and Node headers from `nodejs.org`. `post-create`
-> runs *after* the egress lock is up, so that install fails (no toolchain, and
-> `nodejs.org` isn't allowlisted) — leaving qmd "command not found". Features run
-> in the **build phase**, where the network is unrestricted and the feature
-> apt-installs `build-essential`. Add packages there, then rebuild, if a future
-> CLI needs more. To change CLI versions, edit the feature's `install.sh` and
-> rebuild.
+> **Why the CLIs install at build time.** All four CLIs (`claude`/`copilot`/
+> `opencode`/`qmd`) and the Node/CPython toolchains install in the **`Dockerfile`**,
+> not `post-create`/`post-start` (Compose has no devcontainer-feature system, so
+> the Dockerfile installs them itself). qmd pulls native modules (`better-sqlite3`,
+> `tree-sitter`, `node-llama-cpp`) that need a C/C++ toolchain and Node headers
+> from `nodejs.org`. The lifecycle hooks run *after* the egress lock is up, so an
+> install there would fail (no toolchain, and `nodejs.org` isn't allowlisted). The
+> build phase has an unrestricted network and apt-installs `build-essential`. Node
+> and the CPython build are downloaded from their official hosts and **verified
+> against the published `SHASUMS256.txt` / `SHA256SUMS`** before extraction; the
+> base image is digest-pinned. To change CLI or toolchain versions, edit the
+> `RUN npm install -g …` line or the `NODE_VERSION` / `PY_VERSION` ARGs in the
+> `Dockerfile` and rebuild.
 
 ## How to use
 
@@ -52,7 +55,8 @@ then the vault path:
 
 | Command | Runs in the container |
 | --- | --- |
-| `brain-wiki <agent> [args]` | `python3 tools/agents/wiki-agent.py <agent> …` (agent = quality/verify/ingest/contradict/search/enhance) |
+| `brain-cos [--mode brief\|status\|surface\|inbox] [--project slug]` | Chief of Staff brief / status / commitments / inbox triage (reader profile) |
+| `brain-wiki <agent> [args]` | `python3 tools/agents/wiki-agent.py <agent> …` (agent = quality/verify/ingest/contradict/search/enhance/cos) |
 | `brain-wiki <subcommand> [args]` | `python3 tools/wiki.py <subcommand> …` (coverage, preprocess, search, log, …) |
 | `brain-claude [args]` | `claude …` (opens in the subdir you ran it from, e.g. `projects/ict-recht`) |
 | `brain-copilot [args]` | `copilot …` |
@@ -63,7 +67,11 @@ then the vault path:
 Examples:
 
 ```fish
-brain-wiki enhance --strategy coverage          # agent runner
+brain-cos                                        # daily chief-of-staff brief
+brain-cos --mode status --project thesis         # thesis status report
+brain-cos --mode surface                         # surface all commitments
+brain-cos --mode inbox                           # triage raw/inbox/ items
+brain-wiki enhance --strategy coverage           # wiki agent runner
 brain-wiki enhance --background --forever &      # long detached loop (survives via the keep-alive)
 brain-wiki coverage --json                       # tools/wiki.py subcommand
 brain-claude --dangerously-skip-permissions
@@ -73,8 +81,8 @@ brain-shell .devcontainer/bin/doctor             # readiness check
 **Working directory.** `brain-claude`/`brain-copilot`/`brain-opencode`/`brain-shell`
 open in the in-container path matching your host `PWD`, so running `brain-claude`
 from `projects/ict-recht` lands in `/workspaces/Brain/projects/ict-recht` and
-picks up that project's `AGENTS.md` / `CLAUDE.md` / `project.md`. `brain-wiki`
-always runs at the workspace root (it sets `BRAIN_NO_CHDIR=1`).
+picks up that project's `AGENTS.md` / `CLAUDE.md` / `project.md`. `brain-wiki` and
+`brain-cos` always run at the workspace root (they set `BRAIN_NO_CHDIR=1`).
 
 ### Choosing the Copilot account
 
@@ -149,8 +157,9 @@ Egress is enforced by the root entrypoint on every start:
    `NODE_USE_ENV_PROXY=1`, so `claude`, `copilot`, `opencode`, `qmd`, `npm`,
    `git`, `gh`, and `python` all egress through it.
 2. **`iptables` egress lock**: only the `proxy` UID may originate outbound
-   packets. IPv6 is default-deny. Denied egress is rate-limited-logged
-   (`dmesg | grep brain-deny`).
+   packets (including DNS to the embedded Docker resolver, so non-proxy processes
+   can't tunnel data out via DNS queries). IPv6 is default-deny. Denied egress is
+   rate-limited-logged (`dmesg | grep egress-deny`).
 
 **Allowlist** (`allowlist.txt`, baked into the image — edit and rebuild to
 change): Anthropic + Claude Code, `registry.npmjs.org`, GitHub, GitHub Copilot
@@ -165,6 +174,15 @@ keeps it off squid. This is the only host service the container can touch.
 **Supply-chain scanning:** `post-create` installs Aikido safe-chain and
 `BASH_ENV` wires it into every shell, so `npm`/`pip` installs the agents run
 mid-session are screened against `malware-list.aikido.dev`.
+
+**Launch-integrity pins:** the Dockerfile records the SHA-256 of the agent's
+executables (`node`/`npm`/`claude`/`gh`/`git`/`python3`/`copilot`/`opencode`/`qmd`)
+into `binary-pins.txt`, and `brain-verify-pins` re-checks them at every launch,
+aborting on drift. This reliably **detects unintended upstream tool upgrades**. It
+is a true tamper defense only for the root-owned binaries (`node`/`git`/`python3`);
+the four npm CLIs live in a dev-writable prefix (so runtime `npm i -g` / safe-chain
+can write it), so treat their lines as drift-detection, not a hard anti-tamper
+guarantee. See the comment atop `bin/verify-pins`.
 
 **Observability:** the definitive log is `/var/log/squid/access.log`
 (`dev`-readable; `TCP_DENIED`/`NONE` = blocked). Run `.devcontainer/bin/doctor`
@@ -185,8 +203,9 @@ for a one-shot readiness check (egress lock, toolchain, qmd, ollama, auth).
 | `.devcontainer` (host) | `/workspaces/Brain/.devcontainer` | **RO** overlay on the rw workspace so the sandbox config + host launcher can't be rewritten from inside (see Safety note) |
 | `~/.claude-sandbox/stage/brain` (host) | `/home/dev/.claude-stage` | **RO** sanitized stage (no secrets) |
 | `~/.cache/qmd` (host) | `/home/dev/.qmd-seed` | **RO** live source: index snapshotted on start, models symlinked |
+| `~/.claude/projects/-…-Brain/memory` (host) | `/home/dev/.claude-memory-seed` | **RO** seed of host project memory; `post-start` mirrors it into the `.claude` volume, and the launcher pushes container edits back **only for interactive sessions** (see the project-memory note below) |
 | `~/Documents/School` (host) | same path | **RO** project source for symlinked coursework |
-| `~/Documents/Personal/Scripts/Projects/{Vision,Watchman}` | same path | **RO** project source |
+| `~/Code/{Vision,Watchman}` (host) | same path | **RO** project source |
 | `~/Documents/Personal/Scans/Finance/The Mad King` | same path | **RO** project source |
 
 ### Project source mounts (symlinks)
@@ -212,12 +231,23 @@ host (and sync via iCloud) immediately. The Claude config is **not** live-shared
 concurrent writes): the container gets its own writable copy seeded from the
 sanitized stage. `brain-claude` now syncs automatically — it pulls the host
 config into the running container on launch, and on **session exit** runs the
-hardened `brain-claude-sync push` for you, so container-side config/memory edits
+hardened `brain-claude-sync push` for you, so container-side config edits
 land back on the host without a manual command. Pushing only after the session
 ends keeps a single writer (no `~/.claude.json` race). It's gated to interactive
 runs (`claude`/`bash`); set `BRAIN_AUTOSYNC=1` to force it for headless agent
 runs, or `BRAIN_AUTOSYNC=0` to disable. `brain-claude-sync push|pull|status`
 remains the manual fallback.
+
+**Project memory** (the `~/.claude/.../memory` files Claude auto-loads as
+instructions) is *not* live-shared either, for a specific security reason: a live
+read-write bind would let a hostile source document processed by a **headless**
+agent plant persistent prompt-injection into your **host** Claude sessions. So the
+host memory is bind-mounted read-only as a seed; `post-start` mirrors it into the
+writable `.claude` volume (the agent reads current memory and writes new memories
+locally); and the launcher (`bin/agent`) pushes container memory back to the host
+**only for interactive operator sessions** (`brain-claude`/`brain-shell`, the same
+`BRAIN_AUTOSYNC` gate), never for headless `brain-wiki` runs. Bidirectional when
+you drive it; closed against the injection path otherwise.
 
 The same launch step also seeds your host **copilot** and **opencode** config
 into the container (one-way, host → container): copilot's `settings.json`

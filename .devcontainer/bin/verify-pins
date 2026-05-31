@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Launch-integrity check. Verifies the agent's executables still match the
+# SHA-256 fingerprints pinned at image build (/usr/local/share/brain/binary-pins.txt).
+# Fail-closed: nonzero exit on any drift, path change, or missing manifest.
+#
+# SCOPE — read this before trusting it as a tamper defense. It reliably DETECTS
+# UNINTENDED UPSTREAM TOOL UPGRADES / DRIFT at launch. It is a genuine anti-tamper
+# control only for the ROOT-owned binaries (node/git/python3, from the tarballs +
+# apt). The four npm CLIs (claude/copilot/opencode/qmd) live in a dev-writable
+# prefix (NPM_CONFIG_PREFIX is chown'd dev so runtime `npm i -g`/safe-chain can
+# write it), so an attacker who already has dev-level code execution could overwrite
+# one in place AFTER this one-shot check and run the tampered binary next spawn —
+# do NOT treat the npm-CLI lines as a hard anti-tamper guarantee. To harden: install
+# those CLIs to a root-owned prefix and give safe-chain its own dev-writable prefix.
+#
+# A non-zero exit after a *legitimate* tool upgrade is expected — rebuild the
+# image so the pins regenerate.
+set -uo pipefail
+
+PINFILE="${BRAIN_PINFILE:-/usr/local/share/brain/binary-pins.txt}"
+quiet=0
+[[ "${1:-}" == "--quiet" ]] && quiet=1
+say() { (( quiet )) || echo "$@"; }
+
+if [[ ! -r "$PINFILE" ]]; then
+  echo "verify-pins: pin manifest missing at $PINFILE — rebuild the image." >&2
+  exit 2
+fi
+
+rc=0
+while IFS=$'\t' read -r name path want; do
+  [[ -z "${name:-}" || "${name#\#}" != "$name" ]] && continue
+  cur="$(type -P "$name" 2>/dev/null || true)"
+  if [[ "$cur" != "$path" ]]; then
+    echo "verify-pins: $name resolves to '${cur:-<none>}' but pinned path is '$path'" >&2
+    rc=1; continue
+  fi
+  got="$(sha256sum "$path" 2>/dev/null | awk '{print $1}')"
+  if [[ "$got" != "$want" ]]; then
+    echo "verify-pins: $name FINGERPRINT DRIFT (pinned ${want:0:12}..., got ${got:0:12}...)" >&2
+    rc=1; continue
+  fi
+  say "  ok  $name  ${want:0:12}..."
+done < "$PINFILE"
+
+if (( rc == 0 )); then
+  say "verify-pins: all pinned binaries match."
+fi
+exit "$rc"

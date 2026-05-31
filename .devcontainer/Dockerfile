@@ -38,13 +38,19 @@ RUN install -d -m 0755 /etc/apt/keyrings \
   && rm -rf /var/lib/apt/lists/*
 
 # --- Node.js (replaces the `node:1` feature) — official static build ---------
+# The tarball is verified against Node's published SHASUMS256.txt before extract
+# (detects a corrupt or tampered download). Residual supply-chain gap: SHASUMS256.txt
+# is fetched over the same HTTPS channel and is not GPG-verified against Node's keys.
 ARG NODE_VERSION=24.15.0
 RUN set -eux; \
     case "$(dpkg --print-architecture)" in amd64) na=x64 ;; arm64) na=arm64 ;; *) exit 1 ;; esac; \
-    curl -fsSLo /tmp/node.tar.xz "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${na}.tar.xz"; \
-    tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --no-same-owner \
+    nf="node-v${NODE_VERSION}-linux-${na}.tar.xz"; \
+    curl -fsSLo "/tmp/${nf}" "https://nodejs.org/dist/v${NODE_VERSION}/${nf}"; \
+    curl -fsSLo /tmp/node-SHASUMS256.txt "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt"; \
+    (cd /tmp && grep " ${nf}\$" node-SHASUMS256.txt | sha256sum -c -); \
+    tar -xJf "/tmp/${nf}" -C /usr/local --strip-components=1 --no-same-owner \
       --exclude='*/CHANGELOG.md' --exclude='*/LICENSE' --exclude='*/README.md'; \
-    rm /tmp/node.tar.xz; \
+    rm "/tmp/${nf}" /tmp/node-SHASUMS256.txt; \
     mkdir -p /usr/local/share/npm-global
 
 # --- Python 3.12 (replaces the `python:1` feature) — python-build-standalone --
@@ -54,32 +60,47 @@ RUN set -eux; \
 # several images build in a row, returning 403 and failing the build (curl exit 22).
 # Asset downloads from the releases/download host don't count against that limit.
 # Bump by editing PY_RELEASE/PY_VERSION (asset = cpython-<ver>+<release>-<arch>...).
+# The asset is verified against the release's combined SHA256SUMS before extract
+# (same residual gap as Node: SHA256SUMS is HTTPS-fetched, not signature-verified).
 ARG PY_RELEASE=20260510
 ARG PY_VERSION=3.12.13
 RUN set -eux; \
     case "$(dpkg --print-architecture)" in arm64) pa=aarch64 ;; amd64) pa=x86_64 ;; *) exit 1 ;; esac; \
-    url="https://github.com/astral-sh/python-build-standalone/releases/download/${PY_RELEASE}/cpython-${PY_VERSION}+${PY_RELEASE}-${pa}-unknown-linux-gnu-install_only.tar.gz"; \
-    echo "python-build-standalone: $url"; \
-    curl -fsSLo /tmp/py.tar.gz "$url"; \
+    asset="cpython-${PY_VERSION}+${PY_RELEASE}-${pa}-unknown-linux-gnu-install_only.tar.gz"; \
+    base="https://github.com/astral-sh/python-build-standalone/releases/download/${PY_RELEASE}"; \
+    echo "python-build-standalone: ${base}/${asset}"; \
+    curl -fsSLo "/tmp/${asset}" "${base}/${asset}"; \
+    curl -fsSLo /tmp/py-SHA256SUMS "${base}/SHA256SUMS"; \
+    (cd /tmp && grep " ${asset}\$" py-SHA256SUMS | sha256sum -c -); \
     mkdir -p /opt/python; \
-    tar -xzf /tmp/py.tar.gz --strip-components=1 -C /opt/python; \
-    rm /tmp/py.tar.gz; \
+    tar -xzf "/tmp/${asset}" --strip-components=1 -C /opt/python; \
+    rm "/tmp/${asset}" /tmp/py-SHA256SUMS; \
     [ -x /opt/python/bin/python ] || ln -s python3 /opt/python/bin/python; \
     /opt/python/bin/python3 --version; /opt/python/bin/python3 -m venv --help >/dev/null
 
-# Global npm prefix -> a dev-owned dir so runtime `npm i -g` (safe-chain) works.
+# Build-time global prefix for the agent CLIs (claude/copilot/opencode/qmd). Kept
+# ROOT-owned (see the install below) so the unprivileged dev user can't overwrite
+# the pinned binaries post-launch (the verify-pins gate fingerprints these paths).
+# Runtime `npm i -g` (safe-chain) uses a SEPARATE dev-owned prefix,
+# /home/dev/.npm-global, set after the install. Root prefix is FIRST on PATH so the
+# CLIs resolve to the pinned copies.
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
-ENV PATH=/usr/local/share/npm-global/bin:/opt/python/bin:/usr/local/bin:$PATH
-RUN printf 'export PATH="/usr/local/share/npm-global/bin:/opt/python/bin:/usr/local/bin:$PATH"\n' \
+ENV PATH=/usr/local/share/npm-global/bin:/home/dev/.npm-global/bin:/opt/python/bin:/usr/local/bin:$PATH
+RUN printf 'export PATH="/usr/local/share/npm-global/bin:/home/dev/.npm-global/bin:/opt/python/bin:/usr/local/bin:$PATH"\n' \
       > /etc/profile.d/00-sandbox-path.sh
 
 # --- Agent CLIs (replaces claude-code feature + the local agent-clis feature) -
 # Build network is unrestricted (no proxy env set here), so npm can fetch headers
-# and the build tools above compile qmd's native modules. Installed to the global
-# prefix as root, then chown'd to dev (so runtime `npm i -g` can also write it).
+# and the build tools above compile qmd's native modules. Installed as root into
+# the root-owned global prefix and deliberately NOT chown'd to dev — so the pinned
+# claude/copilot/opencode/qmd binaries cannot be replaced by the dev user.
 RUN npm install -g @anthropic-ai/claude-code @github/copilot opencode-ai @tobilu/qmd \
-  && claude --version && command -v qmd && command -v copilot && command -v opencode \
-  && chown -R dev:dev /usr/local/share/npm-global
+  && claude --version && command -v qmd && command -v copilot && command -v opencode
+
+# Runtime global installs (safe-chain in post-create) go to a SEPARATE dev-owned
+# prefix, so they never need write access to the pinned root prefix above.
+RUN install -d -o dev -g dev -m 0755 /home/dev/.npm-global
+ENV NPM_CONFIG_PREFIX=/home/dev/.npm-global
 
 # Bake privileged scripts into the image (root-owned, source-only repo copies).
 COPY init-firewall.sh /usr/local/sbin/egress-firewall
@@ -89,6 +110,10 @@ COPY squid.conf       /etc/squid/squid.conf
 COPY allowlist.txt    /etc/squid/allowlist.txt
 RUN chmod 0755 /usr/local/sbin/egress-firewall /usr/local/sbin/brain-perms-fix /usr/local/sbin/brain-entrypoint \
   && chown root:root /usr/local/sbin/egress-firewall /usr/local/sbin/brain-perms-fix /usr/local/sbin/brain-entrypoint
+
+# Launch-integrity check (the binary fingerprint manifest is baked below).
+COPY bin/verify-pins /usr/local/bin/brain-verify-pins
+RUN chmod 0755 /usr/local/bin/brain-verify-pins
 
 # Brain-only egress exception: the host-Ollama hole (host.docker.internal:11434).
 COPY extra-rules.sh /etc/egress/extra-rules.sh
@@ -108,6 +133,20 @@ RUN mkdir -p /etc/squid/certs /var/lib/squid /var/log/squid /var/spool/squid \
 RUN install -d -o dev -g dev -m 0700 /home/dev/.claude /home/dev/.copilot \
  && install -d -o dev -g dev -m 0755 /home/dev/.config /home/dev/.config/gh \
                                      /home/dev/.cache /home/dev/.local /home/dev/.local/share
+
+# Pin the agent's executables: record SHA-256 so brain-verify-pins can
+# fail-closed on drift at launch. A legit tool upgrade changes these — rebuild.
+RUN set -eux; \
+    pinfile=/usr/local/share/brain/binary-pins.txt; \
+    mkdir -p /usr/local/share/brain; \
+    : > "$pinfile"; \
+    for b in node npm claude gh git python3 copilot opencode qmd; do \
+      p="$(command -v "$b")"; \
+      h="$(sha256sum "$p" | awk '{print $1}')"; \
+      printf '%s\t%s\t%s\n' "$b" "$p" "$h" >> "$pinfile"; \
+    done; \
+    chmod 0644 "$pinfile"; \
+    cat "$pinfile"
 
 # Strip ALL setuid/setgid bits image-wide (defense-in-depth).
 RUN find / -xdev -type f -perm /6000 -exec chmod -s {} + 2>/dev/null || true

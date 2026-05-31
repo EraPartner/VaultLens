@@ -33,6 +33,20 @@ for p in scheduled-tasks tasks jobs daemon; do
   rm -rf "/home/dev/.claude/$p" 2>/dev/null || true
 done
 
+# --- Project memory: seed from the host (RO) into the writable volume ----------
+# The host copy is bind-mounted RO at ~/.claude-memory-seed (see compose.yaml).
+# Mirror it into the real per-project memory path so Claude reads current host
+# memory. --delete makes the volume an exact mirror of host on every start, which
+# also wipes anything a headless wiki-agent run might have written (those never get
+# pushed back to the host); only an interactive operator session's NEW edits,
+# layered on this clean seed, are synced back to the host by bin/agent on exit.
+MEM_SEED=/home/dev/.claude-memory-seed
+MEM_DIR=/home/dev/.claude/projects/-workspaces-Brain/memory
+if [[ -d "$MEM_SEED" ]]; then
+  mkdir -p "$MEM_DIR"
+  rsync -a --delete --ignore-errors "$MEM_SEED/" "$MEM_DIR/" 2>/dev/null || true
+fi
+
 # --- qmd: refresh the index snapshot + live-link the models (Option B) --------
 # The host ~/.cache/qmd is bind-mounted READ-ONLY at ~/.qmd-seed; the host is the
 # sole embedder/writer. We never embed in the container (no GPU). Instead:
@@ -80,4 +94,4 @@ EOF
   exit 1
 fi
 
-echo "[post-start] Ready. Run agents with brain-wiki / brain-claude / brain-copilot / brain-opencode."
+echo "[post-start] Ready. Run agents with brain-cos / brain-wiki / brain-claude / brain-copilot / brain-opencode."

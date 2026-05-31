@@ -9,7 +9,8 @@
 #   projects -> + RW hole projects/
 #   project  -> + RW hole projects/<X>/
 # .git + .devcontainer stay RO in every profile. Per-profile isolation = a
-# distinct compose project name; project:<X> share home volumes via BRAIN_VOL_KEY.
+# distinct compose project name AND its own home volumes (both keyed by
+# BRAIN_VOL_KEY); each projects/<X> is isolated from the others.
 # bin/agent (devcontainer) stays as the fallback during the migration.
 set -euo pipefail
 
@@ -66,12 +67,18 @@ fi
 ROOT_HASH="$(printf '%s' "$PROJECT_ROOT" | shasum 2>/dev/null | cut -c1-12 || echo brain)"
 if [[ "$PROFILE" == "project" ]]; then
   PROFILE_LABEL="proj-$(printf '%s' "${WRITE_PATH#projects/}" | tr '/' '-')"
-  export BRAIN_VOL_KEY="${ROOT_HASH}-project"     # all project:<X> share home volumes
 else
   PROFILE_LABEL="$PROFILE"
-  export BRAIN_VOL_KEY="${ROOT_HASH}-${PROFILE}"
 fi
-PROJECT_NAME="brain-${ROOT_HASH}-${PROFILE_LABEL}"   # distinct container per (root,profile)
+# Home volumes are ISOLATED per (root, profile) — including each projects/<X> —
+# so the volume name always matches its owning compose project. Switching projects
+# no longer re-owns another project's shared volumes (which triggered Compose's
+# "volume already exists but was created for project ..." warning + a container
+# recreate that wiped the layer and replayed post-create). Auth is env-forwarded
+# and config re-seeds from the host stage each start, so per-project volumes keep
+# your login/config; only in-container history/state diverges per project.
+export BRAIN_VOL_KEY="${ROOT_HASH}-${PROFILE_LABEL}"
+PROJECT_NAME="brain-${ROOT_HASH}-${PROFILE_LABEL}"   # distinct container + volumes per (root,profile)
 
 # --- 1) Compose file list + generated RW-hole override ------------------------
 COMPOSE_FILES=(-f "$DC/compose.yaml")
@@ -103,33 +110,16 @@ if [[ -n "${BRAIN_DRYRUN:-}" ]]; then
 fi
 
 # --- 2) Stage a sanitized ~/.claude (+ copilot/opencode config) --------------
-stage_claude_config() {
-  local src dst item jf f ocsrc
-  src="$(cd "$HOME/.claude" 2>/dev/null && pwd -P || true)"
-  dst="$HOME/.claude-sandbox/stage/brain"
-  rm -rf "$dst/dot-claude"; mkdir -p "$dst/dot-claude"
-  if [[ -n "$src" && -d "$src" ]]; then
-    for item in settings.json keybindings.json CLAUDE.md agents rules commands statusline status-line.sh plugins; do
-      [[ -e "$src/$item" ]] && cp -a "$src/$item" "$dst/dot-claude/" 2>/dev/null || true
-    done
-    find "$dst/dot-claude/statusline" "$dst/dot-claude/plugins" -name .git -type d -prune -exec rm -rf {} + 2>/dev/null || true
-    for jf in known_marketplaces.json installed_plugins.json; do
-      f="$dst/dot-claude/plugins/$jf"
-      [[ -f "$f" ]] && sed -i '' -e "s#$HOME/.claude#/home/dev/.claude#g" -e "s#$src#/home/dev/.claude#g" "$f" 2>/dev/null || true
-    done
-    find "$dst/dot-claude" -name '.DS_Store' -delete 2>/dev/null || true
-    # The PreToolUse safety guard reaches the sandbox out-of-band via the
-    # root-owned /etc/claude-code/managed-settings.json policy (see compose.yaml).
-    # Strip hooks from the staged USER settings so the host's host-path hook
-    # entry can't dangle here or duplicate the managed one. Mirrors the sync pull.
-    if [[ -f "$dst/dot-claude/settings.json" ]] && command -v jq >/dev/null 2>&1; then
-      local hjt; hjt="$(mktemp)"
-      jq 'del(.hooks)' "$dst/dot-claude/settings.json" >"$hjt" 2>/dev/null && mv "$hjt" "$dst/dot-claude/settings.json" || rm -f "$hjt"
-    fi
-  fi
-  [[ -f "$HOME/.claude.json" ]] && cp "$HOME/.claude.json" "$dst/claude.json" 2>/dev/null || true
-  # copilot settings (host plugin refs stripped); opencode global config (no
-  # node_modules / .git / npm plugin field).
+# Shared host-side helpers (vendored by devcontainer-egress/sync.sh).
+LIB="$DC/launcher-common.sh"
+[[ -f "$LIB" ]] || { echo "agent-compose: missing $LIB (run devcontainer-egress/sync.sh)." >&2; exit 1; }
+# shellcheck source=/dev/null
+source "$LIB"
+sandbox_stage_claude_config brain
+# Brain extras the shared helper doesn't cover: copilot settings (host plugin
+# refs stripped) and the opencode global config (no node_modules/.git/npm field).
+stage_brain_extra_config() {
+  local dst="$HOME/.claude-sandbox/stage/brain" ocsrc t
   rm -rf "$dst/copilot"; mkdir -p "$dst/copilot"
   if [[ -f "$HOME/.copilot/settings.json" ]] && command -v jq >/dev/null 2>&1; then
     jq 'del(.installed_plugins, .installedPlugins, .enabledPlugins)' \
@@ -148,7 +138,7 @@ stage_claude_config() {
     find "$dst/opencode" -name '.DS_Store' -delete 2>/dev/null || true
   fi
 }
-stage_claude_config
+stage_brain_extra_config
 
 # --- 3) Build + start (idempotent) -------------------------------------------
 SVC=app
@@ -184,22 +174,19 @@ if command -v security >/dev/null 2>&1; then
   fi
 fi
 EXEC_ENV=()
-if command -v security >/dev/null 2>&1; then
-  tok="$(kc 'brain-claude-code-token')"
-  [[ -n "$tok" ]] && EXEC_ENV+=(-e "CLAUDE_CODE_OAUTH_TOKEN=$tok")
-fi
-have_claude=0
-for a in ${EXEC_ENV[@]+"${EXEC_ENV[@]}"}; do [[ "$a" == "CLAUDE_CODE_OAUTH_TOKEN="* ]] && have_claude=1; done
-if (( ! have_claude )); then
-  for var in CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; do
-    val="${!var:-}"; [[ -n "$val" ]] && EXEC_ENV+=(-e "${var}=${val}")
-  done
-fi
+sandbox_forward_llm_creds brain-claude-code-token
 copilot_acct="${BRAIN_GH_ACCOUNT:-talicaddy}"
 if command -v gh >/dev/null 2>&1; then
   copilot_tok="$(gh auth token --user "$copilot_acct" 2>/dev/null || true)"
-  [[ -n "$copilot_tok" ]] && EXEC_ENV+=(-e "COPILOT_GITHUB_TOKEN=$copilot_tok") \
-    || echo "agent-compose: no gh token for Copilot account '$copilot_acct' — copilot unauthenticated (claude/opencode unaffected)." >&2
+  if [[ -n "$copilot_tok" ]]; then
+    # Name-only -e so the token VALUE isn't in the `docker compose exec` argv
+    # (ps/proc); docker forwards it from this launcher's exported env instead.
+    # NOTE: this is still a full gh OAuth token — scope it down to a Copilot-only
+    # credential (see README) to honour the "no push credential" guarantee.
+    export COPILOT_GITHUB_TOKEN="$copilot_tok"; EXEC_ENV+=(-e COPILOT_GITHUB_TOKEN)
+  else
+    echo "agent-compose: no gh token for Copilot account '$copilot_acct' — copilot unauthenticated (claude/opencode unaffected)." >&2
+  fi
 fi
 
 # --- 6) Resolve the in-container working dir from the host PWD ----------------
@@ -209,26 +196,55 @@ if [[ -z "${BRAIN_NO_CHDIR:-}" ]]; then
   [[ "$rel" != "$HOST_PWD" && -n "$rel" ]] && CONTAINER_CWD="$CONTAINER_WS/${rel#/}"
 fi
 
-# --- 7) Auto config-sync push on exit (pull-on-launch done by post-start) -----
+# --- 7) Decide whether to auto config-sync on exit. The EXIT trap is installed
+# BELOW, after the verify-pins gate, so an aborted launch (pin drift) doesn't fire
+# it and push a never-used container ~/.claude back to the host.
 AUTOSYNC="${BRAIN_AUTOSYNC:-}"
 if [[ -z "$AUTOSYNC" ]]; then
   case "${1:-claude}" in claude|bash) AUTOSYNC=1 ;; *) AUTOSYNC=0 ;; esac
 fi
-_autosync_done=0
-autosync_push() {
-  if [[ "$_autosync_done" == 1 ]]; then return 0; fi
-  _autosync_done=1
-  if [[ "$AUTOSYNC" != 1 || -z "$CID" ]]; then return 0; fi
-  command -v fish >/dev/null 2>&1 || return 0
-  fish -c "brain-claude-sync push $CID" \
-    || echo "agent-compose: auto config-sync push failed — run 'brain-claude-sync push' to retry." >&2
-}
-trap autosync_push EXIT
+
+# --- Launch-integrity gate: refuse to start if a pinned binary drifted ---------
+# Tolerant: warns (doesn't abort) until the image is rebuilt with the pins baked,
+# so this lands without breaking a running container; once rebuilt it enforces.
+if "${COMPOSE[@]}" exec -u dev -T "$SVC" bash -lc 'command -v brain-verify-pins >/dev/null 2>&1'; then
+  # Run in a CLEAN shell: safe-chain (BASH_ENV) wraps npm/pip as shell functions,
+  # which shadow the real binary paths and would false-trip the gate.
+  if ! "${COMPOSE[@]}" exec -u dev -T -e BASH_ENV= "$SVC" brain-verify-pins --quiet; then
+    echo "agent-compose: ABORT — binary fingerprint drift (see above)." >&2
+    echo "  If you intentionally upgraded a tool, rebuild to re-pin: ${COMPOSE[*]} build --no-cache $SVC" >&2
+    exit 1
+  fi
+else
+  echo "agent-compose: verify-pins not baked yet — rebuild to enable launch-integrity checks: ${COMPOSE[*]} build $SVC" >&2
+fi
+
+# Install the autosync EXIT trap only now that the gate has passed.
+sandbox_install_autosync_trap brain "$CID" "$AUTOSYNC"
 
 set +e
 "${COMPOSE[@]}" exec -u dev ${EXEC_ENV[@]+"${EXEC_ENV[@]}"} \
   -e "BRAIN_CWD=$CONTAINER_CWD" "$SVC" \
   bash -c 'cd "$BRAIN_CWD" 2>/dev/null || true; exec "$@"' bash "$@"
 _rc=$?
+
+# --- Push project memory back to the host (bidirectional, gated) --------------
+# Only for interactive operator sessions (AUTOSYNC=1 ⇒ first arg claude|bash).
+# Headless wiki-agent runs (AUTOSYNC=0) never write host memory, so a hostile
+# source doc processed in the sandbox cannot plant persistent prompt-injection
+# into the host's auto-loaded instruction context. Additive (no --delete): the
+# host stays the durable store; the session's new/edited memories merge in. The
+# host memory key is the encoded canonical vault path (matches compose.yaml).
+if [[ "${AUTOSYNC:-0}" == 1 && -n "${CID:-}" ]]; then
+  host_mem="$HOME/.claude/projects/$(printf '%s' "$PROJECT_ROOT" | sed 's/[^a-zA-Z0-9]/-/g')/memory"
+  if mkdir -p "$host_mem" 2>/dev/null; then
+    if "${COMPOSE[@]}" exec -u dev -T "$SVC" \
+         bash -lc 'd=/home/dev/.claude/projects/-workspaces-Brain/memory; [[ -d "$d" ]] && cd "$d" && tar -cf - . 2>/dev/null' 2>/dev/null \
+       | tar -C "$host_mem" -xf - 2>/dev/null; then
+      echo "agent-compose: project memory synced back to the host (interactive session)." >&2
+    fi
+  fi
+fi
+
 set -e
 exit "$_rc"
