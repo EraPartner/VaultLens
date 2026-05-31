@@ -8,8 +8,9 @@
 #   - BRAIN_WS_RO=true  (scoped)  -> workspace read-ONLY; the launcher adds a
 #     single RW "hole" via a generated override (compose.hole.yaml) for
 #     author/raw/projects/project:<X>. reader gets no hole.
-#   - BRAIN_VOL_KEY keys the home volumes so project:<X> profiles share one set
-#     and the others are isolated (matches the devcontainer's localEnv:BRAIN_VOL_KEY).
+#   - BRAIN_VOL_KEY keys the home volumes per (root, profile) so every profile —
+#     including each projects/<X> — gets its own isolated set (the volume name then
+#     always matches its owning compose project, so no cross-project re-own churn).
 #   - per-profile isolation = a distinct compose project name (`-p brain-<profile>`).
 #
 # PID1 entrypoint runs as root (iptables + squid + ollama hole); sessions use
@@ -23,7 +24,7 @@ services:
       dockerfile: Dockerfile
     init: true
     cap_drop: [ALL]
-    cap_add: [NET_ADMIN, CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, SETPCAP]
+    cap_add: [NET_ADMIN, CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID]
     security_opt:
       - no-new-privileges:true
     mem_limit: 6g
@@ -65,7 +66,7 @@ services:
         source: .
         target: /workspaces/Brain/.devcontainer
         read_only: true
-      # Home volumes, keyed by BRAIN_VOL_KEY (project:<X> share; others isolated).
+      # Home volumes, keyed by BRAIN_VOL_KEY (isolated per root+profile, incl. each project).
       - type: volume
         source: claude
         target: /home/dev/.claude
@@ -102,6 +103,21 @@ services:
         source: ${HOME}/.claude/hooks/managed-settings.json
         target: /etc/claude-code/managed-settings.json
         read_only: true
+      # Project memory: the host copy is bind-mounted READ-ONLY as a SEED. post-start
+      # snapshots it into the writable ~/.claude volume at the real per-project memory
+      # path, so in-container Claude READS current host memory and WRITES new memories
+      # to its own volume — NOT a live bind. The launcher (bin/agent) pushes the
+      # container's memory back to the host ONLY for interactive operator sessions
+      # (brain-claude / brain-shell); headless wiki-agent runs never write host memory,
+      # so a hostile source doc cannot plant persistent prompt-injection into the HOST
+      # instruction context that every host Claude session auto-loads. Bidirectional,
+      # but the write-back is gated to operator-driven sessions. ONLY memory/ is shared
+      # (never sessions/tool-results). If the vault path moves, update SOURCE (it is the
+      # encoded host cwd; bin/agent derives the same encoding for the push-back target).
+      - type: bind
+        source: ${HOME}/.claude/projects/-Users-computer-Library-Mobile-Documents-iCloud-md-obsidian-Documents-Brain/memory
+        target: /home/dev/.claude-memory-seed
+        read_only: true
       # qmd seed: host cache (models + index) read-only; post-start snapshots it.
       - type: bind
         source: ${HOME}/.cache/qmd
@@ -113,13 +129,16 @@ services:
         source: ${HOME}/Documents/School
         target: ${HOME}/Documents/School
         read_only: true
+      # Relocated 2026-05-24: Vision/Watchman moved to ~/Code; the in-vault
+      # projects/{vision,watchman}/ symlinks now point at ~/Code/{Vision,Watchman},
+      # so mount THOSE at identical host paths or the symlinks dead-link in-container.
       - type: bind
-        source: ${HOME}/Documents/Personal/Scripts/Projects/Vision
-        target: ${HOME}/Documents/Personal/Scripts/Projects/Vision
+        source: ${HOME}/Code/Vision
+        target: ${HOME}/Code/Vision
         read_only: true
       - type: bind
-        source: ${HOME}/Documents/Personal/Scripts/Projects/Watchman
-        target: ${HOME}/Documents/Personal/Scripts/Projects/Watchman
+        source: ${HOME}/Code/Watchman
+        target: ${HOME}/Code/Watchman
         read_only: true
       - type: bind
         source: ${HOME}/Documents/Personal/Scans/Finance/The Mad King
