@@ -10,7 +10,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 
@@ -90,6 +89,7 @@ AGENT_FILES = {
     "contradict": "wiki-contradiction-detector.agent.md",
     "search": "wiki-search.agent.md",
     "enhance": "wiki-enhancer.agent.md",
+    "cos": "wiki-cos.agent.md",
 }
 
 # Symlink stems in .opencode/agents/ are just the agent file stripped of `.agent.md`.
@@ -116,7 +116,12 @@ AGENT_PERMISSIONS: dict[str, dict] = {
     "search": {"shell": True, "write": False, "writable_dirs": []},
     "contradict": {"shell": True, "write": False, "writable_dirs": []},
     "ingest": {"shell": True, "write": True, "writable_dirs": ["wiki"]},
-    "enhance": {"shell": True, "write": True, "writable_dirs": ["wiki"]},
+    "enhance": {
+        "shell": True,
+        "write": True,
+        "writable_dirs": ["wiki", "raw/sources-text"],
+    },
+    "cos": {"shell": True, "write": False, "writable_dirs": []},
 }
 
 # Shell commands granted to any agent with shell access. Strictly read-only;
@@ -143,7 +148,13 @@ READ_ONLY_SHELL_COMMANDS = (
 )
 
 # Shell commands granted only to write-capable agents. Filesystem mutators
-# (mkdir/touch) and text editors used in scripted edits (sed/awk in-place).
+# (mkdir/touch/mv/cp) and text editors used in scripted edits (sed/awk in-place).
+# NOTE: sed/awk are full scripting engines whose blast radius is bounded only by
+# the container MOUNT profile, NOT this allowlist (a `sed -i` can rewrite any
+# writable path, not just wiki/). They are safe only because write agents run
+# under the author/scoped profile (wiki/ RW, everything else RO). Never run a
+# write agent under the master profile (whole workspace RW), or sed/awk could
+# rewrite raw/ or projects/ despite the agent's prompt forbidding it.
 WRITE_SHELL_COMMANDS = ("touch", "mkdir", "mv", "cp", "sed", "awk")
 
 
@@ -202,6 +213,128 @@ STRATEGY_HINTS = {
 
 ALTERNATE_CYCLE = ["coverage", "source-gap", "random", "stub"]
 
+# ---------------------------------------------------------------------------
+# Chief of Staff — live context gathering
+# ---------------------------------------------------------------------------
+
+
+def _gather_cos_context(mode: str, project_filter: str | None) -> str:
+    """Gather live project state and inject it as context for the CoS agent.
+
+    Reads project TODOs, wiki log tail, and inbox listing from the vault.
+    Runs inside the container where ROOT is the live workspace.
+    """
+    today = _dt.date.today()
+    parts: list[str] = [
+        "## Live context",
+        f"Date: {today.strftime('%Y-%m-%d (%A)')}",
+        "",
+    ]
+
+    # --- Operator profile (who we're advising) -------------------------------
+    # Inject wiki/entities/user-background.md so the CoS calibrates its brief to
+    # the operator's background, goals, and working preferences.
+    operator_page = ROOT / "wiki" / "entities" / "user-background.md"
+    if operator_page.exists():
+        try:
+            parts.append("## Operator profile (wiki/entities/user-background.md)")
+            parts.append(operator_page.read_text(encoding="utf-8"))
+            parts.append("")
+        except OSError:
+            pass
+
+    # --- Project task lists --------------------------------------------------
+    projects_root = ROOT / "projects"
+    project_dirs: list[Path] = []
+    if projects_root.is_dir():
+        project_dirs = sorted(
+            [
+                d
+                for d in projects_root.iterdir()
+                if d.is_dir() and not d.name.startswith(".")
+            ],
+            key=lambda d: d.name,
+        )
+    if project_filter:
+        project_dirs = [d for d in project_dirs if d.name == project_filter]
+
+    active_projects: list[str] = []
+    todo_blocks: list[str] = []
+    for proj_dir in project_dirs:
+        todo_file = proj_dir / "TODO.md"
+        if not todo_file.exists():
+            continue
+        try:
+            content = todo_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        open_items = [ln for ln in content.splitlines() if "- [ ]" in ln]
+        if not open_items:
+            continue
+        active_projects.append(proj_dir.name)
+        todo_blocks.append(f"\n### {proj_dir.name} ({len(open_items)} open tasks)")
+        for item in open_items[:40]:
+            todo_blocks.append(item)
+        if len(open_items) > 40:
+            todo_blocks.append(
+                f"  ... ({len(open_items) - 40} more open tasks not shown)"
+            )
+
+    parts.append(
+        f"Active projects with open tasks: {', '.join(active_projects) or '(none found)'}"
+    )
+    parts.append("")
+    parts.append("## Open tasks by project")
+    parts.extend(todo_blocks)
+
+    # --- Wiki log tail (recent activity) -------------------------------------
+    if mode in ("brief", "surface", "status"):
+        log_file = ROOT / "wiki" / "log.md"
+        if log_file.exists():
+            try:
+                log_lines = log_file.read_text(encoding="utf-8").splitlines()
+                recent = log_lines[-60:]
+                parts.append("\n## Recent wiki activity (last entries in wiki/log.md)")
+                parts.extend(recent)
+            except OSError:
+                parts.append("\n## Recent wiki activity — (could not read wiki/log.md)")
+
+    # --- Inbox listing -------------------------------------------------------
+    inbox_dir = ROOT / "raw" / "inbox"
+    if inbox_dir.is_dir():
+        # Stat each file defensively: on synced storage (iCloud) a file can vanish
+        # between iterdir() and stat(), which must not crash the brief.
+        inbox_entries: list[tuple[Path, os.stat_result]] = []
+        for f in inbox_dir.iterdir():
+            if f.name.startswith("."):
+                continue
+            try:
+                inbox_entries.append((f, f.stat()))
+            except OSError:
+                continue
+        inbox_entries.sort(key=lambda fs: fs[1].st_mtime, reverse=True)
+        parts.append(f"\n## Inbox: raw/inbox/ ({len(inbox_entries)} files)")
+        for f, st in inbox_entries:
+            size = st.st_size
+            size_str = f"{size // 1024}KB" if size >= 1024 else f"{size}B"
+            parts.append(f"- {f.name} ({size_str})")
+
+        if mode == "inbox" and inbox_entries:
+            parts.append("\n## Inbox file previews")
+            for f, _st in inbox_entries[:8]:
+                if f.suffix.lower() in (".md", ".txt"):
+                    try:
+                        preview = f.read_text(encoding="utf-8").splitlines()[:30]
+                        parts.append(f"\n### {f.name}")
+                        parts.extend(preview)
+                        parts.append("...")
+                    except OSError:
+                        parts.append(f"\n### {f.name} (could not read)")
+    else:
+        parts.append("\n## Inbox: raw/inbox/ — directory not found")
+
+    return "\n".join(parts)
+
 
 def _resolve_strategy(strategy: str | None, iteration_index: int) -> str | None:
     """Resolve the per-iteration strategy.
@@ -228,7 +361,7 @@ EFFORT_MAP = {
         "ollama": [],
         "copilot": ["--effort", "high"],
     },
-    "max": {
+    "xhigh": {
         "opencode": ["--variant", "xhigh"],
         "claude": [],
         "ollama": [],
@@ -371,6 +504,21 @@ Examples:
         help="Print the full command without executing",
     )
 
+    # CoS-specific args
+    parser.add_argument(
+        "--mode",
+        choices=["brief", "status", "surface", "inbox"],
+        default="brief",
+        help=(
+            "CoS mode: 'brief' = daily brief (default), 'status' = project status report, "
+            "'surface' = commitment surface, 'inbox' = inbox triage."
+        ),
+    )
+    parser.add_argument(
+        "--project",
+        help="CoS status/surface mode: scope to this project slug (folder name under projects/).",
+    )
+
     return parser
 
 
@@ -397,10 +545,28 @@ def build_prompt(
     custom: str,
     cli: str = "",
     strategy: str | None = None,
+    mode: str = "brief",
+    project: str | None = None,
 ) -> str:
     """Build the task prompt - simple description, full instructions come from .agent.md via system prompt."""
     if custom:
         return custom
+
+    # Chief of Staff: mode-specific prompts (same across all CLIs — no file attachments)
+    if agent == "cos":
+        cos_prompts = {
+            "brief": "Review the live context in your system prompt and produce a full chief-of-staff daily brief.",
+            "status": (
+                f"Produce a status report for project: {project or page or '(no project specified — infer from context)'}. "
+                "Read the project's TODO.md and project.md for full context."
+            ),
+            "surface": "Surface all active commitments and at-risk items across all projects in the live context.",
+            "inbox": (
+                "Triage each file in raw/inbox/ from the live context. "
+                "Read file previews as needed, then produce a routing table and the exact commands to execute."
+            ),
+        }
+        return cos_prompts.get(mode, cos_prompts["brief"])
 
     # opencode attaches files via -f, so reference "the attached file" instead
     # of embedding the path (opencode interprets path-like strings as filenames).
@@ -448,29 +614,23 @@ def build_prompt(
     base = prompts.get(agent, "Analyze and report.")
     if agent == "enhance" and strategy and strategy in STRATEGY_HINTS:
         base = f"{base}\n\n{STRATEGY_HINTS[strategy]}"
+    if agent == "contradict" and page:
+        # Fold the optional scope into the prompt. (It used to be emitted as a
+        # bogus `--domain <page>` in extra_args, which no CLI understands.)
+        base = f"{base}\n\nScope: prioritise contradictions involving the page or domain '{page}'."
     return base
 
 
-def _prepare_system_prompt(agent_file: Path, system_addon: str) -> tuple[str, Path]:
-    """Build system prompt text and return (text, file_path).
+def _prepare_system_prompt(agent_file: Path, system_addon: str) -> str:
+    """Return the system-prompt text: the agent instructions plus the addon (if any).
 
-    If there is no addon, returns the original agent file path.
-    Otherwise writes a temp file combining agent instructions + addon.
+    Every CLI consumes this as a string (claude --system-prompt, ollama --system,
+    copilot folds it into the prompt text), so no on-disk temp file is needed.
     """
     agent_instructions = agent_file.read_text(encoding="utf-8")
     if not system_addon:
-        return agent_instructions, agent_file
-
-    combined = f"{agent_instructions}\n\nAdditional context:\n{system_addon}"
-    tmp = tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".agent.md",
-        delete=False,
-        encoding="utf-8",
-    )
-    tmp.write(combined)
-    tmp.close()
-    return combined, Path(tmp.name)
+        return agent_instructions
+    return f"{agent_instructions}\n\nAdditional context:\n{system_addon}"
 
 
 def invoke_agent(
@@ -491,7 +651,6 @@ def invoke_agent(
         return 1
 
     effort_flags = EFFORT_MAP.get(effort, {}).get(cli, [])
-    system_file = agent_file  # may be replaced by temp file for claude/ollama
 
     # Build command based on CLI
     if cli == "opencode":
@@ -513,7 +672,7 @@ def invoke_agent(
             cmd.append(prompt)
 
     elif cli == "copilot":
-        system_text, system_file = _prepare_system_prompt(agent_file, system_addon)
+        system_text = _prepare_system_prompt(agent_file, system_addon)
         full_prompt = f"{system_text}\n\n---\n\nTask: {prompt}"
         if extra_args:
             paths = "\n".join(f"- {p}" for p in extra_args)
@@ -555,7 +714,7 @@ def invoke_agent(
             cmd.extend(["--add-dir", str(ROOT / d)])
 
     elif cli in ("claude", "ollama"):
-        system_text, system_file = _prepare_system_prompt(agent_file, system_addon)
+        system_text = _prepare_system_prompt(agent_file, system_addon)
         if cli == "claude":
             # claude -p --model MODEL --system-prompt "text" "task"
             perms = _agent_permissions(agent)
@@ -592,8 +751,17 @@ def invoke_agent(
             cmd.extend(
                 ["--permission-mode", "acceptEdits" if perms["write"] else "default"]
             )
-            cmd.extend(extra_args)
-            cmd.append(prompt)
+            # extra_args are file paths (built for opencode's -f attachment
+            # model). claude has no attachment flag and keeps only the FIRST
+            # positional, silently dropping the rest — so passing paths as
+            # positionals would discard the real instruction. Fold them into the
+            # prompt as a "Files to read:" block (claude opens them via Read),
+            # the same shape the copilot branch uses.
+            claude_prompt = prompt
+            if extra_args:
+                paths = "\n".join(f"- {p}" for p in extra_args)
+                claude_prompt = f"{prompt}\n\nFiles to read:\n{paths}"
+            cmd.append(claude_prompt)
         else:
             # ollama run MODEL --system "text" "prompt"
             cmd = ["ollama", "run"]
@@ -623,12 +791,14 @@ def invoke_agent(
             print(f"  argv[{i}]: {part}")
         return 0
 
-    result = subprocess.run(cmd)
-
-    # Clean up temp file if one was created for claude/ollama/copilot
-    if cli in ("claude", "ollama", "copilot") and system_file != agent_file:
-        system_file.unlink(missing_ok=True)
-
+    try:
+        result = subprocess.run(cmd)
+    except OSError as exc:
+        # e.g. the CLI binary was removed after validate_cli() passed (TOCTOU),
+        # or exec failed. Return a non-zero rc so the --forever loop's error
+        # handling can catch it instead of an unhandled traceback aborting it.
+        print(f"Error: failed to launch {cli}: {exc}")
+        return 127
     return result.returncode
 
 
@@ -667,13 +837,61 @@ def _auto_log_ingest(source_path: str) -> None:
         print(f"Warning: could not write ingest log ({exc}); skipping.")
 
 
+def _promote_inbox_pdf(source_path: str) -> str:
+    """Promote an ingested inbox PDF to raw/sources/; return its canonical path.
+
+    The ingest agent runs sandboxed (only wiki/ is writable), so the launcher
+    performs the move after a successful run. Returns the (possibly unchanged)
+    path the rest of the flow should treat as canonical for logging.
+    """
+    if not source_path.lower().endswith(".pdf"):
+        return source_path
+
+    pdf_abs = (
+        (ROOT / source_path).resolve()
+        if not Path(source_path).is_absolute()
+        else Path(source_path).resolve()
+    )
+    if not pdf_abs.exists():
+        return source_path
+
+    if TOOLS_DIR not in [Path(p) for p in sys.path]:
+        sys.path.insert(0, str(TOOLS_DIR))
+    try:
+        from wiki import promote_inbox_pdf  # type: ignore[import]
+    except ImportError as exc:
+        print(f"Warning: could not import wiki.promote_inbox_pdf: {exc}")
+        return source_path
+
+    try:
+        dest = promote_inbox_pdf(pdf_abs)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Warning: could not promote {pdf_abs.name} to raw/sources/: {exc}")
+        return source_path
+
+    if dest is None:
+        return source_path
+    rel = dest.relative_to(ROOT).as_posix()
+    print(f"Promoted ingested PDF: raw/inbox/{dest.name} -> {rel}")
+    return rel
+
+
 def run_agent(args, strategy: str | None = None) -> int:
     """Run the specified agent."""
     # Build prompt
     page = args.page or ""
     source = args.source or ""
+    cos_mode = getattr(args, "mode", "brief")
+    cos_project = getattr(args, "project", None)
     prompt = build_prompt(
-        args.agent, page, source, args.prompt or "", args.cli, strategy=strategy
+        args.agent,
+        page,
+        source,
+        args.prompt or "",
+        args.cli,
+        strategy=strategy,
+        mode=cos_mode,
+        project=cos_project,
     )
 
     # Get model
@@ -682,7 +900,7 @@ def run_agent(args, strategy: str | None = None) -> int:
 
     # Auto-upgrade effort for codex models (deep reasoning by default)
     if "codex" in model and effort == "medium":
-        effort = "max"
+        effort = "xhigh"
 
     # Build extra args based on agent — resolve to absolute paths for -f flags
     extra_args = []
@@ -693,10 +911,11 @@ def run_agent(args, strategy: str | None = None) -> int:
     elif args.agent == "ingest" and args.source:
         # PDFs get pre-extracted to raw/sources-text/*.md so the model can read them.
         extra_args = [_resolve_pdf_to_markdown(args.source)]
-    elif args.agent == "contradict" and args.page:
-        extra_args = ["--domain", args.page]
     elif args.agent == "search":
-        extra_args = [args.source or args.page or ""]
+        # The query IS the prompt; only attach a file when a concrete path/topic
+        # was given. Never emit an empty -f/positional.
+        query = args.source or args.page or ""
+        extra_args = [query] if query else []
     elif args.agent == "enhance":
         # Attach whatever is relevant: target wiki page(s) + extracted source markdown.
         targets = []
@@ -719,19 +938,33 @@ def run_agent(args, strategy: str | None = None) -> int:
         print(f"Available CLIs: {', '.join(CLI_OPTIONS.keys())}")
         return 1
 
+    # CoS: gather live vault context and inject it into the system prompt.
+    system_addon = args.system or ""
+    if args.agent == "cos":
+        print(
+            f"[cos] Gathering live context (mode={cos_mode}"
+            + (f", project={cos_project}" if cos_project else "")
+            + ")..."
+        )
+        cos_ctx = _gather_cos_context(cos_mode, cos_project)
+        system_addon = (system_addon + "\n\n" + cos_ctx).strip()
+
     rc = invoke_agent(
         args.agent,
         args.cli,
         model,
         effort,
         prompt,
-        args.system or "",
+        system_addon,
         extra_args,
         debug=args.debug,
     )
 
     if args.agent == "ingest" and rc == 0 and args.source:
-        _auto_log_ingest(args.source)
+        # Promote the PDF out of raw/inbox/ into raw/sources/ now that it is in
+        # the wiki, then log under its canonical (post-move) path.
+        canonical_source = _promote_inbox_pdf(args.source)
+        _auto_log_ingest(canonical_source)
 
     return rc
 
@@ -795,6 +1028,31 @@ def main(argv=None) -> int:
             print(f"Error: --{required} required for {args.agent}")
             parser.print_help()
             return 1
+
+    if args.agent == "search" and not (args.source or args.page):
+        print("Error: search requires --source or --page (the query text).")
+        parser.print_help()
+        return 1
+
+    if (
+        args.agent == "cos"
+        and args.mode == "status"
+        and not args.project
+        and not args.page
+    ):
+        print(
+            "Warning: --mode status works best with --project <slug>. Continuing without a project filter."
+        )
+
+    if args.agent == "cos" and args.mode == "inbox":
+        # Inbox mode reads the vault — must be in reader or broader profile; confirm.
+        inbox_dir = ROOT / "raw" / "inbox"
+        count = (
+            len([f for f in inbox_dir.iterdir() if not f.name.startswith(".")])
+            if inbox_dir.is_dir()
+            else 0
+        )
+        print(f"[cos] Inbox mode: {count} files in raw/inbox/")
 
     # --coverage is a shorthand for --strategy coverage
     if args.agent == "enhance" and args.coverage and not args.strategy:
@@ -860,6 +1118,25 @@ def main(argv=None) -> int:
     strategy_counts: dict[str, int] = {}
     iter_count = 0
 
+    # No-op watchdog for long enhance loops: if wiki/log.md does not change for
+    # NO_PROGRESS_LIMIT consecutive successful iterations, the loop is doing no
+    # logged work (e.g. a CLI exiting 0 without enhancing) and would burn budget
+    # indefinitely, since the consecutive-FAILURE guard never trips on rc==0.
+    _log_md = ROOT / "wiki" / "log.md"
+
+    def _log_sig():
+        try:
+            st = _log_md.stat()
+            return (st.st_size, st.st_mtime)
+        except OSError:
+            return None
+
+    _prev_log_sig = _log_sig()
+    no_progress = 0
+    NO_PROGRESS_LIMIT = (
+        10 if (is_enhance and (args.forever or args.iterations > 1)) else 0
+    )
+
     for i in iter_source:
         if _STOP_REQUESTED:
             break
@@ -878,6 +1155,19 @@ def main(argv=None) -> int:
         if last_rc == 0:
             successes += 1
             consecutive_failures = 0
+            if NO_PROGRESS_LIMIT:
+                _cur_sig = _log_sig()
+                if _cur_sig is not None and _cur_sig == _prev_log_sig:
+                    no_progress += 1
+                    if no_progress >= NO_PROGRESS_LIMIT:
+                        print(
+                            f"[wiki-agent] {_ts()} {NO_PROGRESS_LIMIT} consecutive "
+                            "iterations made no change to wiki/log.md (no-op loop); stopping."
+                        )
+                        break
+                else:
+                    no_progress = 0
+                    _prev_log_sig = _cur_sig
         else:
             failures += 1
             consecutive_failures += 1

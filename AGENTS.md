@@ -23,6 +23,15 @@ Maintain a durable wiki in `wiki/` from immutable source material in `raw/`.
    `## Working inside a project`.
 4. **Schema** (`AGENTS.md`) — this file.
 
+## Operator profile
+
+If `wiki/entities/user-background.md` exists (referenced vault-wide as `[[user-background]]`), it is the
+profile of the person this Brain serves: background, current focus, goals, and how they want agents to
+work. Any agent producing advice, a brief, a status report, or project guidance for the operator should
+read it first (it is qmd-indexed and surfaces on a `qmd search "operator profile"`) to calibrate tone and
+priorities. It is gitignored (personal), so it ships only in this operator's vault, not the public
+template. The Chief of Staff launcher injects it automatically into its live context.
+
 ## Directory contract
 
 - `raw/sources/` immutable source docs · `raw/assets/` images/attachments · `raw/inbox/` new files awaiting ingest
@@ -58,8 +67,9 @@ PDFs, `python3 tools/wiki.py preprocess` pre-extracts `raw/sources/*.pdf` → `r
 
 ## Tool permissions
 
-Reads are auto-approved; writes require explicit confirmation. Enforced at the tool level for Claude
-Code and opencode; a standing instruction for all other models.
+Reads are auto-approved; writes require explicit confirmation. The per-command split below is enforced at
+the tool level for Claude Code and Copilot; opencode enforces `bash` per-agent only (all-or-nothing — see
+the note under the table); for all other models it is a standing instruction.
 
 | Operation | Policy |
 |---|---|
@@ -68,9 +78,9 @@ Code and opencode; a standing instruction for all other models.
 | Write shell (`touch`, `mkdir`, `mv`, `cp`, `sed`, `awk`) | auto-approved for write-access agents only |
 | Write or edit files | requires confirmation |
 
-- **Claude Code** — `.claude/settings.json` `allowedTools`.
-- **opencode** — `opencode.json` `permission: { read, bash, write, edit }`.
-- **Copilot CLI** — reads `AGENTS.md` from repo root + CWD; `qmd` MCP in `~/.copilot/mcp-config.json`; `wiki-agent.py` passes `--allow-all-paths` + read-only `--allow-tool` flags.
+- **Claude Code** — `.claude/settings.json` `allowedTools`; `wiki-agent.py` builds a per-command `Bash(cmd *)` allowlist and `--disallowedTools Task`.
+- **opencode** — `opencode.json` `permission: { read, bash, write, edit }`. `bash` is **all-or-nothing per agent** (each agent's frontmatter `tools.bash`); the per-command read-only/write split in the table above is **not** enforced under opencode — only on the claude/copilot `wiki-agent.py` paths. For opencode the egress-locked devcontainer mount is the backstop for unfiltered shell, so read-only agents that only need search set `tools.bash: false` and lean on the `qmd` MCP.
+- **Copilot CLI** — reads `AGENTS.md` from repo root + CWD; `qmd` MCP in `~/.copilot/mcp-config.json`; `wiki-agent.py` pins copilot's cwd to the repo with `-C ROOT` (a repo-scoped sandbox, **not** `--allow-all-paths`) plus per-command read-only `--allow-tool` flags.
 - **All other models** — never write a file without explicit user approval in the same session.
 
 `raw/` may contain symlinks to files/dirs outside the vault; they're followed automatically by the
@@ -203,15 +213,16 @@ fixes; contradict → verifier to decide which side is right). Read the `.agent.
 **CLIs:** `opencode` · `claude` · `ollama` · `copilot`. **Models:** opencode `github-copilot/gpt-5.2`
 (default) / `gpt-5.3-codex` / `opencode/minimax-m2.5-free`; claude `sonnet` (default) / `haiku` / `opus`;
 ollama `qwen3.5:4b` (default) / `qwen3.5:9b` / `gemma4:e4b`; copilot `gpt-5.2` (default) / `gpt-5.3-codex`
-/ `claude-sonnet-4.6`. **Effort:** `low` / `medium` (default) / `high`.
+/ `claude-sonnet-4.6`. **Effort:** `low` / `medium` / `high` (default) / `xhigh`.
 
 ## Devcontainer sandbox
 
 The agents run in a hardened devcontainer (`.devcontainer/`, see its `README.md`): egress is locked
 to an allowlist proxy, the CLIs run as a non-root user with `--dangerously-skip-permissions`, and the
 only reachable host service is the Ollama daemon. Launch from the host with the `brain-*` wrappers
-(`brain-wiki <agent> …`, `brain-claude`, `brain-copilot`, `brain-opencode`, `brain-shell`).
-`tools/agents/wiki-agent.py` refuses to run on the host — invoke it via `brain-wiki`.
+(`brain-cos`, `brain-wiki <agent> …`, `brain-claude`, `brain-copilot`, `brain-opencode`, `brain-shell`).
+`tools/agents/wiki-agent.py` refuses to run on the host — invoke wiki agents via `brain-wiki`
+and the Chief of Staff via `brain-cos`.
 
 **Inside the devcontainer (`$DEVCONTAINER=true`):** `~/.claude/` and `~/.claude.json` are an isolated
 copy, host-pulled on start but **not** pushed back automatically. If you change in-container Claude
@@ -222,6 +233,11 @@ devcontainer this does not apply.
 
 ## Canonical operations
 
+- **Chief of Staff** — `wiki-cos` / `brain-cos`: cross-project daily brief, project status, commitment
+  surface, and inbox triage. Read-only; advises, never writes. Modes: `--mode brief` (default),
+  `--mode status --project <slug>`, `--mode surface`, `--mode inbox`. The launcher gathers live
+  context (all `projects/*/TODO.md` open items, wiki log tail, inbox listing) and injects it before
+  invoking the agent. Always uses the reader profile.
 - **Ingest** — `wiki-ingest`: extraction, source-page creation, concept/topic updates, lint, log entry.
 - **Query** — `wiki-search` (general); for project-scoped Q&A run any AI CLI from `projects/<slug>/`.
   Durable answers → `wiki/queries/` (general) or `projects/<slug>/queries/` (project).
@@ -234,7 +250,12 @@ devcontainer this does not apply.
 ## Conventions
 
 **Links/citations:** write Obsidian path-based wikilinks `[[path/to/page]]` (the canonical form);
-source citations in a `## Sources` section listing `[[sources/...]]`; keep external URLs on source
+in a `## Sources` section, concept/topic pages cite the source *page* (`[[sources/...]]`), while a
+**source page** (`wiki/sources/src-*.md`) cites its immutable raw material — `- Source text:
+[[raw/sources-text/<stem>]]` (always present, linked without the `.md`) and, when a PDF exists,
+`- Source PDF: [[raw/sources/<stem>.pdf]]`. (`raw/` wikilinks to real files are validated by `lint`;
+filenames containing `[`/`]` use an angle-bracket markdown link `[Label](<../../raw/...>)` since
+Obsidian wikilinks cannot contain `]`.) Keep external URLs on source
 pages and reference sources indirectly from concept/topic pages. For portability outside Obsidian
 (GitHub, plain-markdown viewers, headless agents) wikilinks carry a **dual-link** markdown mirror —
 `[[concepts/foo]] ([Foo Title](../concepts/foo.md))`. Do **not** hand-write the `([Title](path.md))`

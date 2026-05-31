@@ -15,9 +15,10 @@
 git clone https://github.com/EraPartner/VaultLens.git my-wiki
 cd my-wiki
 
-# Initialize data directories
+# Initialize data directories (canonical set — see AGENTS.md "Directory contract")
 mkdir -p raw/sources raw/assets raw/inbox
-mkdir -p wiki/sources wiki/entities wiki/concepts wiki/topics
+mkdir -p wiki/sources wiki/entities wiki/concepts wiki/topics \
+         wiki/comparisons wiki/syntheses wiki/queries wiki/reports wiki/inventory wiki/system
 
 # Open in Obsidian
 open .
@@ -28,9 +29,14 @@ open .
 The `projects/` directory is an application layer that sits on top of the wiki. Each subfolder is one project workspace that consumes the wiki as a knowledge base without ever writing to it.
 
 ```
-raw/          ← immutable ingested sources
-  └─ wiki/    ← curated knowledge base
-       └─ projects/<slug>/   ← project workspaces (application layer)
+vault/
+├─ raw/                ← immutable ingested sources (source of truth)
+├─ wiki/               ← curated knowledge base (generated from raw/)
+├─ projects/<slug>/    ← project workspaces (application layer)
+└─ AGENTS.md           ← operating schema
+
+# Sibling top-level layers, NOT nested. Dependency flows left→right:
+# raw/ → wiki/ → projects/ (each consumes the one before it).
 ```
 
 Each project has a `project.md` that declares its description, folder layout, rules, and linked wiki pages. The scaffold also drops an `AGENTS.md` (with `CLAUDE.md` and `opencode.json` shims) so any AI CLI launched from inside the project picks up the project's context plus the conventions in the root `AGENTS.md` (`## Working inside a project`).
@@ -63,7 +69,7 @@ type: project
 title: My Thesis
 status: active
 tags: [tee, sgx]
-domain: security
+domain: research
 wiki_refs:
   - concepts/trusted-execution-environments
   - topics/remote-attestation
@@ -76,7 +82,7 @@ wiki_refs:
 projects/my-thesis/
   project.md     ← metadata, description, layout, rules, wiki refs
   AGENTS.md      ← AI entrypoint: read project.md + ../../AGENTS.md (auto-generated)
-  CLAUDE.md      ← Claude Code shim: @AGENTS.md (auto-generated)
+  CLAUDE.md      ← Claude Code shim: @AGENTS.md + @project.md (auto-generated)
   opencode.json  ← opencode shim: instructions: ["AGENTS.md"] (auto-generated)
   TODO.md        ← per-project todo; embedded into projects/TODO.md (auto-generated)
   queries/       ← Q&A artifacts
