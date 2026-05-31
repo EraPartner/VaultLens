@@ -1,4 +1,14 @@
 .DS_Store
+# macOS custom-folder-icon resource (a file literally named "Icon" + CR).
+Icon?
+
+# Agent-scratch append-log payloads. wiki-enhancer/wiki-cos write a temp JSON
+# entry then call `wiki.py append-log --from-json`; agents sometimes write it
+# in-tree instead of /tmp/ and leave .bak/.done renames behind. The agent prompt
+# now mandates an absolute /tmp/ path; these patterns are the belt-and-braces.
+*.json.bak
+*.json.done
+wiki-log-*.json
 
 # iCloud sync conflict copies of sandbox files (e.g. ".devcontainer/squid 2.conf").
 # Scoped to .devcontainer so it can't swallow legit vault notes like "Chapter 2.md".
