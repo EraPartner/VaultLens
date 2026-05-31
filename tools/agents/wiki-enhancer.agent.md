@@ -308,6 +308,8 @@ Plain wikilink list (no descriptions):
 - [[sources/src-slug]] — Author, *Title*, edition. Chapter/section refs with brief note on what each covers.
 ```
 
+(This `## Sources` shape is for **concept/topic** pages, which cite the source *page*. A **source page** (`wiki/sources/src-*.md`) instead cites its immutable raw material — `- Source text: [[raw/sources-text/<stem>]]` and, if present, `- Source PDF: [[raw/sources/<stem>.pdf]]`. Don't overwrite a source page's raw-material links with the concept-style citation above.)
+
 ---
 
 ## Page-Type Adaptations

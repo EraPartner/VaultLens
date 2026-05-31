@@ -41,7 +41,7 @@ Do not run any other shell command (no curl, no git, no rm).
 
 ### 1. Analyze Source
 - Read the source material via the Read tool. **For PDFs, always read the pre-extracted markdown sibling at `raw/sources-text/<same-stem>.md`, never the `.pdf` itself** — most models cannot parse PDF input directly.
-- The wiki-agent wrapper auto-extracts PDFs before invoking you. If a needed source has not been preprocessed yet, run `python3 tools/wiki.py preprocess --pdf raw/sources/<file>.pdf` from the Bash tool.
+- The wiki-agent launcher auto-extracts PDFs with `pdftotext -layout` (falling back to `qpdf --decrypt` for copy-protected files) before invoking you, regardless of whether the PDF sits in `raw/sources/` or `raw/inbox/`. The sibling is keyed by stem, so `raw/inbox/foo.pdf` and `raw/sources/foo.pdf` both extract to `raw/sources-text/foo.md`. If a needed source has not been preprocessed yet, run `python3 tools/wiki.py preprocess --pdf <path>.pdf` from the Bash tool.
 - Layout artifacts (page numbers, broken paragraphs, table noise) are expected in extracted text — read past them.
 - Extract key claims (make them falsifiable)
 - Identify entity/concept mentions
@@ -69,6 +69,7 @@ Do not run any other shell command (no curl, no git, no rm).
 - Run `python3 tools/wiki.py index --rebuild` so the headless `_index.md` mirrors include the new pages
 - Run `python3 tools/wiki.py links --fix --write` to add portable markdown mirrors to the wikilinks you wrote (the tool computes correct relative paths — never hand-write the `([Title](path.md))` mirror)
 - Append log entry
+- **Do not move the source PDF yourself.** You are sandboxed with only `wiki/` writable, so `mv` against `raw/` will fail. When the source came from `raw/inbox/`, the launcher promotes it to `raw/sources/` automatically after you finish successfully (and re-points the extracted sibling's `source_pdf:` header). `raw/sources/` is the canonical home; `raw/inbox/` is staging only.
 
 ## Source-type specific extraction
 
@@ -138,6 +139,34 @@ Include recurrences if applicable (e.g. $T(n) = 2T(n/2) + O(n)$).
 ### General depth rule
 
 If you can't fill at least 3-5 substantive bullet points or 2-3 paragraphs per section, you haven't extracted enough from the source. Go back and read more carefully. Prefer thorough over sparse — but every section present must earn its place by having real content.
+
+### The `## Sources` section (mandatory, last section on the page)
+
+Every source page ends with a `## Sources` section that links the immutable raw
+material with **path-based wikilinks**. Use this exact shape — do not improvise
+prose labels like "Attached source material" or "Ground-truth extracted text":
+
+```
+## Sources
+
+- Source text: [[raw/sources-text/<stem>]]
+- Source PDF: [[raw/sources/<stem>.pdf]]
+```
+
+Rules:
+- **Source text is mandatory** — there is always a `raw/sources-text/<stem>.md`
+  (the pre-extracted markdown you read from). Link it **without** the `.md`
+  extension. The PDF line is **optional**: include it only when
+  `raw/sources/<stem>.pdf` actually exists; omit it for sources that are only a
+  note, a web article, or an AsciiDoc repo. `<stem>` is the raw filename stem,
+  which may differ from the page title — use the real filename.
+- For an AsciiDoc/source-tree repo (no single PDF, no extracted `.md`), use one
+  bullet: `- Source material: [[raw/sources/<Repo>/README.md]] (AsciiDoc manuscript repository; no PDF)`.
+- If a raw filename contains `[` or `]` (Obsidian wikilinks cannot contain `]`),
+  use an angle-bracket markdown link instead:
+  `- Source text: [Label](<../../raw/sources-text/<name>.md>)`.
+- Keep any genuine extra provenance (citation, DOI, edition, "PDF encrypted")
+  as additional bullets **below** the two file links.
 
 ## What makes good claims
 

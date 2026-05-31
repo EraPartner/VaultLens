@@ -23,7 +23,7 @@ You may run these commands from Bash without asking for permission:
 
 `set`, `ls`, `find`, `grep`, `cat`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut`, `tr`, `date`, `python3`, `qmd`
 
-Do not run any other shell command (no writes, no curl, no git).
+Do not run any other shell command (no writes, no curl, no git). Enforcement: under Claude Code / Copilot this set is a hard per-command allowlist; under opencode `bash` is all-or-nothing, so the egress-locked container mount is the backstop. Either way, never write.
 
 ## Scope
 

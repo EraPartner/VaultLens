@@ -81,6 +81,7 @@ Second Brain/
 │   ├── comparisons/
 │   ├── queries/
 │   ├── reports/
+│   ├── inventory/         # tracked intentions (ingest-candidate/question/task/watch/...)
 │   ├── system/
 │   ├── _templates/
 │   ├── index.md           # Dataview-powered catalog

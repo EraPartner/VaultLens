@@ -40,4 +40,12 @@ SORT file.name ASC
 
 ## Sources
 
-- 
+<%*
+/* Link the immutable raw material. There is always a source-text markdown
+   (raw/sources-text/<name>.md); a PDF (raw/sources/<name>.pdf) is optional.
+   Use path-based wikilinks (the source-text link omits the .md extension).
+   For filenames containing [ or ] (which Obsidian wikilinks cannot contain),
+   use an angle-bracket markdown link instead: [Label](<../../raw/...>). */
+-%>
+- Source text: [[raw/sources-text/<% tp.file.title %>]]
+- Source PDF: [[raw/sources/<% tp.file.title %>.pdf]]
