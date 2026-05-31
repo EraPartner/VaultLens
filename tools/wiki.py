@@ -21,6 +21,7 @@ WIKI_DIR = ROOT / "wiki"
 PROJECTS_DIR = ROOT / "projects"
 RAW_SOURCES_DIR = ROOT / "raw" / "sources"
 RAW_SOURCES_TEXT_DIR = ROOT / "raw" / "sources-text"
+RAW_INBOX_DIR = ROOT / "raw" / "inbox"
 
 IGNORE_DIRS = {"_templates", ".obsidian"}
 IGNORE_FILES = {"index.md", "_index.md", "log.md"}
@@ -260,6 +261,21 @@ def normalize_link_target(target: str) -> str:
     return value
 
 
+def is_raw_file_target(target: str) -> bool:
+    """True if a (normalized) wikilink target points at a real file/dir in raw/.
+
+    Source pages cite their immutable material with path-based wikilinks into
+    `raw/` (e.g. `[[raw/sources/Foo.pdf]]`, `[[raw/sources-text/Foo]]`). Those
+    are not wiki pages, so they never appear in the page index, but they are
+    valid links — resolve them against the filesystem rather than flagging them
+    broken. `normalize_link_target` strips a trailing `.md`, so also probe the
+    `.md` sibling for source-text targets.
+    """
+    if not target.startswith("raw/") or ".." in target:
+        return False
+    return (ROOT / target).exists() or (ROOT / f"{target}.md").exists()
+
+
 def build_page_indexes(
     pages: list[Page],
 ) -> tuple[dict[str, Page], dict[str, list[Page]]]:
@@ -308,6 +324,8 @@ def compute_inbound_links(
                     ambiguous.append(
                         f"{page.rel.as_posix()}: [[{raw_target}]] matches {len(candidates)} pages"
                     )
+                continue
+            if is_raw_file_target(target):
                 continue
             broken.append(f"{page.rel.as_posix()}: [[{raw_target}]]")
 
@@ -773,9 +791,15 @@ def extract_pdf_to_markdown(
         if status is ExtractStatus.DECRYPTED
         else "pdftotext -layout"
     )
+    # Record the PDF's actual location so the sibling stays truthful whether the
+    # PDF sits in raw/sources/ or is still awaiting promotion in raw/inbox/.
+    try:
+        source_ref = pdf_path.resolve().relative_to(ROOT).as_posix()
+    except ValueError:
+        source_ref = pdf_path.name
     header = (
         "---\n"
-        f'source_pdf: "raw/sources/{pdf_path.name}"\n'
+        f'source_pdf: "{source_ref}"\n'
         f"extracted: {today}\n"
         f"extractor: {extractor}\n"
         "---\n\n"
@@ -787,6 +811,59 @@ def extract_pdf_to_markdown(
 
     text_path.write_text(header + body, encoding="utf-8")
     return text_path, status
+
+
+def promote_inbox_pdf(pdf_path: Path) -> Path | None:
+    """Move a freshly ingested PDF out of raw/inbox/ into raw/sources/.
+
+    raw/sources/ is the canonical home for ingested source PDFs; raw/inbox/ is
+    only a staging area for files awaiting ingest. Call this after a successful
+    ingest so the source no longer shows up in inbox triage.
+
+    Returns the new path on a move, or None when nothing was moved (the PDF is
+    not under raw/inbox/, or a different file already occupies the destination).
+    Re-points the extracted sibling's `source_pdf:` header to the new location.
+    Raises FileNotFoundError if the PDF does not exist.
+    """
+    pdf_path = pdf_path.resolve()
+    if not pdf_path.exists():
+        raise FileNotFoundError(f"PDF not found: {pdf_path}")
+
+    # Only promote files that actually live in raw/inbox/. Anything already in
+    # raw/sources/ (or elsewhere) is left untouched — "if not already there".
+    try:
+        pdf_path.relative_to(RAW_INBOX_DIR.resolve())
+    except ValueError:
+        return None
+
+    dest = RAW_SOURCES_DIR / pdf_path.name
+    if dest.exists():
+        # Don't clobber a different source that already claims this name.
+        print(
+            f"Warning: {dest.relative_to(ROOT)} already exists; "
+            f"leaving {pdf_path.name} in raw/inbox/ to avoid overwriting it."
+        )
+        return None
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(pdf_path), str(dest))
+
+    # Keep the extracted sibling's provenance header pointing at the new home.
+    text_path = text_path_for_pdf(dest)
+    if text_path.exists():
+        contents = text_path.read_text(encoding="utf-8", errors="replace")
+        new_ref = dest.relative_to(ROOT).as_posix()
+        updated = re.sub(
+            r'^(source_pdf:\s*").*?(")\s*$',
+            rf"\g<1>{new_ref}\g<2>",
+            contents,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        if updated != contents:
+            text_path.write_text(updated, encoding="utf-8")
+
+    return dest
 
 
 def _load_project(project_md: Path) -> Project:

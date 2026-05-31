@@ -164,6 +164,46 @@ def test_index() -> None:
         check("category index written", (root / "concepts" / "_index.md").exists())
 
 
+def test_raw_source_links() -> None:
+    """Source pages cite raw/ material with path-based wikilinks; lint must treat
+    `[[raw/...]]` targets that point at real files as valid, not broken."""
+    print("raw-source-links:")
+    saved_root = wiki.ROOT
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        (repo / "raw/sources-text").mkdir(parents=True)
+        (repo / "raw/sources").mkdir(parents=True)
+        (repo / "raw/sources-text/Foo Bar.md").write_text("text", encoding="utf-8")
+        (repo / "raw/sources/Foo Bar.pdf").write_bytes(b"%PDF-")
+        wiki.ROOT = repo
+        try:
+            check("source-text target resolves (no .md)",
+                  wiki.is_raw_file_target("raw/sources-text/Foo Bar"))
+            check("pdf target resolves", wiki.is_raw_file_target("raw/sources/Foo Bar.pdf"))
+            check("missing raw target rejected",
+                  not wiki.is_raw_file_target("raw/sources/Nope.pdf"))
+            check("non-raw target rejected",
+                  not wiki.is_raw_file_target("concepts/whatever"))
+            check("path traversal rejected",
+                  not wiki.is_raw_file_target("raw/../../etc/passwd"))
+
+            root = repo / "wiki"
+            write_page(root, "concepts/a.md", "Links [[concepts/b]].", **base_fields(title="A"))
+            write_page(
+                root, "sources/src-x.md",
+                "## Sources\n\n- Source text: [[raw/sources-text/Foo Bar]]\n"
+                "- Source PDF: [[raw/sources/Foo Bar.pdf]]\n[[concepts/a]]",
+                **base_fields(title="X"),
+            )
+            write_page(root, "concepts/b.md", "Links [[concepts/a]] [[sources/src-x]].",
+                       **base_fields(title="B"))
+            rep = report_for(root, strict=False)
+            check("real raw wikilinks not flagged broken",
+                  not rep["errors"]["broken_links"], str(rep["errors"]["broken_links"]))
+        finally:
+            wiki.ROOT = saved_root
+
+
 def main() -> int:
     test_golden()
     test_defects()
@@ -171,6 +211,7 @@ def main() -> int:
     test_fix()
     test_links()
     test_index()
+    test_raw_source_links()
     print(f"\n{PASSED} passed, {FAILED} failed")
     return 1 if FAILED else 0
 
