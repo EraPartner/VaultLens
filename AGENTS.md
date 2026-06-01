@@ -204,11 +204,25 @@ pick by what you have and what you want:
 | A wiki page to structurally audit | Audit, no edits | `wiki-quality-reviewer` |
 | Suspicion two pages disagree | Surface + analyze the conflict | `wiki-contradiction-detector` |
 | A research question, no project context | Synthesized cited answer | `wiki-search` |
+| A pending decision/idea | Red-team it against your own history | `wiki-challenge` |
+| Two unrelated domains | Bridge them for novel ideas | `wiki-connect` |
+| Recent activity, no named theme | Surface unnamed patterns | `wiki-emerge` |
+| Loose ends, no clear next move | Rank next-direction candidates | `wiki-idea-discovery` (`discover`) |
 | A question about a `projects/` project | Project-scoped cited answer | Launch any AI CLI from `projects/<slug>/` |
 
 **Reads / writes:** ingest (raw+wiki → wiki) · enhance (raw+wiki → wiki) · quality/verify/contradict/
-search (read-only). **Handoff:** each agent ends by recommending the next (quality → enhancer to apply
-fixes; contradict → verifier to decide which side is right). Read the `.agent.md` files for exact handoff lists.
+search and the thinking agents challenge/connect/emerge/discover (all read-only). **Handoff:** each agent
+ends by recommending the next (quality → enhancer to apply fixes; contradict → verifier to decide which
+side is right; the thinking agents → enhancer or `inventory new` to persist anything worth keeping, since
+they never write). Read the `.agent.md` files for exact handoff lists.
+
+**Thinking agents (read-only "think with me" layer).** Distinct from the maintenance/retrieval agents
+above, these reason over the vault and emit text only — they never write, so durable output is filed by
+the operator via the recommended handoff. Inputs go through `wiki-agent.py` flags: `challenge --source
+"<position>"` red-teams a decision against your own queries/log/superseded pages and the operator profile;
+`connect --source "<A>" --page "<B>"` bridges two domains via the link graph; `emerge [--source
+"<timeframe>"]` surfaces unnamed patterns from recent activity (default last 30 days); `discover` ranks
+3–5 next-direction candidates from inventory questions, orphans, and sparse pages.
 
 **CLIs:** `opencode` · `claude` · `ollama` · `copilot`. **Models:** opencode `github-copilot/gpt-5.2`
 (default) / `gpt-5.3-codex` / `opencode/minimax-m2.5-free`; claude `sonnet` (default) / `haiku` / `opus`;
@@ -357,6 +371,10 @@ python3 tools/agents/wiki-agent.py quality --page wiki/concepts/x.md [--cli clau
 python3 tools/agents/wiki-agent.py verify --source wiki/sources/x.md
 python3 tools/agents/wiki-agent.py search --page "topic"
 python3 tools/agents/wiki-agent.py contradict
+python3 tools/agents/wiki-agent.py challenge --source "the decision/idea to red-team"
+python3 tools/agents/wiki-agent.py connect --source "domain A" --page "domain B"
+python3 tools/agents/wiki-agent.py emerge [--source "2 weeks"]
+python3 tools/agents/wiki-agent.py discover
 
 # Extras
 python3 tools/wiki_extra.py next-id              # next source ID

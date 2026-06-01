@@ -56,7 +56,7 @@ then the vault path:
 | Command | Runs in the container |
 | --- | --- |
 | `brain-cos [--mode brief\|status\|surface\|inbox] [--project slug]` | Chief of Staff brief / status / commitments / inbox triage (reader profile) |
-| `brain-wiki <agent> [args]` | `python3 tools/agents/wiki-agent.py <agent> …` (agent = quality/verify/ingest/contradict/search/enhance/cos) |
+| `brain-wiki <agent> [args]` | `python3 tools/agents/wiki-agent.py <agent> …` (agent = quality/verify/ingest/contradict/search/enhance/cos/challenge/connect/emerge/discover) |
 | `brain-wiki <subcommand> [args]` | `python3 tools/wiki.py <subcommand> …` (coverage, preprocess, search, log, …) |
 | `brain-claude [args]` | `claude …` (opens in the subdir you ran it from, e.g. `projects/ict-recht`) |
 | `brain-copilot [args]` | `copilot …` |

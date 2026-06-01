@@ -90,6 +90,10 @@ AGENT_FILES = {
     "search": "wiki-search.agent.md",
     "enhance": "wiki-enhancer.agent.md",
     "cos": "wiki-cos.agent.md",
+    "challenge": "wiki-challenge.agent.md",
+    "connect": "wiki-connect.agent.md",
+    "emerge": "wiki-emerge.agent.md",
+    "discover": "wiki-idea-discovery.agent.md",
 }
 
 # Symlink stems in .opencode/agents/ are just the agent file stripped of `.agent.md`.
@@ -122,6 +126,11 @@ AGENT_PERMISSIONS: dict[str, dict] = {
         "writable_dirs": ["wiki", "raw/sources-text"],
     },
     "cos": {"shell": True, "write": False, "writable_dirs": []},
+    # Read-only "thinking" agents — search the vault, emit text, never write.
+    "challenge": {"shell": True, "write": False, "writable_dirs": []},
+    "connect": {"shell": True, "write": False, "writable_dirs": []},
+    "emerge": {"shell": True, "write": False, "writable_dirs": []},
+    "discover": {"shell": True, "write": False, "writable_dirs": []},
 }
 
 # Shell commands granted to any agent with shell access. Strictly read-only;
@@ -594,6 +603,23 @@ def build_prompt(
                 "strengthen cross-topic interlinking. Never try to Read raw .pdf files. "
                 "Follow wiki-enhancer.agent.md."
             ),
+            "challenge": (
+                "Red-team this position against the operator's own vault history: "
+                f"{source or page or '(no explicit position given — report that one is required)'}"
+            ),
+            "connect": (
+                "Bridge these two domains using the wiki link graph and produce 3-5 "
+                f"non-obvious connection ideas. Domain A: {source or '(missing)'}. "
+                f"Domain B: {page or '(missing — report that a second domain is required)'}"
+            ),
+            "emerge": (
+                "Surface unnamed patterns from recent wiki activity. Timeframe: "
+                f"{source or 'last 30 days'}."
+            ),
+            "discover": (
+                "Rank 3-5 next-direction candidates from existing vault material "
+                "(open questions, ungraduated ideas, orphan and sparse pages)."
+            ),
         }
     else:
         prompts = {
@@ -608,6 +634,23 @@ def build_prompt(
                 f"Re-read the source PDF if available. Fix correctness, expand sparse "
                 f"sections, create new concept pages where the source is dense, and "
                 f"strengthen cross-topic interlinking. Follow wiki-enhancer.agent.md."
+            ),
+            "challenge": (
+                "Red-team this position against the operator's own vault history: "
+                f"{source or page or '(no explicit position given — report that one is required)'}"
+            ),
+            "connect": (
+                "Bridge these two domains using the wiki link graph and produce 3-5 "
+                f"non-obvious connection ideas. Domain A: {source or '(missing)'}. "
+                f"Domain B: {page or '(missing — report that a second domain is required)'}"
+            ),
+            "emerge": (
+                "Surface unnamed patterns from recent wiki activity. Timeframe: "
+                f"{source or 'last 30 days'}."
+            ),
+            "discover": (
+                "Rank 3-5 next-direction candidates from existing vault material "
+                "(open questions, ungraduated ideas, orphan and sparse pages)."
             ),
         }
 
@@ -1031,6 +1074,21 @@ def main(argv=None) -> int:
 
     if args.agent == "search" and not (args.source or args.page):
         print("Error: search requires --source or --page (the query text).")
+        parser.print_help()
+        return 1
+
+    # Thinking agents: position/domains come via --source (and --page for connect's
+    # second domain). Warn on missing input rather than hard-failing — challenge can
+    # still infer from an appended --system context block, connect cannot.
+    if args.agent == "challenge" and not (args.source or args.page or args.prompt):
+        print(
+            "Warning: challenge works best with --source \"<the position to red-team>\". "
+            "Without it the agent will report that a position is required."
+        )
+    if args.agent == "connect" and not (args.source and args.page):
+        print(
+            "Error: connect requires two domains — pass --source \"<A>\" and --page \"<B>\"."
+        )
         parser.print_help()
         return 1
 
