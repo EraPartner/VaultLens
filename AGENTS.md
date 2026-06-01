@@ -34,16 +34,21 @@ template. The Chief of Staff launcher injects it automatically into its live con
 
 ## Directory contract
 
-- `raw/sources/` immutable source docs · `raw/assets/` images/attachments · `raw/inbox/` new files awaiting ingest
+- `raw/sources/` immutable source docs · `raw/sources-text/` preprocessed PDF text (`preprocess` output) ·
+  `raw/assets/` images/attachments · `raw/inbox/` new files awaiting ingest · `raw/review-inbox/` items staged for manual review before ingest
 - `wiki/system/` schema & operating docs · `wiki/sources/` one page per ingested source ·
   `wiki/entities/` person/org/tool/place/artifact · `wiki/concepts/` concept/method pages ·
   `wiki/topics/` thematic syntheses · `wiki/syntheses/` cross-topic analyses ·
-  `wiki/comparisons/` side-by-side · `wiki/queries/` preserved Q&A · `wiki/reports/` lint/audit outputs ·
+  `wiki/comparisons/` side-by-side · `wiki/queries/` preserved Q&A · `wiki/reports/` lint/audit + scheduled-agent outputs ·
   `wiki/inventory/<kind>/` tracked intentions (ingest-candidate/question/task/watch/corpus/artifact/item) ·
-  `wiki/_templates/` page templates
+  `wiki/_templates/` page templates · `wiki/log/` runtime background-agent logs (gitignored) ·
+  `wiki/home.md` + `wiki/SETUP.md` reader-facing nav docs
 - `projects/<slug>/` one folder per project · `project.md` metadata · `notes/` scratch · `queries/` durable Q&A
-- `tools/wiki.py` core utility · `tools/wiki_extra.py` extras · `tools/scripts/` setup helpers ·
-  `tools/agents/` agent system prompts (source of truth) · `.opencode/agents/` opencode symlinks → `tools/agents/`
+- `tools/wiki.py` CLI dispatcher → focused modules (`wiki_ingest`, `wiki_lint`, `wiki_query`,
+  `wiki_projects`, `wiki_index`, `wiki_links`, `wiki_log`, `wiki_inventory`, `wiki_archive`) ·
+  `tools/wiki_extra.py` extras · `tools/scripts/` setup helpers · `tools/tests/` tooling test suite ·
+  `tools/agents/` agent system prompts (source of truth) · `tools/schedule/` host catch-up dispatcher
+  for scheduled agents · `.opencode/agents/` opencode symlinks → `tools/agents/`
 
 ## Required page metadata
 
@@ -105,8 +110,13 @@ projects/<slug>/
   queries/        ← default Q&A landing zone (overridable in ## Rules)
 ```
 
-`AGENTS.md` is the single entrypoint for all AI tools. `projects/TODO.md` aggregates each project's
-`TODO.md` via Obsidian embeds (the scaffold appends an embed line per `project new`).
+`AGENTS.md` is the single entrypoint for all AI tools. Per-project `TODO.md` files use the Obsidian
+Tasks plugin emoji format (priority 🔺/⏫/🔼/🔽/⏬, dates 📅/🛫/⏳). They are surfaced by three
+aggregators agents should read but not hand-edit: `projects/TODO.md` embeds each per-project `TODO.md`
+for desktop Obsidian (gitignored/generated; the scaffold appends an embed line per `project new`);
+`projects/TODO-widget.md` is a flattened copy for the iOS widget, which cannot render embeds
+(gitignored/generated); `projects/deadlines.md` is a live Tasks-plugin query view of upcoming dated
+items (desktop only; tracked).
 
 ### Project page schema
 
@@ -244,6 +254,18 @@ config (agents, plugins, slash commands, hooks, MCP servers, rules, settings), t
 ending your turn to run on the host: `brain-claude-sync push` (it backs up `~/.claude.json` before a
 newer-wins merge). Without it the change is lost on the next container rebuild. Outside the
 devcontainer this does not apply.
+
+## Scheduled agents
+
+A host-side **catch-up dispatcher** (`tools/schedule/`, implemented 2026-06-01; design rationale in
+`tools/schedule/SPEC.md`) runs the maintenance/thinking agents on a schedule without fixed calendar
+jobs. A launchd LaunchAgent (`com.brain.schedule.plist`) fires `dispatch.py` on a ~30-minute tick; each
+tick is a gate-checker, not an LLM trigger. All LLM work runs in **one nightly batch** (plus the daily
+cos brief) on the copilot CLI pinned to GPT-5.2, with two-account failover; LLM jobs **defer until
+online** while pure-python (Tier 0) maintenance runs regardless. Heavy jobs run **only on AC**; an
+AC-gated `pmset disablesleep` override (least-privilege via `brain-schedule.sudoers`) lets the nightly
+batch run lid-closed. Read-only agents stay read-only: the dispatcher captures their stdout and files
+the dated report under `wiki/reports/`. Install with `tools/schedule/install.sh`.
 
 ## Canonical operations
 
