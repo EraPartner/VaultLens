@@ -7,11 +7,13 @@
 #
 # Files written:
 #
-#   projects/TODO.md         Live aggregator of OPEN tasks via an Obsidian Tasks
-#                            query (`not done`, grouped by project). Auto-updates
-#                            as project TODOs change. Desktop-only — Tasks queries
-#                            do NOT render in the iOS Obsidian widget; use the
-#                            widget file there. NOT git-tracked (see .gitignore).
+#   projects/TODO.md         Live, embed-based. Each project section is a
+#                            `![[projects/<slug>/TODO]]` embed that Obsidian
+#                            resolves at render time, so edits propagate
+#                            instantly in the desktop app (including completed
+#                            items). Embeds do NOT render in the iOS Obsidian
+#                            widget; use the widget file there instead. NOT
+#                            git-tracked (see .gitignore).
 #
 #   projects/TODO-widget.md  Selection of OPEN items for the iOS widget: an
 #                            incomplete task ('- [ ]') with a 📅 due date OR ⏫ high
@@ -33,18 +35,23 @@ PROJECTS_DIR="$ROOT/projects"
 LIVE="$PROJECTS_DIR/TODO.md"
 WIDGET="$PROJECTS_DIR/TODO-widget.md"
 
-# === Live aggregator (desktop, Obsidian Tasks query: open tasks only) ===
+# === Live embedded aggregator (desktop) ===
 {
   echo "# Projects TODO (live)"
   echo
-  echo "Live aggregator of OPEN tasks across all projects via an Obsidian Tasks query (auto-updates as you edit each project's \`TODO.md\`; desktop only). The iOS Obsidian widget cannot render queries, point it at \`TODO-widget.md\` instead. Per-project files use the Tasks emoji format: priority 🔺/⏫/🔼/🔽/⏬, dates 📅/🛫/⏳."
+  echo "Live aggregator: each section embeds the per-project \`TODO.md\` so edits propagate instantly in desktop Obsidian (completed items included). The iOS Obsidian widget cannot render embeds, point it at \`TODO-widget.md\` instead. Per-project files use the Obsidian Tasks plugin emoji format: priority 🔺/⏫/🔼/🔽/⏬, dates 📅/🛫/⏳."
   echo
-  echo '```tasks'
-  echo 'not done'
-  echo 'path regex matches /projects\/[^\/]+\/TODO\.md/'
-  echo 'group by folder'
-  echo 'sort by priority'
-  echo '```'
+  for dir in "$PROJECTS_DIR"/*/; do
+    slug="$(basename "$dir")"
+    todo="$dir/TODO.md"
+    [ -f "$todo" ] || continue
+    # Skip projects with no real task (no heading-only files, no empty
+    # `- [ ]` placeholders): require a checkbox followed by actual text.
+    grep -qE '^[[:space:]]*- \[.\][[:space:]]*[^[:space:]]' "$todo" || continue
+    echo "## $slug"
+    echo "![[projects/$slug/TODO]]"
+    echo
+  done
 } > "$LIVE"
 
 # === Widget aggregator (filtered, inlined) ===
