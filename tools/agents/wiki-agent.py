@@ -67,9 +67,9 @@ def _resolve_pdf_to_markdown(path_str: str) -> str:
     if TOOLS_DIR not in [Path(p) for p in sys.path]:
         sys.path.insert(0, str(TOOLS_DIR))
     try:
-        from wiki import extract_pdf_to_markdown  # type: ignore[import]
+        from wiki_ingest import extract_pdf_to_markdown  # type: ignore[import]
     except ImportError as exc:
-        print(f"Warning: could not import wiki.extract_pdf_to_markdown: {exc}")
+        print(f"Warning: could not import wiki_ingest.extract_pdf_to_markdown: {exc}")
         return path_str
 
     try:
@@ -858,9 +858,9 @@ def _auto_log_ingest(source_path: str) -> None:
         sys.path.insert(0, tools_dir)
 
     try:
-        from wiki import append_log_entry  # type: ignore[import]
+        from wiki_log import append_log_entry  # type: ignore[import]
     except ImportError as exc:
-        print(f"Warning: could not import wiki.py for auto-log: {exc}")
+        print(f"Warning: could not import wiki_log for auto-log: {exc}")
         return
 
     name = Path(source_path).stem
@@ -901,9 +901,9 @@ def _promote_inbox_pdf(source_path: str) -> str:
     if TOOLS_DIR not in [Path(p) for p in sys.path]:
         sys.path.insert(0, str(TOOLS_DIR))
     try:
-        from wiki import promote_inbox_pdf  # type: ignore[import]
+        from wiki_ingest import promote_inbox_pdf  # type: ignore[import]
     except ImportError as exc:
-        print(f"Warning: could not import wiki.promote_inbox_pdf: {exc}")
+        print(f"Warning: could not import wiki_ingest.promote_inbox_pdf: {exc}")
         return source_path
 
     try:

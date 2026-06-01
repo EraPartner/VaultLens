@@ -15,25 +15,125 @@ import datetime as dt
 import json
 
 from wiki import (
-    CONFIDENCE_VALUES,
-    LINK_VALIDATION_SKIP_CATEGORIES,
-    ORPHAN_EXEMPT,
-    REQUIRED_FRONTMATTER_BASE,
-    REQUIRED_FRONTMATTER_BY_CATEGORY,
-    VOLATILITY_VALUES,
+    ROOT,
+    SPECIAL_LINK_TARGETS,
     Page,
+    Project,
     _set_frontmatter_field,
     build_page_indexes,
-    check_field_enums,
-    check_staleness,
     compute_inbound_links,
-    lint_projects,
     list_content_pages,
     list_projects,
+    normalize_link_target,
 )
 
 ALLOWED_STATUS = {"active", "superseded", "archived", "draft"}
 SKIP_CATEGORIES = {"system", "root"}
+
+# Required frontmatter. Every content page needs the base set; some categories
+# add their own. `lint` reports pages missing or blank in these.
+REQUIRED_FRONTMATTER_BASE = {"title", "type", "status", "created", "updated", "summary"}
+REQUIRED_FRONTMATTER_BY_CATEGORY = {
+    "sources": {"source_id", "source_type", "origin", "ingested_on"},
+}
+PROJECT_REQUIRED_FIELDS = {"title", "type", "status", "created", "updated", "summary"}
+
+# Link/orphan handling: `system/` pages are excluded from link validation, and a
+# couple of well-known landing pages are exempt from the orphan check.
+LINK_VALIDATION_SKIP_CATEGORIES = {"system"}
+ORPHAN_EXEMPT = {"home", "system/schema"}
+
+# Trust/refresh enums validated by `check_field_enums`.
+CONFIDENCE_VALUES = {"high", "medium", "low"}
+VOLATILITY_VALUES = {"hot", "warm", "cold"}
+
+# Volatility-aware staleness thresholds: hot pages go stale faster, cold ones
+# slower. Pages without a `volatility` field fall back to the default warm cadence.
+STALENESS_DAYS = 180
+STALENESS_DAYS_BY_VOLATILITY = {"hot": 60, "warm": 180, "cold": 365}
+
+
+def staleness_threshold(page: Page) -> int:
+    """Days-until-stale for a page, based on its `volatility` (default warm)."""
+    return STALENESS_DAYS_BY_VOLATILITY.get(page.volatility, STALENESS_DAYS)
+
+
+def check_staleness(pages: list[Page]) -> list[str]:
+    stale: list[str] = []
+    today = dt.date.today()
+    for page in pages:
+        if page.category in {"system", "root", "inventory"} or page.is_archived:
+            continue
+        raw = page.updated.strip()
+        if not raw:
+            continue
+        try:
+            updated = dt.date.fromisoformat(raw)
+        except ValueError:
+            continue
+        age = (today - updated).days
+        threshold = staleness_threshold(page)
+        if age > threshold:
+            vol = f", volatility {page.volatility}" if page.volatility else ""
+            stale.append(
+                f"{page.rel.as_posix()}: last updated {raw} "
+                f"({age} days ago, threshold {threshold}{vol})"
+            )
+    return stale
+
+
+def check_field_enums(pages: list[Page]) -> tuple[list[str], list[str]]:
+    """Validate `confidence`/`volatility` values when present.
+
+    Returns (invalid_values, low_confidence_pages). Invalid values are lint
+    errors; low-confidence pages are surfaced informationally so the enhancer
+    or source-verifier can be pointed at them.
+    """
+    invalid: list[str] = []
+    low_confidence: list[str] = []
+    for page in pages:
+        if page.category in {"system", "root"}:
+            continue
+        conf = page.confidence
+        if conf and conf not in CONFIDENCE_VALUES:
+            invalid.append(
+                f"{page.rel.as_posix()}: confidence '{conf}' not in "
+                f"{sorted(CONFIDENCE_VALUES)}"
+            )
+        elif conf == "low":
+            low_confidence.append(page.rel.as_posix())
+        vol = page.volatility
+        if vol and vol not in VOLATILITY_VALUES:
+            invalid.append(
+                f"{page.rel.as_posix()}: volatility '{vol}' not in "
+                f"{sorted(VOLATILITY_VALUES)}"
+            )
+    return invalid, low_confidence
+
+
+def lint_projects(
+    projects: list[Project],
+    canonical: dict[str, Page],
+    basename_map: dict[str, list[Page]],
+) -> tuple[list[str], list[str]]:
+    """Validate project metadata and wiki_refs. Returns (missing_fields, broken_refs)."""
+    missing: list[str] = []
+    broken: list[str] = []
+    for project in projects:
+        rel = project.path.relative_to(ROOT).as_posix()
+        gaps = sorted(key for key in PROJECT_REQUIRED_FIELDS if key not in project.frontmatter)
+        if gaps:
+            missing.append(f"{rel}: missing {', '.join(gaps)}")
+        for ref in project.wiki_refs:
+            target = normalize_link_target(ref)
+            if not target or target in canonical:
+                continue
+            if target in SPECIAL_LINK_TARGETS:
+                continue
+            if "/" not in target and len(basename_map.get(target, [])) == 1:
+                continue
+            broken.append(f"{rel}: wiki_refs [[{ref}]]")
+    return missing, broken
 
 
 def check_missing_fields(pages: list[Page]) -> list[str]:
