@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""Self-contained tests for the scheduling dispatcher's pure decision logic.
+
+Exercises the side-effect-free helpers (failure classification, account
+failover selection, cooldown/backoff, step due-ness) without touching the
+system. Run with:
+
+    python3 tools/tests/test_schedule.py
+"""
+
+from __future__ import annotations
+
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agents"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "schedule"))
+
+import dispatch  # noqa: E402
+
+PASSED = 0
+FAILED = 0
+
+
+def check(name: str, condition: bool, detail: str = "") -> None:
+    global PASSED, FAILED
+    if condition:
+        PASSED += 1
+        print(f"  PASS  {name}")
+    else:
+        FAILED += 1
+        print(f"  FAIL  {name}  {detail}")
+
+
+def fresh_ledger() -> dict:
+    return {
+        "jobs": {},
+        "accounts": {a: {"limited_until": None, "last_error": None, "backoff": 0} for a in dispatch.ACCOUNTS},
+    }
+
+
+def main() -> int:
+    now = datetime(2026, 6, 7, 3, 30).astimezone()  # a Sunday at 03:30
+
+    print("classify_failure:")
+    check("rc 0 -> ok", dispatch.classify_failure(0, "all good") == "ok")
+    check("quota text -> quota", dispatch.classify_failure(1, "Premium request quota exceeded") == "quota")
+    check("429 -> ratelimit", dispatch.classify_failure(1, "HTTP 429 Too Many Requests") == "ratelimit")
+    check("other -> transient", dispatch.classify_failure(1, "connection reset") == "transient")
+
+    print("choose_account / failover:")
+    led = fresh_ledger()
+    check("first healthy account picked", dispatch.choose_account(led, now) == dispatch.ACCOUNTS[0])
+    dispatch.mark_limited(led, dispatch.ACCOUNTS[0], "ratelimit", now)
+    check("primary limited after ratelimit",
+          led["accounts"][dispatch.ACCOUNTS[0]]["limited_until"] is not None)
+    check("failover picks second account", dispatch.choose_account(led, now) == dispatch.ACCOUNTS[1])
+    dispatch.mark_limited(led, dispatch.ACCOUNTS[1], "quota", now)
+    check("both limited -> None", dispatch.choose_account(led, now) is None)
+
+    print("cooldown semantics:")
+    led2 = fresh_ledger()
+    dispatch.mark_limited(led2, dispatch.ACCOUNTS[0], "ratelimit", now)
+    first = dispatch.parse(led2["accounts"][dispatch.ACCOUNTS[0]]["limited_until"])
+    check("ratelimit cooldown ~30m", abs((first - now).total_seconds() - 1800) < 5)
+    dispatch.mark_limited(led2, dispatch.ACCOUNTS[0], "ratelimit", now)
+    second = dispatch.parse(led2["accounts"][dispatch.ACCOUNTS[0]]["limited_until"])
+    check("backoff doubles to ~1h", abs((second - now).total_seconds() - 3600) < 5)
+    dispatch.mark_limited(led2, dispatch.ACCOUNTS[0], "quota", now)
+    q = dispatch.parse(led2["accounts"][dispatch.ACCOUNTS[0]]["limited_until"])
+    check("quota cooldown ~24h", abs((q - now).total_seconds() - 24 * 3600) < 5)
+
+    print("expired cooldown frees the account:")
+    led3 = fresh_ledger()
+    past = now - timedelta(hours=1)
+    led3["accounts"][dispatch.ACCOUNTS[0]]["limited_until"] = dispatch.iso(past)
+    check("expired limit -> account healthy again",
+          dispatch.choose_account(led3, now) == dispatch.ACCOUNTS[0])
+
+    print("clear_account on success:")
+    led4 = fresh_ledger()
+    dispatch.mark_limited(led4, dispatch.ACCOUNTS[0], "ratelimit", now)
+    dispatch.clear_account(led4, dispatch.ACCOUNTS[0])
+    st = led4["accounts"][dispatch.ACCOUNTS[0]]
+    check("cleared limit + backoff", st["limited_until"] is None and st["backoff"] == 0)
+
+    print("step_due:")
+    steps = {s.name: s for s in dispatch.build_steps()}
+    led5 = fresh_ledger()
+    lint = steps["lint"]
+    check("daily step due when never run (in window)", dispatch.step_due(lint, led5, now) is True)
+    led5["jobs"]["lint"] = {"last_ok": dispatch.iso(now)}
+    check("daily step not due same day", dispatch.step_due(lint, led5, now) is False)
+    tomorrow = now + timedelta(days=1)
+    check("daily step due next day", dispatch.step_due(lint, led5, tomorrow) is True)
+
+    morning = now.replace(hour=9)
+    night_only = now.replace(hour=3)
+    brief = steps["cos-brief"]
+    check("cos-brief due in morning window", dispatch.step_due(brief, fresh_ledger(), morning) is True)
+    check("cos-brief not due at 03:00", dispatch.step_due(brief, fresh_ledger(), night_only) is False)
+
+    weekly = steps["contradict"]
+    led6 = fresh_ledger()
+    check("weekly due when never run", dispatch.step_due(weekly, led6, now) is True)
+    led6["jobs"]["contradict"] = {"last_ok": dispatch.iso(now - timedelta(days=2))}
+    check("weekly not due 2 days later", dispatch.step_due(weekly, led6, now) is False)
+    led6["jobs"]["contradict"] = {"last_ok": dispatch.iso(now - timedelta(days=9))}
+    weekday = now + timedelta(days=3)  # a Wednesday, age >= 8 -> catch up
+    check("weekly catches up when overdue >8d", dispatch.step_due(weekly, led6, weekday) is True)
+
+    print(f"\n{PASSED} passed, {FAILED} failed")
+    return 1 if FAILED else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

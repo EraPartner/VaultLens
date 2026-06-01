@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Brain scheduled-agent dispatcher (user LaunchAgent).
+  Install with tools/schedule/install.sh (do not edit the copy in
+  ~/Library/LaunchAgents by hand; edit here and re-run install).
+
+  User agent, NOT a daemon: only the GUI session has Keychain, iCloud, and the
+  Docker Desktop socket. Fires at a few calendar anchors that span the run windows
+  (nightly 03/06/09, morning 07:05/10) + once on load. No constant polling: work
+  runs at most once/day, launchd reruns a missed anchor on the next wake, and the
+  spread anchors give same-day retry if a gate (offline/docker/battery/quota) was
+  temporarily down. The dispatcher is idempotent (ledger + flock), so duplicate
+  triggers are safe.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.brain.schedule</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/python3</string>
+        <string>/Users/computer/Library/Mobile Documents/iCloud~md~obsidian/Documents/Brain/tools/schedule/dispatch.py</string>
+        <string>run</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/computer/.docker/bin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>5</integer></dict>
+        <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+    </array>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/computer/.brain/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/computer/.brain/logs/launchd.err.log</string>
+</dict>
+</plist>

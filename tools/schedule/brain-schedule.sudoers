@@ -1,0 +1,18 @@
+# Brain scheduled-agent dispatcher -- least-privilege power control.
+#
+# Grants user `computer` passwordless sudo for EXACTLY three pmset invocations
+# and nothing else, so the headless nightly run can override lid-close sleep on
+# AC and return to sleep afterward. pmset is power-management only: it cannot run
+# arbitrary code, read files, or change users, and these three argument vectors
+# are matched exactly (any other pmset call still requires a password).
+#
+# This is the ONLY privileged surface the scheduler uses. See tools/schedule/SPEC.md.
+#
+# Install (validate before trusting -- a bad sudoers file can lock you out):
+#   sudo install -m 0440 -o root -g wheel \
+#     tools/schedule/brain-schedule.sudoers /etc/sudoers.d/brain-schedule
+#   sudo visudo -cf /etc/sudoers.d/brain-schedule    # must print "parsed OK"
+# Remove:
+#   sudo rm /etc/sudoers.d/brain-schedule
+
+computer ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 1, /usr/bin/pmset -a disablesleep 0, /usr/bin/pmset sleepnow
