@@ -3,7 +3,7 @@ title: Schema
 type: page
 status: active
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-06-01
 summary: Operating conventions and schema for this wiki.
 ---
 
@@ -51,6 +51,8 @@ ingested_on: YYYY-MM-DD
 | `comparisons/` | Side-by-side analyses | `comparisons/gpt-vs-claude.md` |
 | `queries/` | Preserved Q&A | `queries/transformer-training.md` |
 | `reports/` | Lint outputs, audits | `reports/lint-2026-04-11.md` |
+| `inventory/` | Tracked intentions by kind (ingest-candidate / question / task / watch / corpus / artifact / item) | `inventory/question/...md` |
+| `system/` | Schema & operating docs | `system/schema.md` |
 
 ### Link Conventions
 
@@ -118,5 +120,22 @@ created: YYYY-MM-DD
 updated: YYYY-MM-DD
 summary: One sentence description.
 report_type: lint|audit|other
+---
+```
+
+#### Inventory
+Tracked intentions, filed under `inventory/<kind>/` where kind is one of
+ingest-candidate / question / task / watch / corpus / artifact / item. Managed
+with `python3 tools/wiki.py inventory` (list/new/show). See `../AGENTS.md` for
+the full field set.
+
+```
+---
+title: ...
+type: inventory
+status: active|superseded|archived|draft
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+summary: One sentence.
 ---
 ```

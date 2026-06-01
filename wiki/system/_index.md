@@ -1,7 +1,7 @@
 ---
 title: System Index
 type: index
-updated: 2026-05-31
+updated: 2026-06-01
 page_count: 1
 ---
 
@@ -13,4 +13,4 @@ page_count: 1
 
 | Page | Summary | Tags | Conf | Updated |
 | --- | --- | --- | --- | --- |
-| [Schema](schema.md) | Operating conventions and schema for this wiki. |  |  | 2026-04-11 |
+| [Schema](schema.md) | Operating conventions and schema for this wiki. |  |  | 2026-06-01 |
