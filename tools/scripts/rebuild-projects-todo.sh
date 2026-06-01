@@ -7,19 +7,20 @@
 #
 # Files written:
 #
-#   projects/TODO.md         Live, embed-based. Each project section is a
-#                            `![[projects/<slug>/TODO]]` embed that Obsidian
-#                            resolves at render time, so edits propagate
-#                            instantly in the desktop app. Embeds and Tasks
-#                            query blocks do NOT render in the iOS Obsidian
-#                            widget; use the widget file there instead.
+#   projects/TODO.md         Live aggregator of OPEN tasks via an Obsidian Tasks
+#                            query (`not done`, grouped by project). Auto-updates
+#                            as project TODOs change. Desktop-only — Tasks queries
+#                            do NOT render in the iOS Obsidian widget; use the
+#                            widget file there. NOT git-tracked (see .gitignore).
 #
-#   projects/TODO-widget.md  Selection of items relevant for the iOS widget:
-#                            anything with a 📅 due date OR ⏫ high / 🔺 highest
-#                            priority. Subtasks indented under a matching
-#                            parent are included. Projects with no matches
-#                            are omitted entirely. Inlined so the widget
-#                            renders real checkboxes.
+#   projects/TODO-widget.md  Selection of OPEN items for the iOS widget: an
+#                            incomplete task ('- [ ]') with a 📅 due date OR ⏫ high
+#                            / 🔺 highest priority. Completed ('- [x]'/'- [X]') and
+#                            cancelled ('- [-]') tasks are excluded so rebuilds
+#                            never re-add done items. Incomplete subtasks under a
+#                            kept parent are included. Projects with no matches are
+#                            omitted. Inlined so the widget renders real checkboxes.
+#                            NOT git-tracked (regenerated per device; see .gitignore).
 #
 # Some per-project files are symlinks into product repos (vision, watchman).
 # `[ -f ]` follows symlinks, so they're handled the same way.
@@ -32,20 +33,18 @@ PROJECTS_DIR="$ROOT/projects"
 LIVE="$PROJECTS_DIR/TODO.md"
 WIDGET="$PROJECTS_DIR/TODO-widget.md"
 
-# === Live embedded aggregator (desktop) ===
+# === Live aggregator (desktop, Obsidian Tasks query: open tasks only) ===
 {
   echo "# Projects TODO (live)"
   echo
-  echo "Live aggregator: each section embeds the per-project \`TODO.md\` so edits propagate instantly in desktop Obsidian. The iOS Obsidian widget cannot render embeds, point it at \`TODO-widget.md\` instead. Per-project files use the Obsidian Tasks plugin emoji format: priority 🔺/⏫/🔼/🔽/⏬, dates 📅/🛫/⏳."
+  echo "Live aggregator of OPEN tasks across all projects via an Obsidian Tasks query (auto-updates as you edit each project's \`TODO.md\`; desktop only). The iOS Obsidian widget cannot render queries, point it at \`TODO-widget.md\` instead. Per-project files use the Tasks emoji format: priority 🔺/⏫/🔼/🔽/⏬, dates 📅/🛫/⏳."
   echo
-  for dir in "$PROJECTS_DIR"/*/; do
-    slug="$(basename "$dir")"
-    todo="$dir/TODO.md"
-    [ -f "$todo" ] || continue
-    echo "## $slug"
-    echo "![[projects/$slug/TODO]]"
-    echo
-  done
+  echo '```tasks'
+  echo 'not done'
+  echo 'path regex matches /projects\/[^\/]+\/TODO\.md/'
+  echo 'group by folder'
+  echo 'sort by priority'
+  echo '```'
 } > "$LIVE"
 
 # === Widget aggregator (filtered, inlined) ===
@@ -67,12 +66,13 @@ WIDGET="$PROJECTS_DIR/TODO-widget.md"
         }
         /^- \[/ {
           flush()
-          keep = ($0 ~ /⏫/ || $0 ~ /🔺/ || $0 ~ /📅/)
+          done = ($0 ~ /^- \[[xX-]\]/)
+          keep = (!done && ($0 ~ /⏫/ || $0 ~ /🔺/ || $0 ~ /📅/))
           if (keep) block = $0
           next
         }
         /^[ \t]+- \[/ {
-          if (keep && block != "") block = block "\v" $0
+          if (keep && block != "" && $0 !~ /^[ \t]+- \[[xX-]\]/) block = block "\v" $0
           next
         }
         END { flush() }

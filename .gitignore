@@ -48,3 +48,9 @@ wiki/index.md
 
 projects/*/
 !.gitkeep
+
+# Generated TODO aggregators (live `TODO.md` + iOS `TODO-widget.md`), rebuilt per
+# device by tools/scripts/rebuild-projects-todo.sh. Device-local task tracking,
+# not version-controlled. (Per-project projects/<slug>/TODO.md are ignored above
+# via `projects/*/`.)
+projects/TODO*.md
