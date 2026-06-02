@@ -6,6 +6,17 @@ power rule), `install.sh` (installer), `../tests/test_schedule.py` (21 tests).
 Activate with `tools/schedule/install.sh` + the `sudo pmset repeat wake` and
 sudoers commands it prints. This file remains the design rationale.
 
+> **2026-06-02 — backend migrated to the Claude plan; scheduler deactivated.**
+> The copilot accounts (`talicaddy`, `Noortjekjzecbkjzcebkjczeh`) are no longer
+> usable. LLM jobs now run on `--cli claude --model sonnet` (the logged-in
+> `claude` CLI = the Claude plan subscription). The two-account failover
+> collapsed to a single identity (`ACCOUNTS = ["claude-plan"]`): a Claude
+> usage-limit error marks it limited and defers the batch (no second account to
+> switch to). The scheduler is currently **deactivated** (LaunchAgent unloaded +
+> `pmset repeat` cancelled) — see "Reactivation" at the bottom of this file.
+> The copilot prose below is kept as historical rationale; where it says
+> "copilot / gpt-5.2 / two accounts," read "claude / sonnet / one identity."
+
 ## Lid-closed runs (AC-gated keep-awake)
 
 To run the nightly batch with the lid closed and **no external display**, the
@@ -37,13 +48,17 @@ pmset call still needs a password. `sudo -n` is used so a missing rule fails fas
    maintenance (Tier 0) runs offline regardless.
 4. Read-only agents never write their own reports; the **dispatcher** captures
    their stdout and writes the dated report. Keeps the agents read-only.
-5. **Backend:** all LLM jobs run on the **copilot CLI pinned to GPT-5.2**
-   (`--cli copilot --model gpt-5.2`). `gpt-5.2` is already copilot's default model
-   (`get_default_model`), but the dispatcher pins it explicitly for determinism.
-6. **Two copilot accounts with failover:** `talicaddy` and `Noortjekjzecbkjzcebkjczeh`
-   (both logged into `gh`; selected via `BRAIN_GH_ACCOUNT`). The dispatcher uses
-   one account until it hits a limit, then **switches to the other**; only when
-   **both** are limited does it defer the remaining LLM work.
+5. **Backend (current):** all LLM jobs run on the **Claude CLI pinned to
+   `sonnet`** (`--cli claude --model sonnet`), authenticated by the logged-in
+   `claude` CLI (the Claude plan subscription). The dispatcher pins the model
+   explicitly for determinism. *(Was `--cli copilot --model gpt-5.2` until
+   2026-06-02; copilot accounts are no longer usable.)*
+6. **Single backend identity (current):** `ACCOUNTS = ["claude-plan"]`. There is
+   one Claude subscription auth, so there is no account to fail over to: a Claude
+   usage-limit/rate-limit error marks the identity `limited_until` and **defers
+   the rest of the LLM batch**, caught up on the next eligible window. *(Was two
+   copilot `gh` accounts selected via `BRAIN_GH_ACCOUNT` with switch-on-limit
+   failover.)*
 7. **Nothing LLM runs per tick.** All LLM work happens in **one nightly batch**;
    the only daily-morning LLM job is the cos brief. The ~30-min tick is purely the
    catch-up gate-checker, never an LLM trigger.
@@ -51,16 +66,17 @@ pmset call still needs a password. `sudo -n` is used so a missing rule fails fas
 
 ## Backend & model
 
-- Invocation: `fish -lc "brain-wiki <agent> --cli copilot --model gpt-5.2 --effort <low|high>"`.
-  Default effort is `high`; use `low` for cheap/frequent jobs (cos brief) to save
-  premium requests, `high` for the weekly digests.
-- Egress: the squid allowlist must include Copilot's API hosts
-  (`api.githubcopilot.com`, `api.individual.githubcopilot.com`, `copilot-proxy.*`)
-  for headless runs. Interactive copilot already works in-container, so likely
-  present — **verify before relying on scheduled copilot runs.**
-- Auth: copilot uses the forwarded `COPILOT_GITHUB_TOKEN`. (Audit note from
-  `[[project_brain_devcontainer]]`: that token is currently the broad `gh` OAuth
-  token; minting a minimal copilot-only token is a separate open fix.)
+- Invocation: `fish -lc "brain-wiki <agent> --cli claude --model sonnet --effort <low|high>"`.
+  Note the `--effort` flag is a **no-op for the Claude CLI** (`EFFORT_MAP[...]["claude"]`
+  is empty in `wiki-agent.py`); it is still passed for a uniform invocation shape
+  and matters only if the backend ever switches back to copilot.
+- Egress: for headless Claude runs the squid allowlist must include
+  `api.anthropic.com`. Interactive `claude` already works in-container, so it is
+  likely present — **verify before relying on scheduled claude runs.**
+- Auth: the Claude CLI uses its own logged-in session (the Claude plan), not a
+  forwarded token. **Verify `claude -p` works non-interactively from a
+  launchd-spawned `fish` in the GUI session before reactivating** (the same
+  Keychain-reachability open question as the copilot token had).
 
 ### Account selection & failover
 
@@ -122,8 +138,8 @@ The dispatcher ticks every ~30 min only to check gates + the ledger. Actual work
 3. `enhance --iterations 5` (capped)
 4. **Sundays only:** `contradict` + `emerge` + `discover`
 
-All LLM steps: `--cli copilot --model gpt-5.2`, account-failover, deferred if
-offline. The whole batch runs at most once per night; if a night is missed
+All LLM steps: `--cli claude --model sonnet`, deferred if a usage limit is hit
+(single identity, no failover) or if offline. The whole batch runs at most once per night; if a night is missed
 (battery / asleep), the ledger catches it up on the next AC night.
 
 **Daily morning — ~07:00 window, battery OK:**
@@ -248,3 +264,27 @@ running these, but never auto-fire them.
 - Scheduling `challenge` / `connect` / `search` (need human input).
 - Auto-rewrite "Two-Output Rule" and bi-temporal facts (already rejected for the
   thinking-agent layer; see `[[project-brain-thinking-agents]]`).
+
+## Deactivation / reactivation
+
+Deactivated 2026-06-02. The plist, dispatcher, sudoers rule, and ledger are all
+left in place; only the LaunchAgent and the forced wake were turned off:
+
+```sh
+launchctl bootout gui/$(id -u)/com.brain.schedule   # stop the agent firing
+sudo pmset repeat cancel                             # stop the nightly 02:55 wake
+```
+
+**To reactivate** (after verifying `claude -p` runs non-interactively from a
+launchd-spawned login `fish` — see "Backend & model"):
+
+```sh
+tools/schedule/install.sh                            # re-copies plist, re-bootstraps, kickstarts one run
+sudo pmset repeat wakeorpoweron MTWRFSU 02:55:00     # restore the overnight wake
+launchctl list | grep com.brain                      # confirm loaded
+python3 tools/schedule/dispatch.py status            # confirm ledger + "claude-plan healthy"
+```
+
+`install.sh` is idempotent (it boots out any existing agent first), so it is the
+single command to bring the scheduler back. The least-privilege lid-close sudoers
+rule, if it was installed, is untouched by deactivation and needs no action.

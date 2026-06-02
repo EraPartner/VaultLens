@@ -50,14 +50,16 @@ def main() -> int:
     check("other -> transient", dispatch.classify_failure(1, "connection reset") == "transient")
 
     print("choose_account / failover:")
+    # Single Claude-plan identity now (no copilot multi-account failover). A
+    # limit on the sole identity means no healthy account -> the batch defers.
     led = fresh_ledger()
-    check("first healthy account picked", dispatch.choose_account(led, now) == dispatch.ACCOUNTS[0])
+    check("healthy identity picked", dispatch.choose_account(led, now) == dispatch.ACCOUNTS[0])
     dispatch.mark_limited(led, dispatch.ACCOUNTS[0], "ratelimit", now)
-    check("primary limited after ratelimit",
+    check("identity limited after ratelimit",
           led["accounts"][dispatch.ACCOUNTS[0]]["limited_until"] is not None)
-    check("failover picks second account", dispatch.choose_account(led, now) == dispatch.ACCOUNTS[1])
-    dispatch.mark_limited(led, dispatch.ACCOUNTS[1], "quota", now)
-    check("both limited -> None", dispatch.choose_account(led, now) is None)
+    check("sole identity limited -> None", dispatch.choose_account(led, now) is None)
+    dispatch.mark_limited(led, dispatch.ACCOUNTS[0], "quota", now)
+    check("still None after quota", dispatch.choose_account(led, now) is None)
 
     print("cooldown semantics:")
     led2 = fresh_ledger()

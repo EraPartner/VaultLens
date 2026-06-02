@@ -44,13 +44,18 @@ LOCK_FILE = STATE_DIR / "schedule.lock"
 LOG_DIR = STATE_DIR / "logs"
 REPORTS_DIR = ROOT / "wiki" / "reports"
 
-# Copilot accounts, priority order. Failover walks this list skipping any account
-# whose cooldown has not expired. Both confirmed present in `gh auth status`.
-ACCOUNTS = ["talicaddy", "Noortjekjzecbkjzcebkjczeh"]
+# Backend auth identities, priority order. Historically two copilot GitHub
+# accounts with failover; now a single Claude-plan subscription (the logged-in
+# `claude` CLI), so this is one sentinel entry. The failover machinery below
+# (cooldown ledger, classify_failure, choose_account) still applies: a Claude
+# usage-limit error marks this identity limited_until and defers the rest of the
+# LLM batch. Re-add entries here only if a second backend identity exists.
+ACCOUNTS = ["claude-plan"]
 
-# Backend pinned per SPEC: copilot CLI, GPT-5.2.
-CLI = "copilot"
-MODEL = "gpt-5.2"
+# Backend pinned per SPEC: Claude CLI on the Claude plan, model `sonnet`.
+# (Was copilot/gpt-5.2 until 2026-06-02; copilot accounts are no longer usable.)
+CLI = "claude"
+MODEL = "sonnet"
 
 # Windows are [start_hour, end_hour). Generous so a morning wake still catches a
 # missed 03:00 batch (the ledger makes it run at most once/day either way).
@@ -360,7 +365,10 @@ def exec_brain_wiki(args: list[str], acct: str, effort: str, timeout: int) -> tu
     inner_parts = ["brain-wiki", *args, "--cli", CLI, "--model", MODEL, "--effort", effort]
     inner = " ".join(_q(p) for p in inner_parts)
     env = dict(os.environ)
-    env["BRAIN_GH_ACCOUNT"] = acct
+    # BRAIN_GH_ACCOUNT only steers copilot's per-exec gh-token mint; for the
+    # Claude CLI (subscription auth) it is meaningless, so don't set it.
+    if CLI == "copilot":
+        env["BRAIN_GH_ACCOUNT"] = acct
     try:
         p = subprocess.run([FISH, "-lc", inner], capture_output=True, text=True, timeout=timeout, env=env)
         return p.returncode, (p.stdout or "") + (p.stderr or "")
