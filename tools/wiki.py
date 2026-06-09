@@ -191,6 +191,7 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str | list[str]], str]:
 
 
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]")
+INLINE_CODE_RE = re.compile(r"`[^`]*`")
 
 
 def extract_wikilinks(text: str) -> list[str]:
@@ -202,6 +203,9 @@ def extract_wikilinks(text: str) -> list[str]:
             continue
         if in_code:
             continue
+        # Inline code spans (e.g. `lst[[1]]`) are not wikilinks; strip them so
+        # R/Python double-bracket indexing is not misread as a [[link]].
+        line = INLINE_CODE_RE.sub("", line)
         for match in WIKILINK_RE.finditer(line):
             result.append(match.group(1).strip())
     return result
