@@ -47,6 +47,14 @@ def coverage(as_json: bool, limit: int) -> int:
       - Inbound wikilink count (underlinked < 2)
       - Outbound wikilink count (isolated < 2)
       - For topics: concept-page count mentioned in body
+
+    These are ABSOLUTE floors, not a relative ranking. Only pages that trip at
+    least one floor (score > 0) are reported. A mature, densely linked corpus
+    can clear every floor on every page, in which case this returns nothing —
+    that is "no page is starved", not a bug. As of 2026-06, the wiki's minimum
+    page is ~300+ words with >=2 inbound and >=3 outbound links, so the command
+    is empty by design. To resurface targets, lower the constants below
+    (SHALLOW_WORD_THRESHOLD etc.) or switch to relative percentile ranking.
     """
     pages = list_content_pages()
     canonical, basename_map = build_page_indexes(pages)
@@ -118,6 +126,15 @@ def coverage(as_json: bool, limit: int) -> int:
         return 0
 
     print(f"Coverage candidates (top {len(top)} of {len(rows)} flagged):\n")
+    if not rows:
+        print(
+            "No page trips the absolute floors (words<"
+            f"{SHALLOW_WORD_THRESHOLD}, inbound<2, outbound<2, topic concepts<"
+            f"{SPARSE_TOPIC_CONCEPT_THRESHOLD}). The corpus has outgrown these\n"
+            "thresholds; nothing is starved. Lower the constants in "
+            "wiki_query.py to resurface targets. See the coverage() docstring."
+        )
+        return 0
     print(
         f"{'score':>5}  {'words':>5}  {'in':>3}  {'out':>3}  flags                    path"
     )
