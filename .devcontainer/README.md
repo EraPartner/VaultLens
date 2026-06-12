@@ -1,15 +1,14 @@
 # Brain (VaultLens) devcontainer
 
 Hardened sandbox for running the wiki-builder agents on this vault. The Python
-orchestrator (`tools/wiki.py`, `tools/agents/wiki-agent.py`) and the four agent
-CLIs it drives — **claude**, **copilot**, **opencode**, **ollama** — plus the
-**qmd** local search engine all run inside the container. The agents run with
-`--dangerously-skip-permissions` / headless flags, so the container is the
-isolation boundary.
+orchestrator (`tools/wiki.py`, `tools/agents/wiki-agent.py`) and the **claude**
+CLI it drives, plus the **qmd** local search engine, run inside the container.
+The agents run with `--dangerously-skip-permissions` / headless flags, so the
+container is the isolation boundary.
 
 Modelled on the Vision/Watchman devcontainers; the differences are this
-project's stack (no web app, no database), the four-CLI agent toolchain, the
-qmd cache seeding, and a single egress hole to the host Ollama daemon.
+project's stack (no web app, no database), the agent toolchain, and the
+qmd cache seeding.
 
 ## What's inside
 
@@ -17,17 +16,14 @@ qmd cache seeding, and a single egress hole to the host Ollama daemon.
 | --- | --- | --- |
 | Python 3.12 orchestrator | `tools/wiki.py`, `tools/agents/wiki-agent.py` | stdlib only, no pip deps |
 | `claude` CLI | npm `@anthropic-ai/claude-code` (Dockerfile, build-time) | default agent (`sonnet`) |
-| `copilot` CLI | npm `@github/copilot` (Dockerfile, build-time) | `gpt-5.2`; auth via `COPILOT_GITHUB_TOKEN` (see [Choosing the Copilot account](#choosing-the-copilot-account)) |
-| `opencode` CLI | npm `opencode-ai` (Dockerfile, build-time) | `github-copilot/gpt-5.2` |
-| `ollama` CLI | host daemon via `host.docker.internal:11434` | not installed in-container |
-| `qmd` search (MCP) | npm `@tobilu/qmd` (Dockerfile, build-time) | exposed to claude via `.mcp.json` and to opencode via `opencode.json` `mcp`; search-only — index snapshotted + models live-linked from host on start |
+| `qmd` search (MCP) | npm `@tobilu/qmd` (Dockerfile, build-time) | exposed to claude via `.mcp.json`; search-only — index snapshotted + models live-linked from host on start |
 | PDF ingest | `pdftotext` (poppler) + `qpdf` (apt) | for `wiki.py preprocess` |
 | GitHub CLI (`gh`) | apt | push over HTTPS via `GH_TOKEN` |
 
 Base image: digest-pinned `debian:bookworm-slim`. Container user: `dev` (UID 1000).
 
-> **Why the CLIs install at build time.** All four CLIs (`claude`/`copilot`/
-> `opencode`/`qmd`) and the Node/CPython toolchains install in the **`Dockerfile`**,
+> **Why the CLIs install at build time.** The CLIs (`claude`/`qmd`) and the
+> Node/CPython toolchains install in the **`Dockerfile`**,
 > not `post-create`/`post-start` (Compose has no devcontainer-feature system, so
 > the Dockerfile installs them itself). qmd pulls native modules (`better-sqlite3`,
 > `tree-sitter`, `node-llama-cpp`) that need a C/C++ toolchain and Node headers
@@ -59,8 +55,6 @@ then the vault path:
 | `brain-wiki <agent> [args]` | `python3 tools/agents/wiki-agent.py <agent> …` (agent = quality/verify/ingest/contradict/search/enhance/cos/challenge/connect/emerge/discover) |
 | `brain-wiki <subcommand> [args]` | `python3 tools/wiki.py <subcommand> …` (coverage, preprocess, search, log, …) |
 | `brain-claude [args]` | `claude …` (opens in the subdir you ran it from, e.g. `projects/ict-recht`) |
-| `brain-copilot [args]` | `copilot …` |
-| `brain-opencode [args]` | `opencode …` |
 | `brain-shell [cmd]` | a bash shell, or an arbitrary in-container command |
 | `brain-claude-sync pull\|push\|status` | sync `~/.claude` between host and container |
 
@@ -78,35 +72,18 @@ brain-claude --dangerously-skip-permissions
 brain-shell .devcontainer/bin/doctor             # readiness check
 ```
 
-**Working directory.** `brain-claude`/`brain-copilot`/`brain-opencode`/`brain-shell`
+**Working directory.** `brain-claude`/`brain-shell`
 open in the in-container path matching your host `PWD`, so running `brain-claude`
 from `projects/ict-recht` lands in `/workspaces/Brain/projects/ict-recht` and
-picks up that project's `AGENTS.md` / `CLAUDE.md` / `project.md`. `brain-wiki` and
+picks up that project's `CLAUDE.md` / `project.md`. `brain-wiki` and
 `brain-cos` always run at the workspace root (they set `BRAIN_NO_CHDIR=1`).
 
-### Choosing the Copilot account
+### Credentials
 
-No git push token is forwarded at all (commits/pushes happen on the host). The
-only GitHub token in the container is `COPILOT_GITHUB_TOKEN`, the **copilot** CLI's
-LLM auth — derived **live** from your host `gh` login, never stored in the
-Keychain. It defaults to the `talicaddy` account; set `BRAIN_GH_ACCOUNT` to use
-any other account you're logged into on the host (e.g. one with a Copilot
-subscription). The wrapper resolves it with `gh auth token --user <account>`.
-Prefer an account **without write access to `EraPartner/VaultLens`**, so even
-that token can't push.
-
-```fish
-# default: copilot uses the talicaddy account
-brain-wiki enhance --strategy coverage
-
-# this run: copilot talks to a different logged-in account
-BRAIN_GH_ACCOUNT=some-other-account brain-wiki enhance --strategy coverage
-BRAIN_GH_ACCOUNT=some-other-account brain-copilot -p "..."
-```
-
-The account name must match one shown by `gh auth status`. If it isn't logged in,
-the wrapper warns and copilot runs unauthenticated (claude/opencode are
-unaffected).
+No GitHub token is forwarded at all (commits/pushes happen on the host; the
+in-container `.git` is read-only). The only credential entering the container is
+the Claude LLM auth forwarded by the wrapper (`brain-claude-code-token` Keychain
+entry via `sandbox_forward_llm_creds`).
 
 ## One-time host setup
 

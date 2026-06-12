@@ -15,22 +15,12 @@ code.claude.com
 docs.claude.com
 downloads.claude.ai
 
-# npm (installs qmd / copilot / opencode / safe-chain at runtime)
+# npm (installs qmd / safe-chain at runtime)
 registry.npmjs.org
 
 # GitHub container registry (releases / images).
 ghcr.io
 pkg-containers.githubusercontent.com
-
-# GitHub Copilot (used by both the `copilot` CLI and opencode's
-# github-copilot/gpt-5.2 provider). github.com + api.github.com (base) cover the
-# OAuth/login path; .githubusercontent.com (base) covers the proxy/telemetry CDN.
-.githubcopilot.com
-collector.github.com
-default.exp-tas.com
-
-# opencode (self-update + platform binary download on npm install)
-opencode.ai
 
 # safe-chain malware list (supply-chain screening of npm/pip installs)
 malware-list.aikido.dev

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # /usr/local/sbin/brain-entrypoint
 #
-# Runs as root (containerUser=root in devcontainer.json) on every container
-# start, BEFORE any dev session. Does all privileged setup here so the
-# container can run with --security-opt=no-new-privileges (dev sessions then
-# have no path to root — no sudo, no setuid).
+# Runs as root (the image's default user) on every container start, BEFORE any
+# dev session. Does all privileged setup here so dev sessions have no path to
+# root: the image strips all setuid/setgid bits, there's no sudo, and the
+# per-container VM boundary contains escalation (apple/container has no
+# --security-opt=no-new-privileges equivalent — this is the documented delta).
 #
 # Order: fix perms -> LOCK EGRESS (firewall, fail-closed) -> start the proxy ->
 # hand off to a keep-alive PID 1. The firewall goes up BEFORE the proxy so there
@@ -20,7 +21,7 @@ log() { echo "[entrypoint] $*"; }
 # 1) Repair ownership of named-volume mountpoints.
 /usr/local/sbin/brain-perms-fix || log "WARN: perms-fix returned non-zero."
 
-# Network pre-flight: if Docker Desktop detached us from the bridge (host
+# Network pre-flight: if the container lost its external interface (host
 # sleep/resume, DD update/reaper), there's no eth0/route and the proxy can't
 # resolve anything. Warn with the fix; still lock the firewall and keep the
 # container alive so it's diagnosable.
@@ -31,7 +32,7 @@ if (( ! has_iface )) || [[ -z "$default_route" ]]; then
   cat >&2 <<EOF
 [entrypoint] ⚠  No external network interface / default route.
 [entrypoint]    The proxy won't resolve upstreams until this is fixed.
-[entrypoint]    On your HOST shell:  docker network connect bridge $HOSTNAME
+[entrypoint]    Restart the container:  container stop $HOSTNAME; <launcher>
 [entrypoint]    Then restart the container.
 EOF
 fi
@@ -73,13 +74,13 @@ for _ in $(seq 1 20); do
   sleep 1
 done
 
-# Graceful shutdown on `docker stop` (SIGTERM): close squid cleanly so the next
-# start doesn't inherit a half-open state. (With "init": true in
-# devcontainer.json, tini reaps zombies and forwards this signal here.)
+# Graceful shutdown on `container stop` (SIGTERM): close squid cleanly so the next
+# start doesn't inherit a half-open state. (The launcher's `container run --init`
+# runs an init that reaps zombies and forwards SIGTERM here.)
 shutdown() { log "shutting down..."; squid -k shutdown 2>/dev/null || true; exit 0; }
 trap shutdown TERM INT
 
-log "Setup complete. Container ready (dev sessions via 'devcontainer exec')."
+log "Setup complete. Container ready (dev sessions via 'container exec')."
 
 # 4) Keep PID 1 alive AND supervise the egress proxy. If squid dies mid-session
 #    all egress stops (fail-closed) — restart it so it self-heals. The firewall
@@ -104,5 +105,8 @@ while true; do
   # Keep the audit log world-readable so `dev` (no longer in the proxy group)
   # can inspect it; squid recreates it 0640 on start/rotate.
   chmod o+r /var/log/squid/access.log* 2>/dev/null || true
-  sleep 30
+  # Background + wait so the TERM trap fires immediately on `container stop`; a bare
+  # `sleep 30` would defer graceful squid shutdown up to 30s (risking the kill
+  # timeout). (F15)
+  sleep 30 & wait $!
 done

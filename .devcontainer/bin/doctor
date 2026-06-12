@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Brain devcontainer readiness check. Run INSIDE the container:
 #   brain-shell        # then:  .devcontainer/bin/doctor
-#   # or directly:     devcontainer exec --workspace-folder <root> .devcontainer/bin/doctor
+#   # or directly:     container exec <brain-container> .devcontainer/bin/doctor
 #
 # Verifies the egress lock, the agent toolchain, qmd, the ollama hole, and auth.
 # Exit non-zero if any CRITICAL check fails.
@@ -17,15 +17,15 @@ echo "== Sandbox integrity =="
 # The host-side launcher (.devcontainer/bin/agent|claude|doctor) and the sandbox
 # definition (devcontainer.json runArgs, Dockerfile) live under .devcontainer and
 # run on the HOST. If they are writable from inside, a compromised agent can
-# rewrite them and escape on the next launch. devcontainer.json re-mounts
-# .devcontainer read-only, but that only applies on container CREATE — a stale
-# container booted before the change leaves the door open. Prove it's live by
-# trying to write, not by trusting the config.
+# rewrite them and escape on the next launch. The launcher mounts .devcontainer
+# read-only, but that only applies on container CREATE — a stale container booted
+# before the change leaves the door open. Prove it's live by trying to write, not
+# by trusting the config.
 DC_DIR="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd -P || echo /workspaces/Brain/.devcontainer)"
 _probe="$DC_DIR/.doctor-write-probe.$$"
 if ( : > "$_probe" ) 2>/dev/null; then
   rm -f "$_probe" 2>/dev/null || true
-  bad ".devcontainer is WRITABLE from inside — host launcher + runArgs can be tampered. REBUILD: devcontainer up --remove-existing-container"
+  bad ".devcontainer is WRITABLE from inside — host launcher + run args can be tampered. REBUILD: BRAIN_REBUILD=1 brain-claude"
 else
   ok ".devcontainer is read-only (host launcher + runArgs can't be rewritten from inside)"
 fi
@@ -37,7 +37,7 @@ if (exec 3<>/dev/tcp/127.0.0.1/3128) 2>/dev/null; then ok "proxy listening on 12
 if curl -sS --max-time 12 -o /dev/null -w '%{http_code}' https://api.anthropic.com/ 2>/dev/null | grep -qE '^[0-9]'; then
   ok "allowed host reachable via proxy (api.anthropic.com)"
 else
-  note "could not reach api.anthropic.com (network detached? check 'docker logs')"
+  note "could not reach api.anthropic.com (network detached? check 'container logs')"
 fi
 if curl -sS --max-time 8 -o /dev/null https://example.com/ 2>/dev/null; then
   bad "DENIED host example.com was reachable — allowlist not enforced!"
@@ -54,9 +54,9 @@ else
 fi
 
 echo "== Agent toolchain =="
-for c in claude copilot opencode qmd python3 pdftotext qpdf gh jq rsync git; do
+for c in claude qmd python3 pdftotext qpdf gh jq rsync git; do
   if command -v "$c" >/dev/null 2>&1; then ok "$c present"; else
-    case "$c" in claude|copilot|opencode|qmd|python3|pdftotext) bad "$c MISSING";; *) note "$c missing";; esac
+    case "$c" in claude|qmd|python3|pdftotext) bad "$c MISSING";; *) note "$c missing";; esac
   fi
 done
 if command -v safe-chain >/dev/null 2>&1; then ok "safe-chain present"; else note "safe-chain missing (installs not screened)"; fi
@@ -74,14 +74,6 @@ echo "== Auth =="
 [[ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]] \
   && ok "no git push token in env (commits happen on the host — expected)" \
   || bad "GH_TOKEN/GITHUB_TOKEN present — a container must NOT hold a git push credential"
-# COPILOT_GITHUB_TOKEN is the copilot CLI's *LLM* auth, derived live from the host
-# gh login for BRAIN_GH_ACCOUNT (default talicaddy) — not a git credential.
-if [[ -n "${COPILOT_GITHUB_TOKEN:-}" ]]; then
-  ok "Copilot LLM token in env (live from gh, BRAIN_GH_ACCOUNT=${BRAIN_GH_ACCOUNT:-talicaddy})"
-else
-  note "no COPILOT_GITHUB_TOKEN (copilot only; set BRAIN_GH_ACCOUNT or gh auth login on the host)"
-fi
-[[ -s "$HOME/.local/share/opencode/auth.json" ]] && ok "opencode auth.json present" || note "opencode auth.json missing (set brain-opencode-auth in Keychain)"
 
 echo
 echo "Summary: ${pass} ok, ${warn} warn, ${fail} fail"

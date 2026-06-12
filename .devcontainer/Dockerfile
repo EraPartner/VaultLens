@@ -1,8 +1,8 @@
-# Brain (VaultLens) sandbox image — devcontainer-FREE (built by docker compose).
+# Brain (VaultLens) sandbox image — devcontainer-FREE (built by `container build`).
 #
 # Self-contained twin of ./Dockerfile. The devcontainer build relied on
 # devcontainer FEATURES (node:1, python:1, anthropics/claude-code:1.0) plus the
-# local ./features/agent-clis (copilot, opencode, qmd). Compose has no feature
+# local ./features/agent-clis (qmd). Compose has no feature
 # system, so this file installs all of them itself. Everything else (PDF tooling,
 # hardening, egress proxy + ollama hole, baked scripts) is identical to Dockerfile.
 
@@ -78,7 +78,7 @@ RUN set -eux; \
     [ -x /opt/python/bin/python ] || ln -s python3 /opt/python/bin/python; \
     /opt/python/bin/python3 --version; /opt/python/bin/python3 -m venv --help >/dev/null
 
-# Build-time global prefix for the agent CLIs (claude/copilot/opencode/qmd). Kept
+# Build-time global prefix for the agent CLIs (claude/qmd). Kept
 # ROOT-owned (see the install below) so the unprivileged dev user can't overwrite
 # the pinned binaries post-launch (the verify-pins gate fingerprints these paths).
 # Runtime `npm i -g` (safe-chain) uses a SEPARATE dev-owned prefix,
@@ -93,8 +93,8 @@ RUN printf 'export PATH="/usr/local/share/npm-global/bin:/home/dev/.npm-global/b
 # Build network is unrestricted (no proxy env set here), so npm can fetch headers
 # and the build tools above compile qmd's native modules. Installed as root into
 # the root-owned global prefix and deliberately NOT chown'd to dev — so the pinned
-# claude/copilot/opencode/qmd binaries cannot be replaced by the dev user.
-RUN npm install -g @anthropic-ai/claude-code @github/copilot opencode-ai @tobilu/qmd \
+# claude/qmd binaries cannot be replaced by the dev user.
+RUN npm install -g @anthropic-ai/claude-code@2.1.170 @tobilu/qmd \
   && claude --version && command -v qmd && command -v copilot && command -v opencode
 
 # Runtime global installs (safe-chain in post-create) go to a SEPARATE dev-owned
@@ -153,6 +153,9 @@ RUN find / -xdev -type f -perm /6000 -exec chmod -s {} + 2>/dev/null || true
 
 WORKDIR /workspaces/Brain
 
+# NOTE: docker-only. apple/container 1.0.0 has no healthcheck runner, so this
+#   HEALTHCHECK is a no-op under the current runtime; real supervision is the
+#   entrypoint keep-alive loop (squid auto-restart). Kept for parity / docker use.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
   CMD bash -c 'pgrep -x squid >/dev/null && /usr/sbin/iptables -S OUTPUT 2>/dev/null | grep -q "^-P OUTPUT DROP"'
 

@@ -1,22 +1,15 @@
 #!/usr/bin/env bash
-# Brain-only egress exception, run by the canonical egress-firewall after the
-# base allows and before the catch-all deny: allow direct egress to the host
-# Ollama daemon (host.docker.internal:11434). ollama inference is delegated to
-# the host (model weights + Metal GPU); the container reaches it over this hole
-# with NO_PROXY=host.docker.internal. Exactly one host service is reachable.
+# Brain per-project egress exception hook, run by the canonical egress-firewall
+# after the base allows and before the catch-all deny.
+#
+# NO-OP. Ollama was dropped from the apple/container migration (no host reach on
+# apple/container without `container system dns`, which needs sudo + disables
+# Private Relay — not worth it for a feature not currently used). With Ollama gone
+# there are no per-project OUTPUT exceptions, so this stub adds none and the Brain
+# egress lock is identical to the other sandboxes' (proxy-UID-only).
+#
+# If local inference/embeddings return later, re-add the host hole here (and the
+# OLLAMA_HOST env + host reachability in bin/agent) against whatever host-reach
+# tooling apple/container provides at that point.
 set -uo pipefail
-
-OLLAMA_PORT="11434"
-# IPv4 only: getent hosts can return the IPv6 host-gateway first, which IPv4
-# iptables rejects ("host/network not found"). ahostsv4 forces the IPv4 address.
-HOST_GW="$(getent ahostsv4 host.docker.internal 2>/dev/null | awk '{print $1; exit}')"
-if [[ -n "$HOST_GW" ]]; then
-  iptables -A OUTPUT -d "$HOST_GW" -p tcp --dport "$OLLAMA_PORT" -j ACCEPT
-  if iptables -C OUTPUT -d "$HOST_GW" -p tcp --dport "$OLLAMA_PORT" -j ACCEPT 2>/dev/null; then
-    echo "[firewall] ollama hole: allow -> ${HOST_GW}:${OLLAMA_PORT} (host.docker.internal)."
-  else
-    echo "[firewall] WARN: ollama hole rule did NOT take (-> ${HOST_GW}:${OLLAMA_PORT}); ollama unreachable." >&2
-  fi
-else
-  echo "[firewall] WARN: could not resolve host.docker.internal — ollama egress denied." >&2
-fi
+exit 0

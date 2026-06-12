@@ -17,7 +17,7 @@ fi
 # key conflict, so host adds new keys without clobbering container edits).
 if [[ -f "$STAGE/claude.json" && -f /home/dev/.claude.json ]]; then
   tmp=$(mktemp)
-  if jq -s '.[1] * .[0]' /home/dev/.claude.json "$STAGE/claude.json" > "$tmp" 2>/dev/null \
+  if jq -s '.[1] * .[0] | del(.installMethod, .autoUpdatesProtectedForNative)' /home/dev/.claude.json "$STAGE/claude.json" > "$tmp" 2>/dev/null \
      && [[ -s "$tmp" ]]; then
     mv "$tmp" /home/dev/.claude.json
   else
@@ -34,7 +34,7 @@ for p in scheduled-tasks tasks jobs daemon; do
 done
 
 # --- Project memory: seed from the host (RO) into the writable volume ----------
-# The host copy is bind-mounted RO at ~/.claude-memory-seed (see compose.yaml).
+# The host copy is bind-mounted RO at ~/.claude-memory-seed (by bin/agent).
 # Mirror it into the real per-project memory path so Claude reads current host
 # memory. --delete makes the volume an exact mirror of host on every start, which
 # also wipes anything a headless wiki-agent run might have written (those never get
@@ -87,11 +87,11 @@ fi
 if [[ ! -f /run/egress-firewall-ok ]]; then
   cat >&2 <<'EOF'
 [post-start] ✖✖ EGRESS FIREWALL NOT VERIFIED (/run/egress-firewall-ok missing).
-[post-start]     The egress lock did not confirm. Check `docker logs` for the
+[post-start]     The egress lock did not confirm. Check `container logs` for the
 [post-start]     [firewall] error, then restart the container. Do NOT run
 [post-start]     --dangerously-skip-permissions until this is resolved.
 EOF
   exit 1
 fi
 
-echo "[post-start] Ready. Run agents with brain-cos / brain-wiki / brain-claude / brain-copilot / brain-opencode."
+echo "[post-start] Ready. Run agents with brain-cos / brain-wiki / brain-claude."

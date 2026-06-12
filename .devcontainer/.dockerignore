@@ -2,9 +2,13 @@
 #   init-firewall.sh, perms-fix.sh, entrypoint.sh, squid.conf, allowlist.txt
 # Everything below is used on the host or at runtime (bind-mounted), not in the
 # build — keep it out of the daemon build context.
+# NOTE: list host-only bin/ files EXPLICITLY (not `bin/` + `!bin/verify-pins`).
+# apple/container's build-context differ mis-orders re-included paths and aborts
+# with `changes out of order`. Explicit excludes avoid it; identical under Docker.
 README.md
-bin/
-!bin/verify-pins
+bin/agent
+bin/claude
+bin/doctor
 launcher-common.sh
 features/
 devcontainer.json

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs once when the devcontainer is first created, as the `dev` user.
-# Installs the agent CLIs, seeds qmd's cache from the host, and prepares git +
-# copilot for headless runs.
+# Installs the agent tooling, seeds qmd's cache from the host, and prepares
+# git for headless runs.
 #
 # NOTE: all privileged setup (perms repair, egress proxy, firewall) happens in
 # the root ENTRYPOINT (/usr/local/sbin/brain-entrypoint) BEFORE this runs. The
@@ -20,9 +20,9 @@ for _ in $(seq 1 30); do
 done
 
 # --- Supply-chain protection: Aikido safe-chain ------------------------------
-# `safe-chain setup` writes shell wrappers; BASH_ENV (devcontainer.json) sources
-# them into every bash session so npm/pip installs the agents run mid-session
-# are screened against malware-list.aikido.dev before running.
+# `safe-chain setup` writes shell wrappers; BASH_ENV (set by bin/agent at
+# `container run`) sources them into every bash session so npm/pip installs the
+# agents run mid-session are screened against malware-list.aikido.dev before running.
 echo "[post-create] Installing safe-chain (supply-chain protection)..."
 sc_ok=0
 for attempt in 1 2 3; do
@@ -40,15 +40,15 @@ else
   echo "[post-create]   supply-chain screened. \`.devcontainer/bin/doctor\` will flag this." >&2
 fi
 
-# --- Agent CLIs: installed at BUILD time by the agent-clis feature -----------
-# copilot, opencode, and qmd are baked into the image by
-# .devcontainer/features/agent-clis (the build phase has free network + a
-# toolchain). They are NOT installed here: post-create runs after egress is
-# locked, where qmd's native modules (better-sqlite3 / tree-sitter /
-# node-llama-cpp) can't fetch node headers or compile. Verify they're present.
-for c in qmd copilot opencode; do
+# --- Agent CLIs: installed at BUILD time by the Dockerfile -------------------
+# claude and qmd are baked into the image by the Dockerfile (npm install during
+# the build phase, which has free network + a toolchain). They are NOT installed
+# here: post-create runs after egress is locked, where qmd's native modules
+# (better-sqlite3 / tree-sitter / node-llama-cpp) can't fetch node headers
+# or compile. Verify they're present.
+for c in qmd; do
   command -v "$c" >/dev/null 2>&1 \
-    || echo "[post-create] ⚠ WARN: '$c' missing — rebuild the container so the agent-clis feature runs. See \`.devcontainer/bin/doctor\`." >&2
+    || echo "[post-create] ⚠ WARN: '$c' missing — rebuild the image so the Dockerfile bakes it. See \`.devcontainer/bin/doctor\`." >&2
 done
 
 # --- qmd: index + models are wired up by post-start (runs on every start) -----
@@ -56,30 +56,6 @@ done
 # host's live cache and the models are symlinked read-only to it. That logic
 # lives in post-start.sh so a host re-embed propagates on the next start, not
 # just at first create. Nothing qmd-related is seeded here.
-
-# --- copilot: seed the headless permission allowlist + qmd MCP ---------------
-# copilot ignores --allow-tool in headless (-p) mode (upstream bug), so the wiki
-# agents rely on a pre-seeded ~/.copilot/permissions-config.json keyed by the
-# repo path. This script registers the read/write shell command set.
-if [[ -x tools/scripts/setup-copilot-perms.sh ]]; then
-  echo "[post-create] Seeding copilot permissions for /workspaces/Brain..."
-  tools/scripts/setup-copilot-perms.sh || echo "[post-create]   copilot perms seed failed (non-fatal)." >&2
-fi
-# Register qmd as an MCP server for copilot (search/enhance agents use it).
-if [[ ! -f /home/dev/.copilot/mcp-config.json ]]; then
-  mkdir -p /home/dev/.copilot
-  cat > /home/dev/.copilot/mcp-config.json <<'JSON'
-{
-  "mcpServers": {
-    "qmd": {
-      "type": "stdio",
-      "command": "qmd",
-      "args": ["mcp"]
-    }
-  }
-}
-JSON
-fi
 
 # --- git: minimal ~/.gitconfig — read-only git only --------------------------
 # Just marks /workspaces/Brain a safe.directory so read-only git ops
@@ -109,20 +85,8 @@ if [[ ! -f /home/dev/.claude.json && -f "$STAGE/claude.json" ]]; then
   chmod 0600 /home/dev/.claude.json
 fi
 
-# gh authenticates via GH_TOKEN forwarded from the host Keychain by the wrapper
-# (no persistent token volume). The same token authenticates copilot.
-if ! gh auth status >/dev/null 2>&1; then
-  cat <<'NOTE'
-[post-create] gh is not authenticated. The wrapper forwards GH_TOKEN from your
-              host Keychain entry `brain-gh-token` if present. To set it up,
-              on the HOST run once:
-                gh auth token | security add-generic-password \
-                  -s brain-gh-token -a "$USER" -w
-              (or paste a fine-grained PAT with the "Copilot Requests"
-              permission — that token also authenticates the copilot CLI).
-              Then re-run `brain-wiki` / `brain-claude`.
-NOTE
-fi
+# gh is unauthenticated by design: no GitHub credential enters the container
+# (commits/pushes happen on the HOST, the in-container .git is read-only).
 
 echo "[post-create] Done."
 echo "[post-create] Run the agents with, e.g.:"
