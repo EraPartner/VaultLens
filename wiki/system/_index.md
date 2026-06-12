@@ -1,7 +1,7 @@
 ---
 title: System Index
 type: index
-updated: 2026-06-01
+updated: 2026-06-07
 page_count: 1
 ---
 
