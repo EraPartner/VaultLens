@@ -1,1 +1,0 @@
-../../tools/agents/wiki-source-verifier.agent.md

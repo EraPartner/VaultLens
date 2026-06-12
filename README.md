@@ -2,7 +2,8 @@
 
 ## What's Included
 
-- `AGENTS.md` - Operating schema for LLM agents
+- `CLAUDE.md` - Operating schema for LLM agents
+- `.claude/` - Agent definitions (`agents/`) and operational runbook skills (`skills/`)
 - `wiki/` - Wiki templates and system
 - `tools/` - CLI utilities
 - `projects/` - Application workspaces that consume the wiki as a knowledge base
@@ -15,7 +16,7 @@
 git clone https://github.com/EraPartner/VaultLens.git my-wiki
 cd my-wiki
 
-# Initialize data directories (canonical set — see AGENTS.md "Directory contract")
+# Initialize data directories (canonical set — see CLAUDE.md "Directory contract")
 mkdir -p raw/sources raw/assets raw/inbox
 mkdir -p wiki/sources wiki/entities wiki/concepts wiki/topics \
          wiki/comparisons wiki/syntheses wiki/queries wiki/reports wiki/inventory wiki/system
@@ -33,13 +34,13 @@ vault/
 ├─ raw/                ← immutable ingested sources (source of truth)
 ├─ wiki/               ← curated knowledge base (generated from raw/)
 ├─ projects/<slug>/    ← project workspaces (application layer)
-└─ AGENTS.md           ← operating schema
+└─ CLAUDE.md           ← operating schema
 
 # Sibling top-level layers, NOT nested. Dependency flows left→right:
 # raw/ → wiki/ → projects/ (each consumes the one before it).
 ```
 
-Each project has a `project.md` that declares its description, folder layout, rules, and linked wiki pages. The scaffold also drops an `AGENTS.md` (with `CLAUDE.md` and `opencode.json` shims) so any AI CLI launched from inside the project picks up the project's context plus the conventions in the root `AGENTS.md` (`## Working inside a project`).
+Each project has a `project.md` that declares its description, folder layout, rules, and linked wiki pages. The scaffold also drops a `CLAUDE.md` entrypoint so a session launched from inside the project picks up the project's context plus the conventions in the root `CLAUDE.md` (`## Working inside a project`).
 
 ### Scaffold a project
 
@@ -59,7 +60,7 @@ python3 tools/wiki.py project show my-thesis
 
 ### Work inside a project
 
-`cd` into `projects/<slug>/` and start your AI CLI of choice (Claude Code, opencode, Copilot CLI). The project's `AGENTS.md` instructs the agent to read `project.md` and the root schema; the root `## Working inside a project` section defines the wiki search ladder, citation discipline, and Q&A artifact convention. Durable Q&A lands in `projects/<slug>/queries/` by default, redirectable via `## Rules` in `project.md`.
+`cd` into `projects/<slug>/` and start Claude Code. The project's `CLAUDE.md` loads `project.md`, and the root schema loads automatically; the root `## Working inside a project` section defines the wiki search ladder, citation discipline, and Q&A artifact convention. Durable Q&A lands in `projects/<slug>/queries/` by default, redirectable via `## Rules` in `project.md`.
 
 ### project.md schema
 
@@ -81,9 +82,7 @@ wiki_refs:
 ## Layout
 projects/my-thesis/
   project.md     ← metadata, description, layout, rules, wiki refs
-  AGENTS.md      ← AI entrypoint: read project.md + ../../AGENTS.md (auto-generated)
-  CLAUDE.md      ← Claude Code shim: @AGENTS.md + @project.md (auto-generated)
-  opencode.json  ← opencode shim: instructions: ["AGENTS.md"] (auto-generated)
+  CLAUDE.md      ← AI entrypoint: @project.md + operating principles (auto-generated)
   TODO.md        ← per-project todo; embedded into projects/TODO.md (auto-generated)
   queries/       ← Q&A artifacts
   papers/        ← relevant PDFs

@@ -142,7 +142,7 @@ def save_ledger(ledger: dict) -> None:
 # --------------------------------------------------------------------------- #
 
 def classify_failure(returncode: int, text: str) -> str:
-    """Map a copilot exit into one of: ok | quota | ratelimit | transient."""
+    """Map a CLI exit into one of: ok | quota | ratelimit | transient."""
     if returncode == 0:
         return "ok"
     t = text.lower()
@@ -212,7 +212,7 @@ def step_due(step: "Step", ledger: dict, now: datetime) -> bool:
 @dataclass
 class Step:
     name: str
-    kind: str                       # "host" (wiki.py, offline) | "llm" (brain-wiki copilot)
+    kind: str                       # "host" (wiki.py, offline) | "llm" (brain-wiki claude)
     period: str                     # "daily" | "weekly"
     window: tuple[int, int]
     gates: list[str]                # subset of {"ac","online","docker","icloud","battery"}
@@ -286,7 +286,9 @@ class Gates:
         return True, ""
 
     def _g_online(self) -> bool:
-        return self._nc("github.com", 443) or self._nc("api.githubcopilot.com", 443)
+        # LLM jobs run on the Claude CLI; probe its API endpoint (github.com as
+        # a generic-connectivity fallback for non-LLM online needs).
+        return self._nc("api.anthropic.com", 443) or self._nc("github.com", 443)
 
     def _g_docker(self) -> bool:
         if self._docker_up():
@@ -365,10 +367,9 @@ def exec_brain_wiki(args: list[str], acct: str, effort: str, timeout: int) -> tu
     inner_parts = ["brain-wiki", *args, "--cli", CLI, "--model", MODEL, "--effort", effort]
     inner = " ".join(_q(p) for p in inner_parts)
     env = dict(os.environ)
-    # BRAIN_GH_ACCOUNT only steers copilot's per-exec gh-token mint; for the
-    # Claude CLI (subscription auth) it is meaningless, so don't set it.
-    if CLI == "copilot":
-        env["BRAIN_GH_ACCOUNT"] = acct
+    # `acct` is the failover-ledger identity. The Claude CLI authenticates via
+    # its own subscription login, so no per-exec env steering is needed; the
+    # parameter stays for the multi-identity ledger interface.
     try:
         p = subprocess.run([FISH, "-lc", inner], capture_output=True, text=True, timeout=timeout, env=env)
         return p.returncode, (p.stdout or "") + (p.stderr or "")
@@ -578,7 +579,7 @@ def _run_steps(steps: list[Step], ledger: dict, gates: "Gates", now: datetime,
                     all_ok = False
                     llm_blocked = True
                     log(f"  {step.name} deferred: {who}")
-                    notify("Brain schedule", "All copilot accounts limited; LLM jobs deferred")
+                    notify("Brain schedule", "Claude usage limited; LLM jobs deferred")
                     break  # shared quota -> stop the LLM batch this tick
                 else:  # transient
                     all_ok = False

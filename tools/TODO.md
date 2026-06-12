@@ -10,16 +10,16 @@ Format: Obsidian Tasks plugin emoji. Priority 🔺 highest / ⏫ high / 🔼 med
 
 ### Scheduler — verify before trusting unattended runs
 
-- [ ] Live smoke-test one scheduled LLM run (copilot/GPT-5.2): confirm the Keychain token is reachable from a launchd-spawned `fish -lc "brain-wiki …"`. ⏫
-- [ ] Confirm the squid egress allowlist includes Copilot API hosts (`api.githubcopilot.com`, `api.individual.githubcopilot.com`) for headless runs. ⏫
-- [ ] Confirm copilot honours the per-exec `COPILOT_GITHUB_TOKEN` over any cached in-container auth, so the `talicaddy` ↔ `Noortje…` account failover actually takes effect. ⏫
+- [ ] Live smoke-test one scheduled LLM run (claude/sonnet): confirm the subscription login is reachable from a launchd-spawned `fish -lc "brain-wiki …"`. ⏫
+- [ ] Confirm the squid egress allowlist includes the Claude API host (`api.anthropic.com`) for headless runs. ⏫
+- [-] ~~Confirm copilot honours the per-exec `COPILOT_GITHUB_TOKEN` … account failover~~ (obsolete: scheduler migrated to the single Claude-plan identity, 2026-06-11)
 - [ ] Install the least-privilege sudoers rule at `/etc/sudoers.d/brain-schedule` (from `schedule/brain-schedule.sudoers`) so lid-closed-on-AC nights can run. 🔼
 - [ ] Lid-closed overnight test: verify the scheduled dark-wake stays alive long enough to set `disablesleep` and run the batch. 🔼
 
 ### Docs drift
 
 - [x] `wiki/system/schema.md`: added `inventory/` + `system/` category rows and an `inventory` type subsection; bumped `updated`. 🔼 ✅ 2026-06-01
-- [ ] `AGENTS.md` `tools/` line: list the split modules (`wiki_ingest` / `wiki_log` / `wiki_projects` / `wiki_query`) and `tools/schedule/`. 🔽
+- [x] `CLAUDE.md` (ex-AGENTS.md) `tools/` line: lists the split modules and `tools/schedule/` since the Claude-only schema rewrite. 🔽 ✅ 2026-06-11
 
 ### Nice to have
 

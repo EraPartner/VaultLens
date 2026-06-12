@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(grep *)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(wc *)",
+      "Bash(python3 tools/wiki.py search*)",
+      "Bash(python3 tools/wiki.py project list*)",
+      "Bash(python3 tools/wiki.py project show*)",
+      "Bash(python3 tools/wiki.py tags*)",
+      "Bash(python3 tools/wiki.py coverage*)",
+      "Bash(python3 tools/wiki.py lint*)",
+      "Bash(python3 tools/wiki.py validate-log*)",
+      "Bash(python3 tools/wiki.py append-log*)",
+      "Bash(python3 tools/wiki.py preprocess*)",
+      "Bash(python3 tools/wiki_extra.py next-id*)",
+      "Bash(python3 tools/wiki_extra.py qmd-search*)",
+      "Bash(python3 tools/wiki_extra.py stats*)",
+      "Bash(qmd query*)",
+      "Bash(qmd search*)",
+      "Bash(qmd vsearch*)",
+      "Bash(qmd status*)",
+      "Bash(qmd ls*)",
+      "Bash(qmd collection list*)",
+      "Bash(qmd collection show*)"
+    ]
+  },
+  "enabledMcpjsonServers": ["qmd"]
+}

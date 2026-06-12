@@ -1,1 +1,0 @@
-../../tools/agents/wiki-challenge.agent.md

@@ -1,1 +1,0 @@
-../../tools/agents/wiki-idea-discovery.agent.md

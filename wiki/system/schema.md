@@ -9,7 +9,7 @@ summary: Operating conventions and schema for this wiki.
 
 # Operating Schema
 
-The authoritative schema is at vault root: `../AGENTS.md`
+The authoritative schema is at vault root: `../CLAUDE.md`
 
 ## Quick Reference
 
@@ -126,7 +126,7 @@ report_type: lint|audit|other
 #### Inventory
 Tracked intentions, filed under `inventory/<kind>/` where kind is one of
 ingest-candidate / question / task / watch / corpus / artifact / item. Managed
-with `python3 tools/wiki.py inventory` (list/new/show). See `../AGENTS.md` for
+with `python3 tools/wiki.py inventory` (list/new/show). See `../CLAUDE.md` for
 the full field set.
 
 ```

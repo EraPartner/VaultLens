@@ -1,1 +1,0 @@
-../../tools/agents/wiki-quality-reviewer.agent.md

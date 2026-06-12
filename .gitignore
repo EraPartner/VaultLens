@@ -16,7 +16,10 @@ wiki-log-*.json
 .devcontainer/* [0-9].*
 .devcontainer/* [0-9]
 
-.claude
+# Claude config: track CLAUDE.md, .claude/agents/, .claude/skills/, .claude/settings.json;
+# only machine-local state stays ignored.
+.claude/settings.local.json
+.claude/worktrees/
 .ruff_cache
 __pycache__
 

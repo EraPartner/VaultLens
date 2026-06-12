@@ -2,7 +2,7 @@
 """Project workspaces that consume the wiki KB (list/new/show/link).
 
 A project lives under `projects/<slug>/` with its own `project.md` (the source of
-truth), agent shims (AGENTS.md/CLAUDE.md/opencode.json), and a TODO.md that feeds
+truth), the CLAUDE.md agent shim, and a TODO.md that feeds
 the aggregated `projects/TODO.md`. This module scaffolds new projects from
 templates and manages their `wiki_refs`. The `Project` dataclass and
 `list_projects` loader live in `wiki.py` (shared with the linter).
@@ -67,7 +67,7 @@ read this section to understand where things live before answering questions.
 ## Rules
 
 Project-specific rules agents working in this directory MUST follow. These
-override the defaults in the root `AGENTS.md` (`## Working inside a project`)
+override the defaults in the root `CLAUDE.md` (`## Working inside a project`)
 when they conflict. Be specific.
 
 <!-- Examples:
@@ -96,23 +96,18 @@ python3 tools/wiki.py project link {slug} concepts/some-page
 """
 
 
-# Claude Code shim: import the project AGENTS.md (instructions + handoff conventions)
-# and project.md (deterministically — it's the per-project source of truth, so don't
-# leave loading it to the agent's discretion). The root ../../AGENTS.md schema stays a
-# lazy "read if needed" instruction inside AGENTS.md to avoid loading it every session.
-CLAUDE_MD_TEMPLATE = "@AGENTS.md\n@project.md\n"
+# Project CLAUDE.md: imports project.md deterministically (it's the per-project
+# source of truth, so don't leave loading it to the agent's discretion). The
+# root vault CLAUDE.md (the wiki operating schema) loads automatically — Claude
+# Code walks ancestor directories — so no explicit pointer is needed.
+CLAUDE_MD_TEMPLATE = """\
+@project.md
 
-# Project-level AGENTS.md shim: points tools that look for AGENTS.md in the
-# working directory to the root schema rather than duplicating it.
-AGENTS_MD_TEMPLATE = """\
 # Project Agent Context
 
-This is a project workspace inside the Brain wiki.
-
-Before answering questions or editing files:
-1. Read `project.md` (this directory) — project description, layout, rules, current status.
-2. If not already loaded: read `../../AGENTS.md` — the full wiki operating schema
-   (directory contract, agents, search tools, write boundaries, project workflow conventions).
+This is a project workspace inside the Brain wiki. The root vault schema
+(`../../CLAUDE.md`) is loaded automatically; `## Rules` in `project.md`
+overrides it where they conflict.
 
 Write only inside this project directory. Never modify `wiki/` or `raw/`.
 
@@ -203,17 +198,13 @@ def _project_new(slug: str) -> int:
         encoding="utf-8",
     )
     (project_dir / "CLAUDE.md").write_text(CLAUDE_MD_TEMPLATE, encoding="utf-8")
-    (project_dir / "AGENTS.md").write_text(AGENTS_MD_TEMPLATE, encoding="utf-8")
-    (project_dir / "opencode.json").write_text('{\n  "instructions": ["AGENTS.md"]\n}\n', encoding="utf-8")
     (project_dir / "TODO.md").write_text(
         TODO_TEMPLATE.format(slug=cleaned), encoding="utf-8"
     )
     _rebuild_projects_todo()
     print(f"Created project '{cleaned}' at {project_dir.relative_to(ROOT)}")
     print("  - project.md")
-    print("  - AGENTS.md      (AI entrypoint → read project.md + ../../AGENTS.md)")
-    print("  - CLAUDE.md      (Claude Code shim → @AGENTS.md + @project.md)")
-    print("  - opencode.json  (opencode shim → instructions: [AGENTS.md])")
+    print("  - CLAUDE.md      (AI entrypoint → @project.md + operating principles; root schema auto-loads)")
     print("  - TODO.md        (per-project todo; embedded into projects/TODO.md, P1 items surface in projects/TODO-widget.md)")
     print("  - queries/       (default Q&A artifact dir; redefine in ## Rules if you want)")
     print(

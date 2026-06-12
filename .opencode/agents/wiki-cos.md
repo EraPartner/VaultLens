@@ -1,1 +1,0 @@
-../../tools/agents/wiki-cos.agent.md

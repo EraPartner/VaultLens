@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Wiki agent wrapper - invoke AI agents with configurable models and effort."""
+"""Wiki agent wrapper - invoke the Claude Code CLI with the vault's custom agents.
+
+Agent definitions live in .claude/agents/*.md (Claude subagent format). This
+launcher injects the agent body as a headless `claude -p` system prompt and adds
+the orchestration Claude doesn't do natively: enhance loops with strategy
+cycling, the CoS live-context gather, PDF pre-extraction, inbox promotion, and
+auto-logging."""
 
 import argparse
 import datetime as _dt
@@ -14,7 +20,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-AGENTS_DIR = ROOT / "tools" / "agents"
+AGENTS_DIR = ROOT / ".claude" / "agents"
 TOOLS_DIR = ROOT / "tools"
 
 
@@ -30,10 +36,10 @@ def _in_container() -> bool:
 def _enforce_container(args) -> int | None:
     """Refuse to invoke the agent CLIs outside the egress-locked sandbox.
 
-    This runner shells out to claude/copilot/opencode/ollama, which must only
-    run inside the container. --help and --debug (a dry run that prints the
-    command without executing) are still allowed on the host. Set
-    BRAIN_AGENT_ALLOW_HOST=1 to override (not recommended).
+    This runner shells out to the claude CLI, which must only run inside the
+    container. --help and --debug (a dry run that prints the command without
+    executing) are still allowed on the host. Set BRAIN_AGENT_ALLOW_HOST=1 to
+    override (not recommended).
     """
     if _in_container() or args.debug or os.environ.get("BRAIN_AGENT_ALLOW_HOST") == "1":
         return None
@@ -83,33 +89,26 @@ def _resolve_pdf_to_markdown(path_str: str) -> str:
 
 
 AGENT_FILES = {
-    "quality": "wiki-quality-reviewer.agent.md",
-    "verify": "wiki-source-verifier.agent.md",
-    "ingest": "wiki-ingest.agent.md",
-    "contradict": "wiki-contradiction-detector.agent.md",
-    "search": "wiki-search.agent.md",
-    "enhance": "wiki-enhancer.agent.md",
-    "cos": "wiki-cos.agent.md",
-    "challenge": "wiki-challenge.agent.md",
-    "connect": "wiki-connect.agent.md",
-    "emerge": "wiki-emerge.agent.md",
-    "discover": "wiki-idea-discovery.agent.md",
-}
-
-# Symlink stems in .opencode/agents/ are just the agent file stripped of `.agent.md`.
-OPENCODE_AGENT_NAMES = {
-    key: filename.removesuffix(".agent.md") for key, filename in AGENT_FILES.items()
+    "quality": "wiki-quality-reviewer.md",
+    "verify": "wiki-source-verifier.md",
+    "ingest": "wiki-ingest.md",
+    "contradict": "wiki-contradiction-detector.md",
+    "search": "wiki-search.md",
+    "enhance": "wiki-enhancer.md",
+    "cos": "wiki-cos.md",
+    "challenge": "wiki-challenge.md",
+    "connect": "wiki-connect.md",
+    "emerge": "wiki-emerge.md",
+    "discover": "wiki-idea-discovery.md",
 }
 
 CLI_OPTIONS = {
-    "opencode": "opencode",
     "claude": "claude",
-    "ollama": "ollama",
-    "copilot": "copilot",
 }
 
-# Per-agent runtime permissions. Used by the copilot and claude branches to
-# pass a minimal set of --allow-tool / --allowedTools / --add-dir flags.
+# Per-agent runtime permissions, used to build the claude headless
+# --allowedTools / --add-dir flags. The same profiles are mirrored in the
+# `tools:` frontmatter of .claude/agents/*.md for interactive subagent use.
 #   shell:         grant a curated read-only shell command set.
 #   write:         grant the file write/edit tool (+ extra shell tools needed to manage files).
 #   writable_dirs: paths (relative to ROOT) the agent must be able to modify. Empty for read-only
@@ -135,9 +134,8 @@ AGENT_PERMISSIONS: dict[str, dict] = {
 
 # Shell commands granted to any agent with shell access. Strictly read-only;
 # helper utilities for navigation, text inspection, search, and wiki tooling.
-# `set` is here because copilot wraps multi-line scripts with `set -euo
-# pipefail`, making `set` the first command identifier; without it, every
-# multi-line shell call is denied.
+# `set` stays so multi-line scripts prefixed with `set -euo pipefail` match
+# the allowlist on their first command identifier.
 READ_ONLY_SHELL_COMMANDS = (
     "set",
     "ls",
@@ -177,22 +175,22 @@ def _agent_permissions(agent: str) -> dict:
 STRATEGY_HINTS = {
     "coverage": (
         "Selection strategy: use **Strategy C — Sparse coverage** from "
-        "wiki-enhancer.agent.md. Run `python3 tools/wiki.py coverage --json` "
+        "your wiki-enhancer instructions. Run `python3 tools/wiki.py coverage --json` "
         "and pick the topic with the lowest coverage score where a dense "
         "source exists."
     ),
     "random": (
         "Selection strategy: use **Strategy B — Random page** from "
-        "wiki-enhancer.agent.md. Pick a random concept page; first glance "
+        "your wiki-enhancer instructions. Pick a random concept page; first glance "
         "at `tail -20 wiki/log.md` to avoid repeating recent work."
     ),
     "stub": (
         "Selection strategy: use **Strategy A — Shallowest stub** from "
-        "wiki-enhancer.agent.md. Pick the concept page with the fewest lines."
+        "your wiki-enhancer instructions. Pick the concept page with the fewest lines."
     ),
     "source-gap": (
         "Selection strategy: use **Strategy D — Source-driven gap discovery** "
-        "from wiki-enhancer.agent.md. This is SOURCE-FIRST: do NOT start by "
+        "from your wiki-enhancer instructions. This is SOURCE-FIRST: do NOT start by "
         "picking a shallow concept page. Instead: (1) pick a source document "
         "from wiki/sources/ — either random "
         "(`python3 -c \"import random, glob; print(random.choice(glob.glob('wiki/sources/src-*.md')))\"`) "
@@ -213,7 +211,7 @@ STRATEGY_HINTS = {
     ),
     "auto": (
         "Selection strategy: use **Strategy E — Mixed / agent-chosen** from "
-        "wiki-enhancer.agent.md. Read `tail -30 wiki/log.md`, glance at the "
+        "your wiki-enhancer instructions. Read `tail -30 wiki/log.md`, glance at the "
         "concept page size distribution, and pick whichever of Strategies "
         "A-D would most benefit the wiki right now. Avoid the strategy "
         "used in the most recent log entry."
@@ -356,26 +354,14 @@ def _resolve_strategy(strategy: str | None, iteration_index: int) -> str | None:
     return strategy
 
 
-EFFORT_MAP = {
-    "low": {
-        "opencode": ["--variant", "minimal"],
-        "claude": [],
-        "ollama": [],
-        "copilot": ["--effort", "low"],
-    },
-    "medium": {"opencode": [], "claude": [], "ollama": [], "copilot": []},
-    "high": {
-        "opencode": ["--variant", "xhigh"],
-        "claude": [],
-        "ollama": [],
-        "copilot": ["--effort", "high"],
-    },
-    "xhigh": {
-        "opencode": ["--variant", "xhigh"],
-        "claude": [],
-        "ollama": [],
-        "copilot": ["--effort", "xhigh"],
-    },
+# Effort currently maps to no claude CLI flags (the headless CLI inherits the
+# session/settings effort level); the arg is kept for interface stability with
+# brain-wiki / dispatch.py callers.
+EFFORT_MAP: dict[str, list[str]] = {
+    "low": [],
+    "medium": [],
+    "high": [],
+    "xhigh": [],
 }
 
 
@@ -385,17 +371,17 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run quality review with opencode
+  # Run quality review
   python3 tools/agents/wiki-agent.py quality --page wiki/concepts/my-concept.md
 
-  # Run with Claude Sonnet
-  python3 tools/agents/wiki-agent.py quality --page wiki/concepts/my-concept.md --cli claude --model sonnet
+  # Run with a specific Claude model
+  python3 tools/agents/wiki-agent.py quality --page wiki/concepts/my-concept.md --model opus
 
   # Run deep analysis with high effort
   python3 tools/agents/wiki-agent.py verify --source wiki/sources/my-source.md --effort high
 
-  # Run ingest with Ollama
-  python3 tools/agents/wiki-agent.py ingest --source raw/sources/paper.pdf --cli ollama --model llama3
+  # Ingest a PDF
+  python3 tools/agents/wiki-agent.py ingest --source raw/sources/paper.pdf
 
   # Background enhancement loop (alternate strategies, never stop, survives errors)
   python3 tools/agents/wiki-agent.py enhance --background &
@@ -534,10 +520,7 @@ Examples:
 def get_default_model(cli: str) -> str:
     """Get default model for CLI."""
     defaults = {
-        "opencode": "github-copilot/gpt-5.2",
         "claude": "sonnet",
-        "ollama": "qwen3.5:4b",
-        "copilot": "gpt-5.2",
     }
     return defaults.get(cli, "default")
 
@@ -552,16 +535,15 @@ def build_prompt(
     page: str,
     source: str,
     custom: str,
-    cli: str = "",
     strategy: str | None = None,
     mode: str = "brief",
     project: str | None = None,
 ) -> str:
-    """Build the task prompt - simple description, full instructions come from .agent.md via system prompt."""
+    """Build the task prompt - simple description, full instructions come from the agent definition via system prompt."""
     if custom:
         return custom
 
-    # Chief of Staff: mode-specific prompts (same across all CLIs — no file attachments)
+    # Chief of Staff: mode-specific prompts (no file attachments)
     if agent == "cos":
         cos_prompts = {
             "brief": "Review the live context in your system prompt and produce a full chief-of-staff daily brief.",
@@ -577,82 +559,37 @@ def build_prompt(
         }
         return cos_prompts.get(mode, cos_prompts["brief"])
 
-    # opencode attaches files via -f, so reference "the attached file" instead
-    # of embedding the path (opencode interprets path-like strings as filenames).
-    _attached_note = (
-        "The source file is already attached to this conversation via -f. "
-        "Do NOT attempt to read it from disk or glob for it in raw/sources/. "
-        "Only read/write files inside the wiki/ directory."
-    )
-    if cli == "opencode":
-        prompts = {
-            "quality": "Analyze the attached wiki page",
-            "verify": f"Verify claims in the attached wiki source page. {_attached_note}",
-            "ingest": (
-                "Process the attached source material into the wiki. The attached file "
-                "is the pre-extracted markdown of the source (raw/sources-text/*.md); "
-                "treat it as the canonical text. Never try to Read raw .pdf files. "
-                f"{_attached_note}"
-            ),
-            "contradict": "Find potential contradictions across wiki pages",
-            "search": f"Search the wiki for: {source if source else page}",
-            "enhance": (
-                "Enhance the wiki for the attached target. Any attached "
-                "raw/sources-text/*.md file is the pre-extracted ground-truth source — "
-                "re-read it carefully, fix correctness issues, fill sparse coverage, and "
-                "strengthen cross-topic interlinking. Never try to Read raw .pdf files. "
-                "Follow wiki-enhancer.agent.md."
-            ),
-            "challenge": (
-                "Red-team this position against the operator's own vault history: "
-                f"{source or page or '(no explicit position given — report that one is required)'}"
-            ),
-            "connect": (
-                "Bridge these two domains using the wiki link graph and produce 3-5 "
-                f"non-obvious connection ideas. Domain A: {source or '(missing)'}. "
-                f"Domain B: {page or '(missing — report that a second domain is required)'}"
-            ),
-            "emerge": (
-                "Surface unnamed patterns from recent wiki activity. Timeframe: "
-                f"{source or 'last 30 days'}."
-            ),
-            "discover": (
-                "Rank 3-5 next-direction candidates from existing vault material "
-                "(open questions, ungraduated ideas, orphan and sparse pages)."
-            ),
-        }
-    else:
-        prompts = {
-            "quality": f"Analyze the wiki page at: {page}",
-            "verify": f"Verify claims in the wiki source page: {source}",
-            "ingest": f"Process new source material: {source}",
-            "contradict": "Find potential contradictions across wiki pages",
-            "search": f"Search the wiki for: {source if source else page}",
-            "enhance": (
-                f"Enhance wiki coverage. Target: "
-                f"{page or source or 'auto-pick sparsest area via python3 tools/wiki.py coverage'}. "
-                f"Re-read the source PDF if available. Fix correctness, expand sparse "
-                f"sections, create new concept pages where the source is dense, and "
-                f"strengthen cross-topic interlinking. Follow wiki-enhancer.agent.md."
-            ),
-            "challenge": (
-                "Red-team this position against the operator's own vault history: "
-                f"{source or page or '(no explicit position given — report that one is required)'}"
-            ),
-            "connect": (
-                "Bridge these two domains using the wiki link graph and produce 3-5 "
-                f"non-obvious connection ideas. Domain A: {source or '(missing)'}. "
-                f"Domain B: {page or '(missing — report that a second domain is required)'}"
-            ),
-            "emerge": (
-                "Surface unnamed patterns from recent wiki activity. Timeframe: "
-                f"{source or 'last 30 days'}."
-            ),
-            "discover": (
-                "Rank 3-5 next-direction candidates from existing vault material "
-                "(open questions, ungraduated ideas, orphan and sparse pages)."
-            ),
-        }
+    prompts = {
+        "quality": f"Analyze the wiki page at: {page}",
+        "verify": f"Verify claims in the wiki source page: {source}",
+        "ingest": f"Process new source material: {source}",
+        "contradict": "Find potential contradictions across wiki pages",
+        "search": f"Search the wiki for: {source if source else page}",
+        "enhance": (
+            f"Enhance wiki coverage. Target: "
+            f"{page or source or 'auto-pick sparsest area via python3 tools/wiki.py coverage'}. "
+            f"Re-read the source PDF if available. Fix correctness, expand sparse "
+            f"sections, create new concept pages where the source is dense, and "
+            f"strengthen cross-topic interlinking. Follow your wiki-enhancer instructions."
+        ),
+        "challenge": (
+            "Red-team this position against the operator's own vault history: "
+            f"{source or page or '(no explicit position given — report that one is required)'}"
+        ),
+        "connect": (
+            "Bridge these two domains using the wiki link graph and produce 3-5 "
+            f"non-obvious connection ideas. Domain A: {source or '(missing)'}. "
+            f"Domain B: {page or '(missing — report that a second domain is required)'}"
+        ),
+        "emerge": (
+            "Surface unnamed patterns from recent wiki activity. Timeframe: "
+            f"{source or 'last 30 days'}."
+        ),
+        "discover": (
+            "Rank 3-5 next-direction candidates from existing vault material "
+            "(open questions, ungraduated ideas, orphan and sparse pages)."
+        ),
+    }
 
     base = prompts.get(agent, "Analyze and report.")
     if agent == "enhance" and strategy and strategy in STRATEGY_HINTS:
@@ -667,10 +604,15 @@ def build_prompt(
 def _prepare_system_prompt(agent_file: Path, system_addon: str) -> str:
     """Return the system-prompt text: the agent instructions plus the addon (if any).
 
-    Every CLI consumes this as a string (claude --system-prompt, ollama --system,
-    copilot folds it into the prompt text), so no on-disk temp file is needed.
+    Strips the YAML frontmatter from the .claude/agents/*.md definition: the
+    frontmatter (name/description/tools) is consumed by Claude Code's native
+    subagent loader; only the body below it is the system prompt.
     """
     agent_instructions = agent_file.read_text(encoding="utf-8")
+    if agent_instructions.startswith("---\n"):
+        end = agent_instructions.find("\n---\n", 4)
+        if end != -1:
+            agent_instructions = agent_instructions[end + 5 :].lstrip("\n")
     if not system_addon:
         return agent_instructions
     return f"{agent_instructions}\n\nAdditional context:\n{system_addon}"
@@ -693,131 +635,53 @@ def invoke_agent(
         print(f"Error: Agent file not found: {agent_file}")
         return 1
 
-    effort_flags = EFFORT_MAP.get(effort, {}).get(cli, [])
+    effort_flags = EFFORT_MAP.get(effort, [])
 
-    # Build command based on CLI
-    if cli == "opencode":
-        # opencode run --pure --agent NAME -m MODEL [-f file] "prompt"
-        # --pure disables external plugins.
-        # Agents registered via symlinks in agent/ → tools/agents/*.agent.md
-        agent_name = OPENCODE_AGENT_NAMES[agent]
-        cmd = ["opencode", "run", "--pure", "--agent", agent_name]
-        if model:
-            cmd.extend(["-m", model])
-        cmd.extend(effort_flags)
-        for arg in extra_args:
-            cmd.extend(["-f", arg])
-        # Use -- to stop option parsing so the message isn't treated as a file
-        cmd.append("--")
-        if system_addon:
-            cmd.append(f"{prompt}\n\nAdditional context:\n{system_addon}")
-        else:
-            cmd.append(prompt)
-
-    elif cli == "copilot":
-        system_text = _prepare_system_prompt(agent_file, system_addon)
-        full_prompt = f"{system_text}\n\n---\n\nTask: {prompt}"
-        if extra_args:
-            paths = "\n".join(f"- {p}" for p in extra_args)
-            full_prompt += f"\n\nFiles to read:\n{paths}"
-        perms = _agent_permissions(agent)
-        # Known upstream bug (github/copilot-cli#1592): --allow-tool patterns
-        # are silently ignored in headless -p mode, so the granular flags below
-        # don't actually grant anything today — the model still tries to prompt
-        # and the run dies because there's no TTY. We rely on
-        # ~/.copilot/permissions-config.json to pre-approve the shell commands
-        # for this repo; run tools/scripts/setup-copilot-perms.sh once to seed
-        # it. The --allow-tool flags stay here so they take effect again the
-        # moment the upstream bug is fixed.
-        # -C ROOT pins copilot's cwd to the repo root. Copilot's default path
-        # policy restricts file access to cwd and its subdirectories, so we get
-        # a repo-scoped sandbox without --allow-all-paths.
-        cmd = ["copilot", "-p", full_prompt, "-C", str(ROOT)]
-        if model:
-            cmd.extend(["--model", model])
-        cmd.extend(effort_flags)
-        # Reading source/wiki pages is always required.
-        cmd.append("--allow-tool=read")
-        # Shell allowlist — curated per profile, no blanket shell access.
-        if perms["shell"]:
-            for c in READ_ONLY_SHELL_COMMANDS:
-                cmd.append(f"--allow-tool=shell({c}:*)")
-            if perms["write"]:
-                for c in WRITE_SHELL_COMMANDS:
-                    cmd.append(f"--allow-tool=shell({c}:*)")
-        # The write tool covers create/edit/delete via the native file tool
-        # (separate from shell redirection, which --allow-all-tools would gate).
+    # claude -p --model MODEL --system-prompt "text" "task"
+    system_text = _prepare_system_prompt(agent_file, system_addon)
+    perms = _agent_permissions(agent)
+    cmd = ["claude", "-p"]
+    if model:
+        cmd.extend(["--model", model])
+    cmd.extend(effort_flags)
+    cmd.extend(["--system-prompt", system_text])
+    # Build the --allowedTools list to match the agent's profile.
+    allowed_tools = ["Read"]
+    if perms["shell"]:
+        allowed_tools.extend(f"Bash({c} *)" for c in READ_ONLY_SHELL_COMMANDS)
         if perms["write"]:
-            cmd.append("--allow-tool=write")
-        # qmd MCP server is used by search/enhance agents for vector lookup.
-        cmd.append("--allow-tool=qmd")
-        # Belt-and-braces: explicitly add the writable subdirs. Redundant with
-        # -C ROOT for in-repo paths, but documents intent.
-        for d in perms.get("writable_dirs", []):
-            cmd.extend(["--add-dir", str(ROOT / d)])
-
-    elif cli in ("claude", "ollama"):
-        system_text = _prepare_system_prompt(agent_file, system_addon)
-        if cli == "claude":
-            # claude -p --model MODEL --system-prompt "text" "task"
-            perms = _agent_permissions(agent)
-            cmd = ["claude", "-p"]
-            if model:
-                cmd.extend(["--model", model])
-            cmd.extend(effort_flags)
-            cmd.extend(["--system-prompt", system_text])
-            # Build the --allowedTools list to match the agent's profile.
-            allowed_tools = ["Read"]
-            if perms["shell"]:
-                allowed_tools.extend(f"Bash({c} *)" for c in READ_ONLY_SHELL_COMMANDS)
-                if perms["write"]:
-                    allowed_tools.extend(f"Bash({c} *)" for c in WRITE_SHELL_COMMANDS)
-            if perms["write"]:
-                allowed_tools.extend(["Edit", "Write", "NotebookEdit"])
-            cmd.extend(["--allowedTools", ",".join(allowed_tools)])
-            # Hard "no subagents": a wiki agent must never spawn its own
-            # sub-agent. The orchestrator (this script) is the ONLY multi-agent
-            # layer; a self-spawned subagent would be a privilege/injection vector
-            # (e.g. a read-only agent reaching for a write-capable one) — and the
-            # container mount is the kernel-level backstop regardless, since any
-            # subagent runs in THIS profile's container. Task is already absent
-            # from the allowlist above; deny it explicitly so the intent survives
-            # future edits to allowed_tools.
-            cmd.extend(["--disallowedTools", "Task"])
-            # Scope writes to the agent's writable_dirs. Claude reads from the
-            # whole repo by default; --add-dir is needed when the writable
-            # target lives outside the launching directory.
-            for d in perms.get("writable_dirs", []):
-                cmd.extend(["--add-dir", str(ROOT / d)])
-            # Permission mode: acceptEdits allows non-interactive edits within
-            # the allowed tool set; default still prompts for anything else.
-            cmd.extend(
-                ["--permission-mode", "acceptEdits" if perms["write"] else "default"]
-            )
-            # extra_args are file paths (built for opencode's -f attachment
-            # model). claude has no attachment flag and keeps only the FIRST
-            # positional, silently dropping the rest — so passing paths as
-            # positionals would discard the real instruction. Fold them into the
-            # prompt as a "Files to read:" block (claude opens them via Read),
-            # the same shape the copilot branch uses.
-            claude_prompt = prompt
-            if extra_args:
-                paths = "\n".join(f"- {p}" for p in extra_args)
-                claude_prompt = f"{prompt}\n\nFiles to read:\n{paths}"
-            cmd.append(claude_prompt)
-        else:
-            # ollama run MODEL --system "text" "prompt"
-            cmd = ["ollama", "run"]
-            if model:
-                cmd.append(model)
-            else:
-                cmd.append(get_default_model("ollama"))
-            cmd.extend(["--system", system_text])
-            cmd.extend(effort_flags)
-            cmd.append(prompt)
-
-    else:
-        cmd = [cli, prompt]
+            allowed_tools.extend(f"Bash({c} *)" for c in WRITE_SHELL_COMMANDS)
+    if perms["write"]:
+        allowed_tools.extend(["Edit", "Write", "NotebookEdit"])
+    cmd.extend(["--allowedTools", ",".join(allowed_tools)])
+    # Hard "no subagents": a wiki agent must never spawn its own
+    # sub-agent. The orchestrator (this script) is the ONLY multi-agent
+    # layer; a self-spawned subagent would be a privilege/injection vector
+    # (e.g. a read-only agent reaching for a write-capable one) — and the
+    # container mount is the kernel-level backstop regardless, since any
+    # subagent runs in THIS profile's container. Task is already absent
+    # from the allowlist above; deny it explicitly so the intent survives
+    # future edits to allowed_tools.
+    cmd.extend(["--disallowedTools", "Task"])
+    # Scope writes to the agent's writable_dirs. Claude reads from the
+    # whole repo by default; --add-dir is needed when the writable
+    # target lives outside the launching directory.
+    for d in perms.get("writable_dirs", []):
+        cmd.extend(["--add-dir", str(ROOT / d)])
+    # Permission mode: acceptEdits allows non-interactive edits within
+    # the allowed tool set; default still prompts for anything else.
+    cmd.extend(
+        ["--permission-mode", "acceptEdits" if perms["write"] else "default"]
+    )
+    # extra_args are file paths. claude has no attachment flag and keeps only
+    # the FIRST positional, silently dropping the rest — so passing paths as
+    # positionals would discard the real instruction. Fold them into the
+    # prompt as a "Files to read:" block (claude opens them via Read).
+    claude_prompt = prompt
+    if extra_args:
+        paths = "\n".join(f"- {p}" for p in extra_args)
+        claude_prompt = f"{prompt}\n\nFiles to read:\n{paths}"
+    cmd.append(claude_prompt)
 
     print(f"Invoking {agent} agent with {cli}" + (f" ({model})" if model else ""))
     print(f"Effort: {effort}")
@@ -931,7 +795,6 @@ def run_agent(args, strategy: str | None = None) -> int:
         page,
         source,
         args.prompt or "",
-        args.cli,
         strategy=strategy,
         mode=cos_mode,
         project=cos_project,
@@ -940,10 +803,6 @@ def run_agent(args, strategy: str | None = None) -> int:
     # Get model
     model = args.model or get_default_model(args.cli)
     effort = args.effort
-
-    # Auto-upgrade effort for codex models (deep reasoning by default)
-    if "codex" in model and effort == "medium":
-        effort = "xhigh"
 
     # Build extra args based on agent — resolve to absolute paths for -f flags
     extra_args = []
