@@ -1,22 +1,22 @@
 ---
 title: Wiki Index
 type: index
-updated: 2026-06-07
-page_count: 1922
+updated: 2026-06-13
+page_count: 1929
 ---
 
 # Wiki Index
 
 > Derived headless-readable index — regenerate with `python3 tools/wiki.py index --rebuild`. Do not hand-edit. (`index.md` is the Obsidian/Dataview view; this is its CLI mirror.)
 
-**1922** content pages across **7** categories.
+**1929** content pages across **7** categories.
 
 ## Categories
 
 | Category | Pages | Index |
 | --- | --- | --- |
 | comparisons | 54 | [comparisons/_index.md](comparisons/_index.md) |
-| concepts | 1565 | [concepts/_index.md](concepts/_index.md) |
+| concepts | 1572 | [concepts/_index.md](concepts/_index.md) |
 | entities | 151 | [entities/_index.md](entities/_index.md) |
 | sources | 65 | [sources/_index.md](sources/_index.md) |
 | syntheses | 27 | [syntheses/_index.md](syntheses/_index.md) |
@@ -25,4 +25,4 @@ page_count: 1922
 
 ## Confidence distribution
 
-high: 27, medium: 1
+high: 36, medium: 1
