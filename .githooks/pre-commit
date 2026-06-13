@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# Brain vault pre-commit hook. Self-contained: needs only git + python3, no
+# network, no `pre-commit`/`ruff`/`pytest`. Runs identically on the host and
+# inside the egress-locked devcontainer (.git/config is shared, hooksPath is
+# relative). Installed by .githooks/install.sh.
+#
+# Philosophy: block on real defects, warn on style, never mutate your files.
+# When a check needs an action, it prints the exact command to run.
+#
+# Escape hatches (use sparingly):
+#   git commit --no-verify           skip every hook
+#   SKIP_SECRET_SCAN=1               skip credential scan
+#   ALLOW_IGNORED_FILES=1            permit force-added gitignored paths
+#   ALLOW_LARGE_FILES=1              permit oversized blobs
+#   SKIP_TESTS=1                     skip the tooling test suite
+#   SKIP_WIKI_LINT=1                 skip `wiki.py lint`
+#   SKIP_WIKI_INDEX=1                skip the _index.md freshness check
+#   MAX_FILE_BYTES=<n>               size ceiling (default 1048576 = 1 MiB)
+# Mark a known-safe line with a trailing:  pragma: allowlist secret
+
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)" || exit 1
+cd "$ROOT" || exit 1
+
+RED='' ; YEL='' ; GRN='' ; DIM='' ; RST=''
+if [ -t 2 ]; then
+  RED=$'\033[31m'; YEL=$'\033[33m'; GRN=$'\033[32m'; DIM=$'\033[2m'; RST=$'\033[0m'
+fi
+
+fail=0
+warn=0
+err()  { printf '%s\xE2\x9C\x97%s %s\n'  "$RED" "$RST" "$*" >&2; fail=1; }
+note() { printf '%s!%s %s\n'              "$YEL" "$RST" "$*" >&2; warn=1; }
+info() { printf '   %s%s%s\n'             "$DIM" "$*" "$RST"     >&2; }
+
+MAX_FILE_BYTES="${MAX_FILE_BYTES:-1048576}"
+
+# --- staged files (added/copied/modified), NUL-safe ---------------------------
+staged=()
+while IFS= read -r -d '' f; do staged+=("$f"); done \
+  < <(git diff --cached --name-only -z --diff-filter=ACM)
+
+# Nothing in the index to inspect (e.g. a merge or --allow-empty).
+[ "${#staged[@]}" -eq 0 ] && exit 0
+
+is_binary_ext() {
+  lc="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  case "$lc" in
+    *.png|*.jpg|*.jpeg|*.gif|*.webp|*.ico|*.bmp|*.tiff|\
+    *.pdf|*.zip|*.gz|*.tgz|*.bz2|*.xz|*.7z|*.rar|\
+    *.woff|*.woff2|*.ttf|*.otf|*.eot|\
+    *.mp3|*.mp4|*.mov|*.avi|*.webm|*.wav|*.flac|\
+    *.wasm|*.db|*.sqlite|*.sqlite3|*.bin|*.o|*.so|*.dylib|*.pyc|*.ds_store)
+      return 0;;
+  esac
+  return 1
+}
+
+# --- 1. force-added gitignored content ----------------------------------------
+# Most personal content (raw sources, generated wiki pages, project files,
+# settings.local.json) is gitignored on purpose. `git add -f` bypasses that;
+# this catches it. Driven by .gitignore itself, so it needs no maintenance.
+if [ -z "${ALLOW_IGNORED_FILES:-}" ]; then
+  ignored="$(printf '%s\0' "${staged[@]}" \
+    | git check-ignore --no-index --stdin -z 2>/dev/null | tr '\0' '\n')"
+  if [ -n "$ignored" ]; then
+    err "Staged paths match .gitignore (force-added private content):"
+    printf '%s\n' "$ignored" | while IFS= read -r p; do info "$p"; done
+    info "These are meant to stay local. Unstage: git rm --cached <path>"
+    info "Override (rare): ALLOW_IGNORED_FILES=1 git commit ..."
+  fi
+fi
+
+# --- 2. oversized blobs --------------------------------------------------------
+if [ -z "${ALLOW_LARGE_FILES:-}" ]; then
+  for f in "${staged[@]}"; do
+    sz="$(git cat-file -s ":$f" 2>/dev/null || echo 0)"
+    if [ "$sz" -gt "$MAX_FILE_BYTES" ]; then
+      err "Large file staged: $f ($((sz/1024)) KiB > $((MAX_FILE_BYTES/1024)) KiB)"
+      info "Override: ALLOW_LARGE_FILES=1 git commit ...  (or raise MAX_FILE_BYTES)"
+    fi
+  done
+fi
+
+# --- 3. merge-conflict markers -------------------------------------------------
+# Match only the unambiguous markers. A bare line of '=======' is a valid
+# setext H1 underline in this markdown vault, so it is deliberately excluded.
+for f in "${staged[@]}"; do
+  is_binary_ext "$f" && continue
+  if git show ":$f" 2>/dev/null \
+      | grep -nE '^(<<<<<<< |>>>>>>> |\|\|\|\|\|\|\| )' >/dev/null; then
+    err "Merge-conflict marker left in: $f"
+  fi
+done
+
+# --- 4. credential / secret scan ----------------------------------------------
+# Reports line numbers only, never the secret itself.
+if [ -z "${SKIP_SECRET_SCAN:-}" ]; then
+  high='(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+  envassign="(COPILOT_GITHUB_TOKEN|GITHUB_TOKEN|GH_TOKEN|ANTHROPIC_API_KEY|OPENAI_API_KEY|AWS_SECRET_ACCESS_KEY|NPM_TOKEN|HF_TOKEN|SLACK_TOKEN)[[:space:]]*[:=][[:space:]]*[\"']?[A-Za-z0-9_/+.-]{16,}"
+  placeholder='(xxx|XXX|<[^>]*>|\$\{?[A-Za-z_]|changeme|placeholder|example|redacted|REDACTED|\*\*\*|your[-_])'
+  secret_hit=0
+  for f in "${staged[@]}"; do
+    is_binary_ext "$f" && continue
+    content="$(git show ":$f" 2>/dev/null)" || continue
+    nums="$(printf '%s\n' "$content" | grep -nE "$high" \
+      | grep -v 'pragma: allowlist secret' | cut -d: -f1 | paste -sd' ' -)"
+    [ -n "$nums" ] && { err "Possible token/key in $f (line $nums)"; secret_hit=1; }
+    enums="$(printf '%s\n' "$content" | grep -nE "$envassign" \
+      | grep -vE "$placeholder" | grep -v 'pragma: allowlist secret' \
+      | cut -d: -f1 | paste -sd' ' -)"
+    [ -n "$enums" ] && { err "Hard-coded credential in $f (line $enums)"; secret_hit=1; }
+  done
+  [ "$secret_hit" -ne 0 ] && info "False positive? add trailing 'pragma: allowlist secret' or SKIP_SECRET_SCAN=1"
+fi
+
+# --- python availability ------------------------------------------------------
+have_py=0; command -v python3 >/dev/null 2>&1 && have_py=1
+[ "$have_py" -eq 0 ] && note "python3 not found: skipping Python and wiki checks"
+
+# --- 5. Python: compile, ruff (if present), tooling tests ---------------------
+py_staged=()
+for f in "${staged[@]}"; do case "$f" in *.py) py_staged+=("$f");; esac; done
+
+if [ "${#py_staged[@]}" -gt 0 ] && [ "$have_py" -eq 1 ]; then
+  for f in "${py_staged[@]}"; do
+    # Compile the staged blob from stdin: validates the version that will be
+    # committed, writes no bytecode, and keeps the real filename in errors.
+    if ! cerr="$(git show ":$f" 2>/dev/null \
+        | python3 -c 'import sys; compile(sys.stdin.read(), sys.argv[1], "exec")' "$f" 2>&1)"; then
+      err "Python syntax error in $f"
+      printf '%s\n' "$cerr" | tail -3 | while IFS= read -r l; do info "$l"; done
+    fi
+  done
+
+  if command -v ruff >/dev/null 2>&1; then
+    if ! rout="$(ruff check "${py_staged[@]}" 2>&1)"; then
+      err "ruff check failed"
+      printf '%s\n' "$rout" | tail -20 | while IFS= read -r l; do info "$l"; done
+      info "Auto-fix what it can: ruff check --fix ${py_staged[*]}"
+    fi
+  fi
+
+  tools_changed=0
+  for f in "${py_staged[@]}"; do case "$f" in tools/*) tools_changed=1;; esac; done
+  if [ "$tools_changed" -eq 1 ] && [ -z "${SKIP_TESTS:-}" ]; then
+    for t in tools/tests/test_wiki.py tools/tests/test_schedule.py; do
+      [ -f "$t" ] || continue
+      if ! tout="$(python3 "$t" 2>&1)"; then
+        err "Test failures: $t"
+        printf '%s\n' "$tout" | tail -12 | while IFS= read -r l; do info "$l"; done
+      fi
+    done
+  fi
+fi
+
+# --- 6. wiki health: lint + _index.md freshness -------------------------------
+# Gated on touching tracked wiki pages/templates or the wiki tooling, so
+# unrelated commits are not held hostage by personal-vault state.
+wiki_touched=0
+for f in "${staged[@]}"; do
+  case "$f" in wiki/*|tools/wiki*.py) wiki_touched=1;; esac
+done
+
+if [ "$wiki_touched" -eq 1 ] && [ "$have_py" -eq 1 ]; then
+  if [ -z "${SKIP_WIKI_LINT:-}" ]; then
+    if ! lout="$(python3 tools/wiki.py lint 2>&1)"; then
+      err "wiki.py lint reported errors:"
+      printf '%s\n' "$lout" | grep -iE 'error|broken|missing|malform|invalid' \
+        | head -20 | while IFS= read -r l; do info "$l"; done
+      info "Inspect: python3 tools/wiki.py lint   (try --fix; SKIP_WIKI_LINT=1 to bypass)"
+    fi
+  fi
+  if [ -z "${SKIP_WIKI_INDEX:-}" ]; then
+    if ! python3 tools/wiki.py index >/dev/null 2>&1; then
+      err "_index.md mirror is stale (generated file out of date)."
+      info "Regenerate + stage: python3 tools/wiki.py index --rebuild && git add wiki/_index.md wiki/*/_index.md"
+      info "Note: local gitignored pages can also trip this; SKIP_WIKI_INDEX=1 to bypass."
+    fi
+  fi
+fi
+
+# --- verdict ------------------------------------------------------------------
+if [ "$fail" -ne 0 ]; then
+  printf '\n%sCommit blocked.%s Fix the above, or bypass with: git commit --no-verify\n' \
+    "$RED" "$RST" >&2
+  exit 1
+fi
+[ "$warn" -ne 0 ] && info "warnings only, commit allowed"
+exit 0

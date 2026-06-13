@@ -1,0 +1,10 @@
+# Lint contract for the wiki tooling (tools/**). Pins the rule set so the local
+# .githooks (pre-commit/pre-push) and CI (.github/workflows/ci.yml) agree across
+# ruff versions. `ruff check` only — formatting is intentionally NOT enforced
+# (the tree predates `ruff format`; enabling it later is a separate, deliberate pass).
+target-version = "py311"
+
+[lint]
+# Ruff's default rule set, stated explicitly: pyflakes (F) + a safe slice of
+# pycodestyle errors (E4 imports, E7 statements, E9 syntax). Broaden deliberately.
+select = ["E4", "E7", "E9", "F"]

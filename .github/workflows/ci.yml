@@ -1,0 +1,140 @@
+name: CI
+
+# Harmonised with the Vision/Watchman pipelines, scaled to this repo: the testable
+# surface is the Python wiki tooling in tools/ (stdlib-only — no dependency
+# manifest, so there is nothing for pip-audit/Trivy to scan). Vault content
+# (wiki/, raw/, projects/) is excluded — most of it is gitignored, and the local
+# .githooks already gate wiki health on commit.
+
+on:
+  push:
+    branches: ["master"]
+    paths-ignore:
+      - "wiki/**"
+      - "raw/**"
+      - "projects/**"
+  pull_request:
+    branches: ["master"]
+    paths-ignore:
+      - "wiki/**"
+      - "raw/**"
+      - "projects/**"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Deny all permissions by default; each job opts in to only what it needs.
+permissions: {}
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Secrets scan — gitleaks on push/PR diff range (CI backstop to the local
+  # regex scan in .githooks/pre-commit, which is deliberately gitleaks-free).
+  # ─────────────────────────────────────────────────────────────────────────────
+  secrets-scan:
+    name: Secrets Scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+        with:
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Lint — ruff over the tooling. Rule set pinned in ruff.toml; mirrors the
+  # `ruff check` the local pre-commit/pre-push hooks run.
+  # ─────────────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff (pinned)
+        run: pip install ruff==0.15.17
+
+      - name: Ruff check (tooling)
+        run: ruff check tools/
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Test — syntax-compile the whole tooling tree, then run the stdlib unittest
+  # suites (no third-party deps, so no install step).
+  # ─────────────────────────────────────────────────────────────────────────────
+  test:
+    name: Test (tooling)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile all tooling (syntax gate)
+        run: python -m compileall -q tools
+
+      - name: Run tooling test suite (stdlib unittest)
+        run: |
+          python tools/tests/test_wiki.py
+          python tools/tests/test_schedule.py
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Quality Gate — all checks must pass. Single fan-in before CI Complete.
+  # ─────────────────────────────────────────────────────────────────────────────
+  quality-gate:
+    name: Quality Gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs:
+      - secrets-scan
+      - lint
+      - test
+    if: always()
+    steps:
+      - name: Check all gates passed
+        run: |
+          results='${{ toJson(needs.*.result) }}'
+          if echo "$results" | grep -qE '"(failure|cancelled)"'; then
+            echo "Quality gate failed. Job results: $results"
+            exit 1
+          fi
+          echo "All quality gates passed."
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # CI Complete — single required status check for branch protection.
+  # Set "CI Complete" as the required check in branch protection settings.
+  # ─────────────────────────────────────────────────────────────────────────────
+  ci-complete:
+    name: CI Complete
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs: [quality-gate]
+    if: always()
+    steps:
+      - name: Check pipeline passed
+        run: |
+          results='${{ toJson(needs.*.result) }}'
+          if echo "$results" | grep -qE '"(failure|cancelled)"'; then
+            echo "CI pipeline failed. Job results: $results"
+            exit 1
+          fi
+          echo "All CI stages complete."

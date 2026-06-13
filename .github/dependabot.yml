@@ -1,0 +1,13 @@
+# Dependabot version updates. The wiki tooling is stdlib-only (no
+# requirements.txt / pyproject — nothing for a pip ecosystem to track; the CI
+# ruff version is pinned in the workflow), so the only managed surface is the
+# pinned GitHub Actions. Harmonised with Vision/Watchman.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Enforce Conventional Commits, matching this repo's history
+# (e.g. "chore(tools): ...", "refactor(devcontainer): ...", "docs(wiki): ...").
+# Bypass: SKIP_COMMIT_MSG_CHECK=1 git commit ...   or   git commit --no-verify
+
+set -uo pipefail
+[ -n "${SKIP_COMMIT_MSG_CHECK:-}" ] && exit 0
+
+msg_file="$1"
+subject="$(grep -vE '^[[:space:]]*#' "$msg_file" | sed '/^[[:space:]]*$/d' | head -n1)"
+
+if [ -z "$subject" ]; then
+  printf '\xE2\x9C\x97 Empty commit message.\n' >&2
+  exit 1
+fi
+
+# Tool-generated subjects that legitimately do not follow the convention.
+case "$subject" in
+  "Merge "*|"Revert "*|"fixup! "*|"squash! "*|"amend! "*) exit 0;;
+esac
+
+re='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9 ._/-]+\))?(!)?: .+'
+if ! printf '%s' "$subject" | grep -qE "$re"; then
+  {
+    printf '\xE2\x9C\x97 Commit subject is not a Conventional Commit:\n'
+    printf '    "%s"\n' "$subject"
+    printf '  Expected:  type(scope): summary\n'
+    printf '    types: feat fix docs style refactor perf test build ci chore revert\n'
+    printf '    e.g.   docs(wiki): explain coverage floors\n'
+    printf '  Bypass:  SKIP_COMMIT_MSG_CHECK=1 git commit ...   (or --no-verify)\n'
+  } >&2
+  exit 1
+fi
+
+slen=${#subject}
+[ "$slen" -gt 72 ] && echo "! Subject is ${slen} chars (>72); consider shortening." >&2
+exit 0

@@ -369,7 +369,7 @@ def _set_frontmatter_field(text: str, key: str, value: str | list[str]) -> str:
             new_lines.append(line)
     if not found:
         new_lines.append(f"{key}: {rendered}")
-    return f"---\n" + "\n".join(new_lines) + f"\n---\n{text[end + 5:]}"
+    return "---\n" + "\n".join(new_lines) + f"\n---\n{text[end + 5:]}"
 
 
 def build_parser() -> argparse.ArgumentParser:

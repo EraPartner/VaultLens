@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Brain vault pre-push hook. The heavier gate before code leaves the machine:
+# syntax-compiles the whole tooling tree, runs a ruff lint over all of tools/,
+# and runs the full tooling test suite — mirroring the CI jobs
+# (.github/workflows/ci.yml) so failures surface locally, not after a push.
+# Self-contained: needs only git + python3 (ruff is used only if installed; CI
+# is the backstop). Installed by .githooks/install.sh.
+#
+# Escape hatches:
+#   git push --no-verify     skip every hook
+#   SKIP_HOOKS=1             skip this hook entirely
+#   SKIP_TESTS=1             skip the tooling test suite
+#   SKIP_RUFF=1              skip the ruff lint
+
+set -uo pipefail
+
+[ -n "${SKIP_HOOKS:-}" ] && { echo "pre-push: SKIP_HOOKS set, skipping."; exit 0; }
+
+ROOT="$(git rev-parse --show-toplevel)" || exit 1
+cd "$ROOT" || exit 1
+
+RED='' ; GRN='' ; RST=''
+if [ -t 2 ]; then RED=$'\033[31m'; GRN=$'\033[32m'; RST=$'\033[0m'; fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "pre-push: python3 not found; cannot run the gate. Bypass with: git push --no-verify" >&2
+  exit 1
+fi
+
+fail=0
+run() { # <label> <command...>
+  label="$1"; shift
+  printf 'pre-push: > %s\n' "$label" >&2
+  if "$@"; then
+    printf '%spre-push:   OK%s   %s\n' "$GRN" "$RST" "$label" >&2
+  else
+    printf '%spre-push:   FAIL%s %s\n' "$RED" "$RST" "$label" >&2
+    fail=1
+  fi
+}
+
+# Syntax-compile the whole tooling tree (recursive).
+run "py compile tools/" python3 -m compileall -q tools
+
+# Lint the whole tree (not just staged) if ruff is present; CI enforces it regardless.
+if [ -z "${SKIP_RUFF:-}" ]; then
+  if command -v ruff >/dev/null 2>&1; then
+    run "ruff check tools/" ruff check tools/
+  else
+    echo "pre-push: ruff not installed; skipping lint (CI still lints)." >&2
+  fi
+fi
+
+# Full tooling test suite (stdlib unittest scripts).
+if [ -z "${SKIP_TESTS:-}" ]; then
+  for t in tools/tests/test_wiki.py tools/tests/test_schedule.py; do
+    [ -f "$t" ] || continue
+    run "tests: $t" python3 "$t"
+  done
+fi
+
+if [ "$fail" -ne 0 ]; then
+  printf '\n%spre-push blocked.%s Fix the above, or bypass with: git push --no-verify\n' "$RED" "$RST" >&2
+  exit 1
+fi
+exit 0
