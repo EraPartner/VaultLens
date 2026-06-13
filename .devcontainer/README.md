@@ -93,29 +93,14 @@ entry via `sandbox_forward_llm_creds`).
 # 2) Claude OAuth token (long-lived; uses your subscription)
 claude setup-token        # prints sk-ant-… ; copy it
 security add-generic-password -s brain-claude-code-token -a "$USER" -w   # paste it
-
-# 3) Copilot LLM auth — NO Keychain token needed. The copilot CLI's token is
-#    derived live from your host `gh` login at exec time:
-#    `gh auth token --user ${BRAIN_GH_ACCOUNT:-talicaddy}`. Just be logged in:
-gh auth login                      # once, for the account you want copilot to use
-#    Pick a Copilot-enabled account; see "Choosing the Copilot account" above.
-#    NO git push credential is forwarded — commits/pushes happen on the HOST.
-
-# 4) opencode credential (the github-copilot OAuth blob it stores on the host)
-security add-generic-password -s brain-opencode-auth -a "$USER" \
-  -w "$(cat ~/.local/share/opencode/auth.json)"
 ```
 
-The `brain-*` wrappers retrieve these on every invocation and forward them at
+The `brain-*` wrappers retrieve this on every invocation and forward it at
 `docker compose exec` time. Only LLM auth crosses the boundary — **no git push
-credential**: `CLAUDE_CODE_OAUTH_TOKEN` (from `brain-claude-code-token`) and
-`COPILOT_GITHUB_TOKEN` (derived live via `gh auth token --user ${BRAIN_GH_ACCOUNT:-talicaddy}`
-— see [Choosing the Copilot account](#choosing-the-copilot-account)). `GH_TOKEN`/
-`GITHUB_TOKEN` are **not** forwarded and the root `.git` is mounted read-only, so
-no container can commit, rewrite history, or push (do that on the host). The
-opencode blob is written to the container's `~/.local/share/opencode/auth.json`
-only if missing (opencode refreshes it in-place thereafter). No long-lived
-credential is ever written to a plaintext file on the host.
+credential**: `CLAUDE_CODE_OAUTH_TOKEN` (from `brain-claude-code-token`).
+`GH_TOKEN`/`GITHUB_TOKEN` are **not** forwarded and the root `.git` is mounted
+read-only, so no container can commit, rewrite history, or push (do that on the
+host). No long-lived credential is ever written to a plaintext file on the host.
 
 > **Keychain "Always Allow".** The first `security` read pops the standard
 > prompt. **Allow each time** is the more defensible choice for a
@@ -131,7 +116,7 @@ Egress is enforced by the root entrypoint on every start:
 1. **In-container SNI proxy** (`squid`, peek+splice). All outbound HTTP(S) must
    traverse squid on `127.0.0.1:3128`; it splices allowlisted hostnames
    (end-to-end TLS, no MITM) and terminates the rest. `HTTP(S)_PROXY` is set and
-   `NODE_USE_ENV_PROXY=1`, so `claude`, `copilot`, `opencode`, `qmd`, `npm`,
+   `NODE_USE_ENV_PROXY=1`, so `claude`, `qmd`, `npm`,
    `git`, `gh`, and `python` all egress through it.
 2. **`iptables` egress lock**: only the `proxy` UID may originate outbound
    packets (including DNS to the embedded Docker resolver, so non-proxy processes
@@ -139,9 +124,8 @@ Egress is enforced by the root entrypoint on every start:
    rate-limited-logged (`dmesg | grep egress-deny`).
 
 **Allowlist** (`allowlist.txt`, baked into the image — edit and rebuild to
-change): Anthropic + Claude Code, `registry.npmjs.org`, GitHub, GitHub Copilot
-(`.githubcopilot.com`, `collector.github.com`, `default.exp-tas.com`),
-`opencode.ai`, the safe-chain malware list, and context7.
+change): Anthropic + Claude Code, `registry.npmjs.org`, GitHub, the safe-chain
+malware list, and context7.
 
 **The one egress hole:** the firewall allows direct TCP to
 `host.docker.internal:11434` so the container reaches the **host Ollama daemon**
@@ -153,11 +137,11 @@ keeps it off squid. This is the only host service the container can touch.
 mid-session are screened against `malware-list.aikido.dev`.
 
 **Launch-integrity pins:** the Dockerfile records the SHA-256 of the agent's
-executables (`node`/`npm`/`claude`/`gh`/`git`/`python3`/`copilot`/`opencode`/`qmd`)
+executables (`node`/`npm`/`claude`/`gh`/`git`/`python3`/`qmd`)
 into `binary-pins.txt`, and `brain-verify-pins` re-checks them at every launch,
 aborting on drift. This reliably **detects unintended upstream tool upgrades**. It
 is a true tamper defense only for the root-owned binaries (`node`/`git`/`python3`);
-the four npm CLIs live in a dev-writable prefix (so runtime `npm i -g` / safe-chain
+the two npm CLIs live in a dev-writable prefix (so runtime `npm i -g` / safe-chain
 can write it), so treat their lines as drift-detection, not a hard anti-tamper
 guarantee. See the comment atop `bin/verify-pins`.
 
@@ -173,8 +157,7 @@ for a one-shot readiness check (egress lock, toolchain, qmd, ollama, auth).
 | Source | Container path | Holds |
 | --- | --- | --- |
 | `brain-claude-<id>` (volume) | `/home/dev/.claude` | Claude config, seeded from the sanitized stage |
-| `brain-copilot-<id>` (volume) | `/home/dev/.copilot` | copilot config + repo permission allowlist + qmd MCP |
-| `brain-local-<id>` (volume) | `/home/dev/.local` | opencode data + `auth.json` |
+| `brain-local-<id>` (volume) | `/home/dev/.local` | `~/.local/share` app state |
 | `brain-config-<id>` (volume) | `/home/dev/.config` | qmd / gh config |
 | `brain-cache-<id>` (volume) | `/home/dev/.cache` | writable qmd index snapshot (models symlink to the seed) |
 | `.devcontainer` (host) | `/workspaces/Brain/.devcontainer` | **RO** overlay on the rw workspace so the sandbox config + host launcher can't be rewritten from inside (see Safety note) |
@@ -225,17 +208,6 @@ locally); and the launcher (`bin/agent`) pushes container memory back to the hos
 **only for interactive operator sessions** (`brain-claude`/`brain-shell`, the same
 `BRAIN_AUTOSYNC` gate), never for headless `brain-wiki` runs. Bidirectional when
 you drive it; closed against the injection path otherwise.
-
-The same launch step also seeds your host **copilot** and **opencode** config
-into the container (one-way, host → container): copilot's `settings.json`
-(model/theme/etc., with host plugin refs stripped — their binaries aren't in the
-sandbox), and opencode's `~/.config/opencode` (agents, model, theme, prompts,
-skills, themes), excluding `node_modules` and the npm `plugin` field that the
-egress lock would block. Auth is forwarded separately (Copilot token in env,
-opencode `auth.json` from the Keychain); the post-create-generated copilot
-`mcp-config.json`/`permissions-config.json` are left untouched. This direction is
-seed-only — those tools' in-container runtime state stays in their volumes and is
-not pushed back.
 
 ### qmd index + models (search-only, embed on the host)
 
@@ -305,9 +277,6 @@ commit to the thesis repo. **Make changes inside, commit & push from the host.**
   `init-firewall.sh` (and rebuild) if you'd rather run Ollama in-container.
 - **Changing the egress allowlist** requires editing `allowlist.txt` and
   rebuilding (it's baked into the image).
-- **copilot headless permissions.** `copilot` ignores `--allow-tool` in `-p`
-  mode (upstream bug); `post-create` seeds `~/.copilot/permissions-config.json`
-  for `/workspaces/Brain` via `tools/scripts/setup-copilot-perms.sh`.
 
 ## Safety note
 

@@ -94,8 +94,8 @@ RUN printf 'export PATH="/usr/local/share/npm-global/bin:/home/dev/.npm-global/b
 # and the build tools above compile qmd's native modules. Installed as root into
 # the root-owned global prefix and deliberately NOT chown'd to dev — so the pinned
 # claude/qmd binaries cannot be replaced by the dev user.
-RUN npm install -g @anthropic-ai/claude-code@2.1.170 @tobilu/qmd \
-  && claude --version && command -v qmd && command -v copilot && command -v opencode
+RUN npm install -g @anthropic-ai/claude-code@2.1.173 @tobilu/qmd \
+  && claude --version && command -v qmd
 
 # Runtime global installs (safe-chain in post-create) go to a SEPARATE dev-owned
 # prefix, so they never need write access to the pinned root prefix above.
@@ -130,7 +130,7 @@ RUN mkdir -p /etc/squid/certs /var/lib/squid /var/log/squid /var/spool/squid \
   && chown -R proxy:proxy /etc/squid/certs /var/lib/squid /var/log/squid /var/spool/squid
 
 # Pre-create dirs backed by named volumes so a fresh volume inherits dev ownership.
-RUN install -d -o dev -g dev -m 0700 /home/dev/.claude /home/dev/.copilot \
+RUN install -d -o dev -g dev -m 0700 /home/dev/.claude \
  && install -d -o dev -g dev -m 0755 /home/dev/.config /home/dev/.config/gh \
                                      /home/dev/.cache /home/dev/.local /home/dev/.local/share
 
@@ -140,7 +140,7 @@ RUN set -eux; \
     pinfile=/usr/local/share/brain/binary-pins.txt; \
     mkdir -p /usr/local/share/brain; \
     : > "$pinfile"; \
-    for b in node npm claude gh git python3 copilot opencode qmd; do \
+    for b in node npm claude gh git python3 qmd; do \
       p="$(command -v "$b")"; \
       h="$(sha256sum "$p" | awk '{print $1}')"; \
       printf '%s\t%s\t%s\n' "$b" "$p" "$h" >> "$pinfile"; \

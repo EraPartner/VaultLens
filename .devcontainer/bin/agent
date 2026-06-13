@@ -151,7 +151,6 @@ else
     -v "$PROJECT_ROOT/.git:$CONTAINER_WS/.git:ro" \
     -v "$DC:$CONTAINER_WS/.devcontainer:ro" \
     -v "brain-claude-$BRAIN_VOL_KEY:/home/dev/.claude" \
-    -v "brain-copilot-$BRAIN_VOL_KEY:/home/dev/.copilot" \
     -v "brain-local-$BRAIN_VOL_KEY:/home/dev/.local" \
     -v "brain-config-$BRAIN_VOL_KEY:/home/dev/.config" \
     -v "brain-cache-$BRAIN_VOL_KEY:/home/dev/.cache" \
@@ -168,7 +167,7 @@ else
 fi
 CID="$NAME"
 
-# Wait for the egress proxy, then replay lifecycle + copilot/opencode config seed.
+# Wait for the egress proxy, then replay lifecycle hooks (post-create/post-start).
 container exec "$NAME" bash -lc 'for i in $(seq 1 30); do (exec 3<>/dev/tcp/127.0.0.1/3128) 2>/dev/null && break; sleep 1; done' || true
 
 # F14: the egress allowlist is baked into the image; on the reuse/start paths the

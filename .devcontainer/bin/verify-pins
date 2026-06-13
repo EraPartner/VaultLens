@@ -6,7 +6,7 @@
 # SCOPE — read this before trusting it as a tamper defense. It reliably DETECTS
 # UNINTENDED UPSTREAM TOOL UPGRADES / DRIFT at launch. It is a genuine anti-tamper
 # control only for the ROOT-owned binaries (node/git/python3, from the tarballs +
-# apt). The four npm CLIs (claude/copilot/opencode/qmd) live in a dev-writable
+# apt). The two npm CLIs (claude/qmd) live in a dev-writable
 # prefix (NPM_CONFIG_PREFIX is chown'd dev so runtime `npm i -g`/safe-chain can
 # write it), so an attacker who already has dev-level code execution could overwrite
 # one in place AFTER this one-shot check and run the tampered binary next spawn —
