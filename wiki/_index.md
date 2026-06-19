@@ -25,4 +25,4 @@ page_count: 1929
 
 ## Confidence distribution
 
-high: 36, medium: 1
+high: 37, medium: 1
