@@ -49,6 +49,14 @@ wiki/topics/*
 wiki/log.md
 wiki/index.md
 
+# Derived CLI-readable indexes (`wiki.py index --rebuild`). Per-category
+# `_index.md` files are already covered by the `wiki/<cat>/*` rules above; these
+# two are the only derived indexes outside an ignored category. They aggregate
+# counts from the (gitignored) content, so tracking them leaks the private
+# brain's size and shape into the scaffold. Regenerate locally after cloning.
+wiki/_index.md
+wiki/system/_index.md
+
 projects/*/
 !.gitkeep
 
