@@ -78,6 +78,12 @@ when they conflict. Be specific.
 - When answering design questions, prefer concepts in `wiki_refs` over general wiki search.
 -->
 
+## Current status
+
+Where the project stands right now: current phase, recent outcomes, what's in
+progress. Update this section (and bump `updated`) at the end of any session that
+changes project state; granular tasks live in `TODO.md`.
+
 ## Key questions
 
 Open questions you want to answer using the wiki KB.
@@ -132,6 +138,9 @@ Write only inside this project directory. Never modify `wiki/` or `raw/`.
 # the project is scaffolded via `wiki.py project new`.
 TODO_TEMPLATE = """\
 # {slug} TODO
+
+Rolling task list (embedded into projects/TODO.md; P1 items also feed
+projects/TODO-widget.md). Organise into sections as the project grows.
 
 - [ ]
 """
@@ -204,9 +213,15 @@ def _project_new(slug: str) -> int:
     _rebuild_projects_todo()
     print(f"Created project '{cleaned}' at {project_dir.relative_to(ROOT)}")
     print("  - project.md")
-    print("  - CLAUDE.md      (AI entrypoint → @project.md + operating principles; root schema auto-loads)")
-    print("  - TODO.md        (per-project todo; embedded into projects/TODO.md, P1 items surface in projects/TODO-widget.md)")
-    print("  - queries/       (default Q&A artifact dir; redefine in ## Rules if you want)")
+    print(
+        "  - CLAUDE.md      (AI entrypoint → @project.md + operating principles; root schema auto-loads)"
+    )
+    print(
+        "  - TODO.md        (per-project todo; embedded into projects/TODO.md, P1 items surface in projects/TODO-widget.md)"
+    )
+    print(
+        "  - queries/       (default Q&A artifact dir; redefine in ## Rules if you want)"
+    )
     print(
         f"\nNext steps:\n"
         f"  1. Edit projects/{cleaned}/project.md — fill in Description, Layout, and Rules.\n"
