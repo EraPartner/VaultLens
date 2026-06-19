@@ -48,7 +48,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Lint — ruff over the tooling. Rule set pinned in ruff.toml; mirrors the
+  # Lint — ruff over the tooling. Rule set pinned in tools/ruff.toml; mirrors the
   # `ruff check` the local pre-commit/pre-push hooks run.
   # ─────────────────────────────────────────────────────────────────────────────
   lint:
