@@ -302,9 +302,9 @@ def build_steps() -> list[Step]:
         # 2. ingest new raw material (only if any), before enhance.
         Step("ingest", "llm", "daily", NIGHTLY_WINDOW, ["ac", "online", "docker", "icloud"],
              _ingest_targets, effort="low", timeout=2400),
-        # 3. enhance, capped at 5 iterations/night (the biggest budget consumer).
+        # 3. enhance, capped at 15 iterations/night (the biggest budget consumer).
         Step("enhance", "llm", "daily", NIGHTLY_WINDOW, ["ac", "online", "docker", "icloud"],
-             lambda: [["enhance", "--iterations", "5"]], effort="low", timeout=5400),
+             lambda: [["enhance", "--iterations", "15", "--strategy", "alternate"]], effort="low", timeout=10800),
         # 4. weekly thinking digests (prefer Sunday); reports filed for you.
         Step("contradict", "llm", "weekly", NIGHTLY_WINDOW, ["ac", "online", "docker", "icloud"],
              lambda: [["contradict"]], effort="high", timeout=2400, report=True),

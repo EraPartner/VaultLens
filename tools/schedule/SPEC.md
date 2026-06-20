@@ -62,7 +62,7 @@ pmset call still needs a password. `sudo -n` is used so a missing rule fails fas
 7. **Nothing LLM runs per tick.** All LLM work happens in **one nightly batch**;
    the only daily-morning LLM job is the cos brief. The ~30-min tick is purely the
    catch-up gate-checker, never an LLM trigger.
-8. **`enhance` is capped at `--iterations 5` per night** (not `--forever`).
+8. **`enhance` is capped at `--iterations 15` per night** (not `--forever`).
 
 ## Backend & model
 
@@ -118,11 +118,11 @@ Dispatcher classifies copilot exit/stderr into three failure modes:
 | **Both accounts limited** | switch found no healthy account | defer the job + rest of the LLM batch; notify |
 
 The two accounts roughly double the effective monthly budget; with `enhance`
-capped at 5 iterations/night the nightly batch is bounded, so two quotas should
+capped at 15 iterations/night the nightly batch is bounded, so two quotas should
 cover it comfortably.
 
 Budget-shaping (build into the job table):
-- `enhance` capped at **`--iterations 5` per night** (the biggest consumer; no
+- `enhance` capped at **`--iterations 15` per night** (the biggest consumer; no
   `--forever`).
 - Heavy digests (contradict/emerge/discover) stay **weekly** (Sunday batch).
 - Each agentic run is many model turns, so cos brief uses `--effort low`.
@@ -135,7 +135,7 @@ The dispatcher ticks every ~30 min only to check gates + the ledger. Actual work
 1. `lint` + `index` (offline, host-native pre-check; clean state for enhance)
 2. `ingest` **if** `raw/inbox` / `raw/sources` has unprocessed files
    (checked here, **once a night**, not per tick)
-3. `enhance --iterations 5` (capped)
+3. `enhance --iterations 15` (capped)
 4. **Sundays only:** `contradict` + `emerge` + `discover`
 
 All LLM steps: `--cli claude --model sonnet`, deferred if a usage limit is hit
@@ -201,7 +201,7 @@ next eligible tick. Sleep / offline / closed-lid become non-events.
 | discover | `brain-wiki discover` | weekly | online, docker, icloud | `wiki/reports/` + notify |
 | verify *(optional)* | `brain-wiki verify --source <changed>` | weekly, on recently-changed source pages | online, docker, icloud | report |
 | ingest | `brain-wiki ingest --source <new>` | **nightly**, before enhance, only if `raw/inbox` / `raw/sources` has unprocessed files | online, docker, icloud, **AC** | wiki + promote inbox PDF |
-| enhance | `brain-wiki enhance --iterations 5` | **nightly**, after ingest (capped, not `--forever`) | online, docker, icloud, **AC** | writes wiki directly |
+| enhance | `brain-wiki enhance --iterations 15` | **nightly**, after ingest (capped, not `--forever`) | online, docker, icloud, **AC** | writes wiki directly |
 
 **Scheduled:** lint, index, links, coverage, cos brief, contradict, emerge,
 discover, (optional verify), enhance, ingest.
