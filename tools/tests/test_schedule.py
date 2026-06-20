@@ -49,17 +49,15 @@ def main() -> int:
     check("429 -> ratelimit", dispatch.classify_failure(1, "HTTP 429 Too Many Requests") == "ratelimit")
     check("other -> transient", dispatch.classify_failure(1, "connection reset") == "transient")
 
-    print("choose_account / failover:")
-    # Single Claude-plan identity now (no copilot multi-account failover). A
-    # limit on the sole identity means no healthy account -> the batch defers.
+    print("backend availability / cooldown:")
     led = fresh_ledger()
-    check("healthy identity picked", dispatch.choose_account(led, now) == dispatch.ACCOUNTS[0])
+    check("backend available when healthy", dispatch.backend_available(led, now) is True)
     dispatch.mark_limited(led, dispatch.ACCOUNTS[0], "ratelimit", now)
-    check("identity limited after ratelimit",
+    check("limited_until set after ratelimit",
           led["accounts"][dispatch.ACCOUNTS[0]]["limited_until"] is not None)
-    check("sole identity limited -> None", dispatch.choose_account(led, now) is None)
+    check("backend unavailable while limited", dispatch.backend_available(led, now) is False)
     dispatch.mark_limited(led, dispatch.ACCOUNTS[0], "quota", now)
-    check("still None after quota", dispatch.choose_account(led, now) is None)
+    check("still unavailable after quota", dispatch.backend_available(led, now) is False)
 
     print("cooldown semantics:")
     led2 = fresh_ledger()
@@ -73,12 +71,12 @@ def main() -> int:
     q = dispatch.parse(led2["accounts"][dispatch.ACCOUNTS[0]]["limited_until"])
     check("quota cooldown ~24h", abs((q - now).total_seconds() - 24 * 3600) < 5)
 
-    print("expired cooldown frees the account:")
+    print("expired cooldown frees the backend:")
     led3 = fresh_ledger()
     past = now - timedelta(hours=1)
     led3["accounts"][dispatch.ACCOUNTS[0]]["limited_until"] = dispatch.iso(past)
-    check("expired limit -> account healthy again",
-          dispatch.choose_account(led3, now) == dispatch.ACCOUNTS[0])
+    check("expired limit -> backend available again",
+          dispatch.backend_available(led3, now) is True)
 
     print("clear_account on success:")
     led4 = fresh_ledger()

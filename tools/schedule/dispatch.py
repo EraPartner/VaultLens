@@ -8,7 +8,7 @@ record the result. Missed anchors are rerun by launchd on the next wake, so
 sleep / offline / closed-lid become non-events. Full design: tools/schedule/SPEC.md.
 
 stdlib only (matches the rest of tools/). Pure decision helpers (classify_failure,
-choose_account, mark_limited, step_due) are kept side-effect-free so
+backend_available, mark_limited, step_due) are kept side-effect-free so
 tools/tests/test_schedule.py can exercise them without touching the system.
 
 Usage:
@@ -45,12 +45,11 @@ LOCK_FILE = STATE_DIR / "schedule.lock"
 LOG_DIR = STATE_DIR / "logs"
 REPORTS_DIR = ROOT / "wiki" / "reports"
 
-# Backend auth identities, priority order. Historically two copilot GitHub
-# accounts with failover; now a single Claude-plan subscription (the logged-in
-# `claude` CLI), so this is one sentinel entry. The failover machinery below
-# (cooldown ledger, classify_failure, choose_account) still applies: a Claude
-# usage-limit error marks this identity limited_until and defers the rest of the
-# LLM batch. Re-add entries here only if a second backend identity exists.
+# The LLM backend: the logged-in Claude CLI on the user's Claude-plan
+# subscription. A single backend (was two failover-ed copilot GitHub accounts
+# until 2026-06-02). A usage-limit error puts it on a cooldown (mark_limited) that
+# defers the rest of the LLM batch; backend_available reports whether the cooldown
+# has expired. ACCOUNTS stays a list as the seam for a future second identity.
 ACCOUNTS = ["claude-plan"]
 
 # Backend pinned per SPEC: Claude CLI on the Claude plan, model `sonnet`.
@@ -157,14 +156,11 @@ def classify_failure(returncode: int, text: str) -> str:
     return "transient"
 
 
-def choose_account(ledger: dict, now: datetime) -> str | None:
-    """First account in priority order whose cooldown has expired, else None."""
-    for acct in ACCOUNTS:
-        st = ledger["accounts"].get(acct, {})
-        lu = st.get("limited_until")
-        if not lu or parse(lu) <= now:
-            return acct
-    return None
+def backend_available(ledger: dict, now: datetime) -> bool:
+    """True if the Claude backend is not currently in a usage-limit cooldown."""
+    st = ledger["accounts"].get(ACCOUNTS[0], {})
+    lu = st.get("limited_until")
+    return not lu or parse(lu) <= now
 
 
 def mark_limited(ledger: dict, acct: str, cls: str, now: datetime) -> None:
@@ -442,32 +438,28 @@ def _q(s: str) -> str:
 
 def run_llm(args: list[str], effort: str, timeout: int, ledger: dict, now: datetime,
             log: Callable[[str], None]) -> tuple[str, str, str]:
-    """Run one LLM invocation with account failover.
+    """Run one LLM invocation on the single Claude backend.
 
-    Returns (status, account_or_reason, output). status in
-    {ok, transient, deferred}. On a rate-limit/quota hit the current account is
-    marked limited and the next healthy account is tried; if none remain the job
-    is deferred.
+    Returns (status, backend, output), status in {ok, transient, deferred}. A
+    usage-limit (quota/ratelimit) hit, or a cooldown still in effect from an
+    earlier hit, defers the job; the cooldown also defers the rest of the LLM
+    batch this tick (see _run_steps).
     """
-    last_out = ""
-    for acct in ACCOUNTS:
-        st = ledger["accounts"].get(acct, {})
-        lu = st.get("limited_until")
-        if lu and parse(lu) > now:
-            continue  # skip an account still in cooldown
-        log(f"    -> account {acct}")
-        rc, out = exec_brain_wiki(args, acct, effort, timeout)
-        last_out = out
-        cls = classify_failure(rc, out)
-        if cls == "ok":
-            clear_account(ledger, acct)
-            return "ok", acct, out
-        if cls == "transient":
-            log(f"    transient failure on {acct} (rc={rc})")
-            return "transient", acct, out
-        log(f"    {cls} on {acct}; switching account")
-        mark_limited(ledger, acct, cls, now)
-    return "deferred", "all-accounts-limited", last_out
+    acct = ACCOUNTS[0]
+    if not backend_available(ledger, now):
+        return "deferred", acct, ""  # cooldown from an earlier usage-limit
+    log(f"    -> backend {acct}")
+    rc, out = exec_brain_wiki(args, acct, effort, timeout)
+    cls = classify_failure(rc, out)
+    if cls == "ok":
+        clear_account(ledger, acct)
+        return "ok", acct, out
+    if cls == "transient":
+        log(f"    transient failure on {acct} (rc={rc})")
+        return "transient", acct, out
+    log(f"    {cls} on {acct}; backend usage-limited, deferring LLM batch")
+    mark_limited(ledger, acct, cls, now)
+    return "deferred", acct, out
 
 
 # --------------------------------------------------------------------------- #
@@ -682,7 +674,7 @@ def acquire_lock():
 def _run_steps(steps: list[Step], ledger: dict, gates: "Gates", now: datetime,
                dry_run: bool, log: Callable[[str], None]) -> None:
     """Run every due step in order, honoring gates, account failover, and reports."""
-    llm_blocked = False  # set once both accounts are limited; skip remaining LLM steps
+    llm_blocked = False  # set once the backend is usage-limited; skip remaining LLM steps
     for step in steps:
         if not step_due(step, ledger, now):
             continue
