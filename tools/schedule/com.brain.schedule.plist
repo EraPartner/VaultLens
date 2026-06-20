@@ -6,10 +6,10 @@
   ~/Library/LaunchAgents by hand; edit here and re-run install).
 
   User agent, NOT a daemon: only the GUI session has Keychain, iCloud, and the
-  Docker Desktop socket. Fires at a few calendar anchors that span the run windows
+  apple/container runtime. Fires at a few calendar anchors that span the run windows
   (nightly 03/06/09, morning 07:05/10) + once on load. No constant polling: work
   runs at most once/day, launchd reruns a missed anchor on the next wake, and the
-  spread anchors give same-day retry if a gate (offline/docker/battery/quota) was
+  spread anchors give same-day retry if a gate (offline/container/battery/quota) was
   temporarily down. The dispatcher is idempotent (ledger + flock), so duplicate
   triggers are safe.
 -->
@@ -28,7 +28,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/computer/.docker/bin</string>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
 
     <key>RunAtLoad</key>

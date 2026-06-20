@@ -3,7 +3,7 @@
 #   brain-shell        # then:  .devcontainer/bin/doctor
 #   # or directly:     container exec <brain-container> .devcontainer/bin/doctor
 #
-# Verifies the egress lock, the agent toolchain, qmd, the ollama hole, and auth.
+# Verifies the egress lock, the agent toolchain, qmd, and auth.
 # Exit non-zero if any CRITICAL check fails.
 
 set -uo pipefail
@@ -43,14 +43,6 @@ if curl -sS --max-time 8 -o /dev/null https://example.com/ 2>/dev/null; then
   bad "DENIED host example.com was reachable — allowlist not enforced!"
 else
   ok "denied host blocked (example.com)"
-fi
-
-echo "== Ollama hole (host daemon) =="
-oll="${OLLAMA_HOST:-http://host.docker.internal:11434}"
-if curl -sS --max-time 6 -o /dev/null "${oll}/api/tags" 2>/dev/null; then
-  ok "host ollama reachable at ${oll}"
-else
-  note "host ollama not reachable at ${oll} (is 'ollama serve' running on the host?)"
 fi
 
 echo "== Agent toolchain =="

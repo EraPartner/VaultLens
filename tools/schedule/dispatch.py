@@ -82,12 +82,11 @@ def _tool(name: str, *fallbacks: str) -> str:
 
 PYTHON = sys.executable or _tool("python3", "/opt/homebrew/bin/python3")
 FISH = _tool("fish", "/opt/homebrew/bin/fish")
-DOCKER = _tool("docker", str(HOME / ".docker/bin/docker"), "/usr/local/bin/docker")
+CONTAINER = _tool("container", "/usr/local/bin/container")
 NC = _tool("nc", "/opt/homebrew/bin/nc", "/usr/bin/nc")
 PMSET = _tool("pmset", "/usr/bin/pmset")
 OSASCRIPT = _tool("osascript", "/usr/bin/osascript")
 BRCTL = _tool("brctl", "/usr/bin/brctl")
-OPEN = _tool("open", "/usr/bin/open")
 IOREG = _tool("ioreg", "/usr/sbin/ioreg")
 SUDO = _tool("sudo", "/usr/bin/sudo")
 
@@ -216,7 +215,7 @@ class Step:
     kind: str                       # "host" (wiki.py, offline) | "llm" (brain-wiki claude)
     period: str                     # "daily" | "weekly"
     window: tuple[int, int]
-    gates: list[str]                # subset of {"ac","online","docker","icloud","battery"}
+    gates: list[str]                # subset of {"ac","online","container","icloud","battery"}
     builder: Callable[[], list[list[str]]]   # -> list of arg-vectors ([] = nothing to do)
     effort: str = "low"
     timeout: int = 1800
@@ -300,20 +299,20 @@ def build_steps() -> list[Step]:
         Step("index", "host", "daily", NIGHTLY_WINDOW, [],
              lambda: [["index", "--rebuild"]], timeout=600),
         # 2. ingest new raw material (only if any), before enhance.
-        Step("ingest", "llm", "daily", NIGHTLY_WINDOW, ["ac", "online", "docker", "icloud"],
+        Step("ingest", "llm", "daily", NIGHTLY_WINDOW, ["ac", "online", "container", "icloud"],
              _ingest_targets, effort="low", timeout=2400),
-        # 3. enhance, capped at 15 iterations/night (the biggest budget consumer).
-        Step("enhance", "llm", "daily", NIGHTLY_WINDOW, ["ac", "online", "docker", "icloud"],
-             lambda: [["enhance", "--iterations", "15", "--strategy", "alternate"]], effort="low", timeout=10800),
+        # 3. enhance, capped at 10 iterations/night (the biggest budget consumer).
+        Step("enhance", "llm", "daily", NIGHTLY_WINDOW, ["ac", "online", "container", "icloud"],
+             lambda: [["enhance", "--iterations", "10", "--strategy", "alternate"]], effort="low", timeout=7200),
         # 4. weekly thinking digests (prefer Sunday); reports filed for you.
-        Step("contradict", "llm", "weekly", NIGHTLY_WINDOW, ["ac", "online", "docker", "icloud"],
+        Step("contradict", "llm", "weekly", NIGHTLY_WINDOW, ["ac", "online", "container", "icloud"],
              lambda: [["contradict"]], effort="high", timeout=2400, report=True),
-        Step("emerge", "llm", "weekly", NIGHTLY_WINDOW, ["ac", "online", "docker", "icloud"],
+        Step("emerge", "llm", "weekly", NIGHTLY_WINDOW, ["ac", "online", "container", "icloud"],
              lambda: [["emerge"]], effort="high", timeout=2400, report=True),
-        Step("discover", "llm", "weekly", NIGHTLY_WINDOW, ["ac", "online", "docker", "icloud"],
+        Step("discover", "llm", "weekly", NIGHTLY_WINDOW, ["ac", "online", "container", "icloud"],
              lambda: [["discover"]], effort="high", timeout=2400, report=True),
         # morning: daily chief-of-staff brief (battery OK, no AC gate).
-        Step("cos-brief", "llm", "daily", MORNING_WINDOW, ["online", "docker", "icloud"],
+        Step("cos-brief", "llm", "daily", MORNING_WINDOW, ["online", "container", "icloud"],
              lambda: [["cos", "--mode", "brief"]], effort="low", timeout=1800, report=True),
     ]
 
@@ -339,21 +338,21 @@ class Gates:
         return True, ""
 
     def _g_online(self) -> bool:
-        # LLM jobs run on the Claude CLI; probe its API endpoint (github.com as
-        # a generic-connectivity fallback for non-LLM online needs).
-        return self._nc("api.anthropic.com", 443) or self._nc("github.com", 443)
+        # Every online-gated step is an LLM job on the Claude CLI, so require the
+        # Anthropic endpoint itself: github-up / anthropic-down must not pass.
+        return self._nc("api.anthropic.com", 443)
 
-    def _g_docker(self) -> bool:
-        if self._docker_up():
+    def _g_container(self) -> bool:
+        if self._container_up():
             return True
-        self.log("docker not running; launching Docker Desktop")
+        self.log("apple/container system not running; starting it")
         try:
-            subprocess.run([OPEN, "-a", "Docker"], capture_output=True, timeout=20)
+            subprocess.run([CONTAINER, "system", "start"], capture_output=True, timeout=60)
         except Exception:
             return False
-        for _ in range(18):  # ~90s
+        for _ in range(12):  # ~60s
             time.sleep(5)
-            if self._docker_up():
+            if self._container_up():
                 return True
         return False
 
@@ -390,9 +389,11 @@ class Gates:
         except Exception:
             return False
 
-    def _docker_up(self) -> bool:
+    def _container_up(self) -> bool:
+        # apple/container runtime (the Docker-free sandbox launcher, bin/agent).
         try:
-            return subprocess.run([DOCKER, "info"], capture_output=True, timeout=30).returncode == 0
+            return subprocess.run([CONTAINER, "system", "status"],
+                                  capture_output=True, timeout=30).returncode == 0
         except Exception:
             return False
 
@@ -759,7 +760,7 @@ def cmd_run(dry_run: bool = False) -> int:
 
         # AC-gated lid-close keep-awake: override sleep with the lid CLOSED only
         # when on AC (battery -> never, so a closed bag can't overheat). Engage
-        # only if LLM work is actually due and runnable (online + docker).
+        # only if LLM work is actually due and runnable (online + container).
         on_ac = gates.get("ac")
         lid = lid_closed()
         any_llm_due = any(step_due(s, ledger, now) for s in steps if s.kind == "llm")
@@ -767,7 +768,7 @@ def cmd_run(dry_run: bool = False) -> int:
             log(f"keep-awake check: on_ac={on_ac} lid_closed={lid} llm_due={any_llm_due}")
         engaged = bool(
             not dry_run and on_ac and lid and any_llm_due
-            and gates.get("online") and gates.get("docker") and keepawake_on(log)
+            and gates.get("online") and gates.get("container") and keepawake_on(log)
         )
 
         try:

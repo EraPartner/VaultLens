@@ -4,7 +4,7 @@
 # devcontainer FEATURES (node:1, python:1, anthropics/claude-code:1.0) plus the
 # local ./features/agent-clis (qmd). Compose has no feature
 # system, so this file installs all of them itself. Everything else (PDF tooling,
-# hardening, egress proxy + ollama hole, baked scripts) is identical to Dockerfile.
+# hardening, egress proxy, baked scripts) is identical to Dockerfile.
 
 FROM debian:bookworm-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb
 
@@ -115,7 +115,8 @@ RUN chmod 0755 /usr/local/sbin/egress-firewall /usr/local/sbin/brain-perms-fix /
 COPY bin/verify-pins /usr/local/bin/brain-verify-pins
 RUN chmod 0755 /usr/local/bin/brain-verify-pins
 
-# Brain-only egress exception: the host-Ollama hole (host.docker.internal:11434).
+# Egress extra-rules hook. The host-Ollama hole was removed in the apple/container
+# migration, so extra-rules.sh is a no-op stub (kept for build/entrypoint stability).
 COPY extra-rules.sh /etc/egress/extra-rules.sh
 RUN chmod 0755 /etc/egress/extra-rules.sh
 

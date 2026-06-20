@@ -2,8 +2,8 @@
 # devcontainer-egress/sync.sh into the baked allowlist.txt).
 #
 # NOT here on purpose:
-#   - ollama.com / registry.ollama.ai — inference goes to the HOST ollama daemon
-#     via host.docker.internal:11434 (a direct firewall hole, not this proxy).
+#   - ollama.com / registry.ollama.ai — the host-Ollama hole was removed in the
+#     apple/container migration; no in-container inference reaches a host daemon.
 #   - huggingface.co — qmd's embedding models are seeded from the host cache, so
 #     they are never downloaded. Add huggingface.co + cdn-lfs.huggingface.co and
 #     rebuild only if you switch to in-container `qmd embed` downloads.

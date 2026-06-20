@@ -27,8 +27,9 @@ TOOLS_DIR = ROOT / "tools"
 def _in_container() -> bool:
     """True when running inside the Brain devcontainer.
 
-    DEVCONTAINER=true is set by .devcontainer/devcontainer.json; /.dockerenv
-    exists in any Docker container. Either is sufficient.
+    DEVCONTAINER=true is set by the sandbox launcher (.devcontainer/bin/agent
+    passes -e DEVCONTAINER=true). /.dockerenv exists only under Docker, not
+    apple/container, so the env var is the reliable signal here. Either suffices.
     """
     return os.environ.get("DEVCONTAINER") == "true" or Path("/.dockerenv").exists()
 

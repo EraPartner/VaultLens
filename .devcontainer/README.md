@@ -38,12 +38,12 @@ Base image: digest-pinned `debian:bookworm-slim`. Container user: `dev` (UID 100
 
 ## How to use
 
-This sandbox runs on **Docker Compose** (no devcontainer CLI). Prerequisite:
-Docker Desktop with Compose v2 (`docker compose version`). Each `brain-*` wrapper
-calls `.devcontainer/bin/agent`, which resolves the capability profile, selects
-the compose files (`compose.yaml` + `compose.scoped.yaml` + a generated RW-hole
-override), runs `docker compose up -d --build`, replays the lifecycle, forwards
-LLM tokens, and auto-syncs `~/.claude` on exit.
+This sandbox runs on **apple/container** (the `container` CLI; no Docker, no
+devcontainer CLI). Prerequisite: apple/container installed and started
+(`container system start`). Each `brain-*` wrapper calls `.devcontainer/bin/agent`,
+which resolves the capability profile, builds the image from `Dockerfile`, runs
+the container (`container run` with per-profile mounts and a generated RW-hole),
+replays the lifecycle, forwards LLM tokens, and auto-syncs `~/.claude` on exit.
 
 Host fish functions (in `~/.config/fish/functions/`, version-controlled in your
 dotfiles). They walk up to find `.devcontainer/`, fall back to `$BRAIN_HOME`,
@@ -88,7 +88,7 @@ entry via `sandbox_forward_llm_creds`).
 ## One-time host setup
 
 ```sh
-# 1) Docker Desktop with Compose v2 (verify: docker compose version)
+# 1) apple/container installed and started (verify: container system status)
 
 # 2) Claude OAuth token (long-lived; uses your subscription)
 claude setup-token        # prints sk-ant-… ; copy it
@@ -96,7 +96,7 @@ security add-generic-password -s brain-claude-code-token -a "$USER" -w   # paste
 ```
 
 The `brain-*` wrappers retrieve this on every invocation and forward it at
-`docker compose exec` time. Only LLM auth crosses the boundary — **no git push
+`container exec` time. Only LLM auth crosses the boundary — **no git push
 credential**: `CLAUDE_CODE_OAUTH_TOKEN` (from `brain-claude-code-token`).
 `GH_TOKEN`/`GITHUB_TOKEN` are **not** forwarded and the root `.git` is mounted
 read-only, so no container can commit, rewrite history, or push (do that on the
@@ -119,7 +119,7 @@ Egress is enforced by the root entrypoint on every start:
    `NODE_USE_ENV_PROXY=1`, so `claude`, `qmd`, `npm`,
    `git`, `gh`, and `python` all egress through it.
 2. **`iptables` egress lock**: only the `proxy` UID may originate outbound
-   packets (including DNS to the embedded Docker resolver, so non-proxy processes
+   packets (including DNS, so non-proxy processes
    can't tunnel data out via DNS queries). IPv6 is default-deny. Denied egress is
    rate-limited-logged (`dmesg | grep egress-deny`).
 
@@ -127,10 +127,10 @@ Egress is enforced by the root entrypoint on every start:
 change): Anthropic + Claude Code, `registry.npmjs.org`, GitHub, the safe-chain
 malware list, and context7.
 
-**The one egress hole:** the firewall allows direct TCP to
-`host.docker.internal:11434` so the container reaches the **host Ollama daemon**
-(the Mac has the weights + Metal GPU). `OLLAMA_HOST` points there and `NO_PROXY`
-keeps it off squid. This is the only host service the container can touch.
+**No host-service holes.** The earlier Ollama exception (direct TCP to the host
+daemon) was **removed in the apple/container migration** — `bin/agent` sets no
+`extra_hosts` / `OLLAMA_HOST` and `extra-rules.sh` is a no-op stub. All egress
+goes through squid; the container reaches no host service.
 
 **Supply-chain scanning:** `post-create` installs Aikido safe-chain and
 `BASH_ENV` wires it into every shell, so `npm`/`pip` installs the agents run
@@ -147,7 +147,7 @@ guarantee. See the comment atop `bin/verify-pins`.
 
 **Observability:** the definitive log is `/var/log/squid/access.log`
 (`dev`-readable; `TCP_DENIED`/`NONE` = blocked). Run `.devcontainer/bin/doctor`
-for a one-shot readiness check (egress lock, toolchain, qmd, ollama, auth).
+for a one-shot readiness check (egress lock, toolchain, qmd, auth).
 
 **Not covered:** WebSearch/WebFetch run agent-side, not through the proxy. ECH
 (encrypted SNI) destinations fail closed.
@@ -181,7 +181,7 @@ exfiltrated; read-only means the agents can't alter your real coursework/source.
 
 **Adding a project with a new symlink target:** if its target isn't already
 under one of the mounted ancestors, add a matching
-read-only bind mount under `services.app.volumes` in `compose.yaml`
+read-only `-v <target>:<target>:ro` mount in `bin/agent`
 and rebuild. List current targets with:
 `find projects -maxdepth 3 -type l -exec readlink {} \; | sort -u`.
 
@@ -272,9 +272,10 @@ commit to the thesis repo. **Make changes inside, commit & push from the host.**
   cloud ("dataless") can read as empty through the bind mount — materialize the
   files you'll work on before running, and expect sync churn as agents write
   wiki pages. Bind-mount performance is also slower than a local disk.
-- **Ollama hole.** The container can reach exactly one host service
-  (`:11434`). This is a deliberate isolation tradeoff; drop the rule in
-  `init-firewall.sh` (and rebuild) if you'd rather run Ollama in-container.
+- **No host-service holes.** The earlier exception that let the container reach
+  the host Ollama daemon (`:11434`) was removed in the apple/container migration;
+  the container now reaches no host service. Re-add a rule in `init-firewall.sh`
+  (and rebuild) if you want host Ollama back.
 - **Changing the egress allowlist** requires editing `allowlist.txt` and
   rebuilding (it's baked into the image).
 
@@ -289,16 +290,14 @@ ingest sources you trust.
 
 **Why `.devcontainer` is mounted read-only.** The vault is bind-mounted
 read-write at `/workspaces/Brain` so the agents can edit wiki content — but that
-same mount would otherwise expose the sandbox's own definition (`compose.yaml`,
-`Dockerfile`) and, critically, the **host-side launcher**
+same mount would otherwise expose the sandbox's own definition (`Dockerfile`) and, critically, the **host-side launcher**
 (`bin/agent`, `bin/claude`, `bin/doctor`). Those run on your **Mac** with your
-shell and Keychain. A compromised in-container agent could add a privileged
-option or a `docker.sock` mount to `compose.yaml`, or just edit `bin/agent`, and
-the next time you ran `brain-*` (which calls `docker compose up` and re-execs the
+shell and Keychain. A compromised in-container agent could just edit `bin/agent`, and the next time
+you ran `brain-*` (which builds and runs the container and re-execs the
 launcher) it would execute on the host — a trivial full escape. To close that,
 `.devcontainer` is re-mounted **read-only on top of** the read-write workspace,
 so it is immutable from inside. The container cannot lift this: it has
 `cap-drop=ALL` (no `CAP_SYS_ADMIN`, so no remount/unmount), `no-new-privileges`,
 and `.devcontainer` is a busy mountpoint that can't be replaced — the protection
-re-applies on every `docker compose up`. **Edit `.devcontainer` on the host only,**
+re-applies on every `container run`. **Edit `.devcontainer` on the host only,**
 then rebuild.

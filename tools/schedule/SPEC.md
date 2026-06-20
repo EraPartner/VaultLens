@@ -27,7 +27,7 @@ clamshell mode irrelevant. Per tick:
 - **self-heal** first: `pmset -a disablesleep 0` (clears a flag left stuck by a
   hard-killed prior run; no-op otherwise).
 - engage only if `on AC AND lid closed (ioreg AppleClamshellState) AND an LLM step
-  is due AND online AND docker`: `pmset -a disablesleep 1`, run the batch, then in
+  is due AND online AND container`: `pmset -a disablesleep 1`, run the batch, then in
   a `finally` `pmset -a disablesleep 0` and (if still lid-closed) `pmset sleepnow`.
 - battery / lid-open / nothing-due -> never touches `disablesleep`.
 
@@ -62,7 +62,7 @@ pmset call still needs a password. `sudo -n` is used so a missing rule fails fas
 7. **Nothing LLM runs per tick.** All LLM work happens in **one nightly batch**;
    the only daily-morning LLM job is the cos brief. The ~30-min tick is purely the
    catch-up gate-checker, never an LLM trigger.
-8. **`enhance` is capped at `--iterations 15` per night** (not `--forever`).
+8. **`enhance` is capped at `--iterations 10` per night** (not `--forever`).
 
 ## Backend & model
 
@@ -118,11 +118,11 @@ Dispatcher classifies copilot exit/stderr into three failure modes:
 | **Both accounts limited** | switch found no healthy account | defer the job + rest of the LLM batch; notify |
 
 The two accounts roughly double the effective monthly budget; with `enhance`
-capped at 15 iterations/night the nightly batch is bounded, so two quotas should
+capped at 10 iterations/night the nightly batch is bounded, so two quotas should
 cover it comfortably.
 
 Budget-shaping (build into the job table):
-- `enhance` capped at **`--iterations 15` per night** (the biggest consumer; no
+- `enhance` capped at **`--iterations 10` per night** (the biggest consumer; no
   `--forever`).
 - Heavy digests (contradict/emerge/discover) stay **weekly** (Sunday batch).
 - Each agentic run is many model turns, so cos brief uses `--effort low`.
@@ -135,7 +135,7 @@ The dispatcher ticks every ~30 min only to check gates + the ledger. Actual work
 1. `lint` + `index` (offline, host-native pre-check; clean state for enhance)
 2. `ingest` **if** `raw/inbox` / `raw/sources` has unprocessed files
    (checked here, **once a night**, not per tick)
-3. `enhance --iterations 15` (capped)
+3. `enhance --iterations 10` (capped)
 4. **Sundays only:** `contradict` + `emerge` + `discover`
 
 All LLM steps: `--cli claude --model sonnet`, deferred if a usage limit is hit
@@ -169,7 +169,7 @@ next eligible tick. Sleep / offline / closed-lid become non-events.
 
 | # | Component | Path | Notes |
 |---|---|---|---|
-| 1 | LaunchAgent plist | `~/Library/LaunchAgents/com.brain.schedule.plist` | **User agent, not a daemon** — only the GUI session has Keychain, iCloud, and the Docker Desktop socket. **No `StartInterval` polling** (work runs at most once/day). `RunAtLoad` + `StartCalendarInterval` anchors spanning the windows (nightly 03/06/09, morning 07:05/10). launchd reruns a missed anchor on the next wake; the spread anchors give same-day retry if a gate was temporarily down. |
+| 1 | LaunchAgent plist | `~/Library/LaunchAgents/com.brain.schedule.plist` | **User agent, not a daemon** — only the GUI session has Keychain, iCloud, and the apple/container runtime. **No `StartInterval` polling** (work runs at most once/day). `RunAtLoad` + `StartCalendarInterval` anchors spanning the windows (nightly 03/06/09, morning 07:05/10). launchd reruns a missed anchor on the next wake; the spread anchors give same-day retry if a gate was temporarily down. |
 | 2 | Dispatcher | `tools/schedule/dispatch.py` | stdlib only (matches the rest of `tools/`). Reads job table, checks gates, runs due jobs, writes ledger, captures + files output. |
 | 3 | Ledger + lock | `~/.brain/schedule-state.json` | per-job last-run timestamps + a `flock` so ticks never overlap and never collide with the enhance loop. Outside the iCloud vault to avoid sync conflict copies. |
 | 4 | Job table | inline in `dispatch.py` (or sibling `jobs.json`) | declarative: command, cadence, window, gates, invocation path. |
@@ -195,13 +195,13 @@ next eligible tick. Sleep / offline / closed-lid become non-events.
 | index | `wiki.py index --check` (→ `--rebuild` if stale) | **nightly** (batch step 1) | offline-ok, host-native | log |
 | links | `wiki.py links --fix` | weekly | offline-ok, host-native | log |
 | coverage snapshot | `wiki.py coverage --json` | weekly | offline-ok, host-native | feeds enhance |
-| **cos brief** | `brain-wiki cos --mode brief` | daily, 07:00 window | online, docker, icloud, battery-ok | `wiki/reports/` + macOS notify |
-| contradict | `brain-wiki contradict` | weekly, overnight AC window | online, docker, icloud, **AC** | `wiki/reports/` |
-| emerge | `brain-wiki emerge` | weekly | online, docker, icloud | `wiki/reports/` + notify |
-| discover | `brain-wiki discover` | weekly | online, docker, icloud | `wiki/reports/` + notify |
-| verify *(optional)* | `brain-wiki verify --source <changed>` | weekly, on recently-changed source pages | online, docker, icloud | report |
-| ingest | `brain-wiki ingest --source <new>` | **nightly**, before enhance, only if `raw/inbox` / `raw/sources` has unprocessed files | online, docker, icloud, **AC** | wiki + promote inbox PDF |
-| enhance | `brain-wiki enhance --iterations 15` | **nightly**, after ingest (capped, not `--forever`) | online, docker, icloud, **AC** | writes wiki directly |
+| **cos brief** | `brain-wiki cos --mode brief` | daily, 07:00 window | online, container, icloud, battery-ok | `wiki/reports/` + macOS notify |
+| contradict | `brain-wiki contradict` | weekly, overnight AC window | online, container, icloud, **AC** | `wiki/reports/` |
+| emerge | `brain-wiki emerge` | weekly | online, container, icloud | `wiki/reports/` + notify |
+| discover | `brain-wiki discover` | weekly | online, container, icloud | `wiki/reports/` + notify |
+| verify *(optional)* | `brain-wiki verify --source <changed>` | weekly, on recently-changed source pages | online, container, icloud | report |
+| ingest | `brain-wiki ingest --source <new>` | **nightly**, before enhance, only if `raw/inbox` / `raw/sources` has unprocessed files | online, container, icloud, **AC** | wiki + promote inbox PDF |
+| enhance | `brain-wiki enhance --iterations 10` | **nightly**, after ingest (capped, not `--forever`) | online, container, icloud, **AC** | writes wiki directly |
 
 **Scheduled:** lint, index, links, coverage, cos brief, contradict, emerge,
 discover, (optional verify), enhance, ingest.
@@ -214,7 +214,7 @@ running these, but never auto-fire them.
 | Gate | Detection | Behavior when failing |
 |---|---|---|
 | online | `nc -z -G 5 api.anthropic.com 443` (or `curl --max-time 5`) | **defer** LLM jobs (ledger not advanced → retried next tick). Tier 0 unaffected. |
-| docker | `docker info` exits 0 | `open -a Docker` + bounded wait (~90s); else defer container jobs. Tier 0 still runs. |
+| container | `container system status` exits 0 | `container system start` + bounded wait (~60s); else defer LLM jobs. Tier 0 still runs. |
 | icloud | `find <input> -flags +dataless` empty, else `brctl download <path>` | defer until materialized. |
 | AC | `pmset -g batt` shows `AC Power` | heavy jobs (enhance, contradict) defer; light jobs proceed. |
 | battery-ok | battery ≥ ~20% | defer heavy; allow light (cos brief, lint). |
@@ -232,7 +232,7 @@ running these, but never auto-fire them.
   catch-up of whatever is overdue. Forced wakes (`pmset repeat wake`) exist only
   to guarantee the overnight heavy window; the AC gate means a battery wake
   (e.g. in a bag) does nothing and the Mac re-sleeps. PowerNap micro-wakes are
-  ignored (Docker is down / uptime window too small).
+  ignored (the container runtime is down / uptime window too small).
 
 ## Output, notifications, failure
 

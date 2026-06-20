@@ -77,7 +77,7 @@ if [[ -r "$INBOUND_FILE" ]]; then
   done < "$INBOUND_FILE"
 fi
 
-# Project-specific extra OUTPUT allows (e.g. Brain's host-Ollama hole), run AFTER
+# Project-specific extra OUTPUT allows (currently none; host-Ollama hole removed), run AFTER
 # the base allows and BEFORE the catch-all deny. Optional, project-owned file —
 # each rule it adds is a deliberate exception.
 [[ -x "$EXTRA_RULES" ]] && "$EXTRA_RULES" || true
