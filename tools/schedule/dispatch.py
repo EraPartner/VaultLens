@@ -63,6 +63,10 @@ MODEL = "sonnet"
 NIGHTLY_WINDOW = (2, 11)
 MORNING_WINDOW = (7, 12)
 MIN_BATTERY_PCT = 20
+# Notify once when a job has failed this many runs in a row. A deterministic
+# config error (e.g. a misrouted agent exiting 2) otherwise retries every tick
+# forever, surfacing only in schedule-status; this raises one alarm.
+FAIL_STREAK_ALERT = 3
 
 # Backoff for short rate-limits (seconds): 30m -> 1h -> 2h (capped). Monthly quota
 # uses a flat ~24h re-probe (we don't try to compute the exact reset).
@@ -511,9 +515,10 @@ def format_schedule_status(
         last_ok_s = ok_dt.strftime("%Y-%m-%d %H:%M") if ok_dt else "never"
         is_fail = result is not None and result not in STATUS_OK
         is_stale = ok_dt is None or (now - ok_dt).days > _STALE_DAYS.get(period, 2)
+        streak = rec.get("fail_streak", 0)
         if is_fail:
             failing.append(name)
-            health = f"FAIL ({result})"
+            health = f"FAIL ({result} x{streak})" if streak > 1 else f"FAIL ({result})"
         elif is_stale:
             stale.append(name)
             health = "stale"
@@ -738,6 +743,10 @@ def _run_steps(steps: list[Step], ledger: dict, gates: "Gates", now: datetime,
             _record(ledger, step.name, now, "ok")
         else:
             _record(ledger, step.name, now, outcome)
+            if ledger["jobs"][step.name].get("fail_streak", 0) == FAIL_STREAK_ALERT:
+                notify("Brain schedule",
+                       f"{step.name}: failed {FAIL_STREAK_ALERT} runs in a row "
+                       f"({outcome}); see wiki/reports/schedule-status.md")
 
 
 def cmd_run(dry_run: bool = False) -> int:
@@ -800,6 +809,9 @@ def _record(ledger: dict, name: str, now: datetime, result: str) -> None:
     rec["last_result"] = result
     if result in ("ok", "noop"):
         rec["last_ok"] = iso(now)
+        rec["fail_streak"] = 0
+    else:
+        rec["fail_streak"] = rec.get("fail_streak", 0) + 1
 
 
 def cmd_status() -> int:
