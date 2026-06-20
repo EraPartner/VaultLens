@@ -306,6 +306,20 @@ def _gather_cos_context(mode: str, project_filter: str | None) -> str:
             except OSError:
                 parts.append("\n## Recent wiki activity — (could not read wiki/log.md)")
 
+    # --- Scheduler health (nightly batch run status) -------------------------
+    # The dispatcher's run ledger lives outside the vault (~/.brain), unreachable
+    # from this sandbox; dispatch.py mirrors a compact summary into wiki/reports
+    # so the CoS can flag automation failures the operator would otherwise only
+    # catch as a transient macOS notification.
+    if mode in ("brief", "status"):
+        status_file = ROOT / "wiki" / "reports" / "schedule-status.md"
+        if status_file.exists():
+            try:
+                parts.append("\n## Scheduler health (nightly batch)")
+                parts.append(status_file.read_text(encoding="utf-8"))
+            except OSError:
+                pass
+
     # --- Inbox listing -------------------------------------------------------
     inbox_dir = ROOT / "raw" / "inbox"
     if inbox_dir.is_dir():

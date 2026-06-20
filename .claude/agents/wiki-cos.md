@@ -55,6 +55,12 @@ Produce a **daily chief-of-staff brief**. Use this structure exactly:
 ```
 ## Chief of Staff Brief — YYYY-MM-DD (Weekday)
 
+### System health
+[ONLY when the injected "Scheduler health (nightly batch)" block reports failing or stale
+ jobs: ONE line naming them and the failure, e.g.
+ "⚠ nightly batch: cos-brief, emerge, discover failing (transient); brief may be stale".
+ Omit this section entirely when the block says all jobs are healthy.]
+
 ### Overdue / Critical
 [tasks past their 📅 due date, or 🔺 marked and undated — max 5; sorted by date then priority]
 
@@ -88,6 +94,9 @@ Produce a **daily chief-of-staff brief**. Use this structure exactly:
 - The "Today's focus" section is the most important output. Make it actionable and specific.
 - Omit any section that is genuinely empty (e.g., no overdue items → omit "Overdue / Critical").
 - Do not repeat the same task in multiple sections.
+- System health: the injected "Scheduler health" block is the run status of the automation
+  that produces this brief. If it reports failing or stale jobs, surface them as the single
+  `### System health` line; never list healthy jobs. This is the only ops content in the brief.
 
 ### status
 

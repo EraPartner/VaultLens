@@ -129,6 +129,31 @@ def main() -> int:
     check("new PDF is selected",
           dispatch._select_ingest_pdfs(["Brand New.pdf"], set(), set()) == ["Brand New.pdf"])
 
+    print("scheduler status summary:")
+    nowt = datetime(2026, 6, 20, 7, 0).astimezone()
+    meta = [("lint", "daily"), ("enhance", "daily"), ("cos-brief", "daily"), ("contradict", "weekly")]
+    healthy = {n: {"last_ok": dispatch.iso(nowt), "last_result": "ok"} for n, _ in meta}
+    check("all-healthy verdict", "all scheduled jobs healthy" in dispatch.format_schedule_status(healthy, {}, meta, nowt))
+    failed = dict(healthy)
+    failed["cos-brief"] = {"last_ok": dispatch.iso(nowt - timedelta(days=4)), "last_result": "transient"}
+    s_fail = dispatch.format_schedule_status(failed, {}, meta, nowt)
+    check("failing job named in verdict", "cos-brief" in s_fail and "failing" in s_fail)
+    never = {n: {} for n, _ in meta}  # never run -> stale, not failing
+    s_stale = dispatch.format_schedule_status(never, {}, meta, nowt)
+    check("never-run jobs read as stale", "stale" in s_stale and "failing" not in s_stale)
+    accts = {"claude-plan": {"limited_until": dispatch.iso(nowt + timedelta(hours=2))}}
+    s_lim = dispatch.format_schedule_status(healthy, accts, meta, nowt)
+    check("backend cooldown surfaced", "Backend limited" in s_lim and "claude-plan" in s_lim)
+
+    print("_record failure semantics:")
+    led7 = fresh_ledger()
+    dispatch._record(led7, "enhance", now, "ok")
+    ok_ts = led7["jobs"]["enhance"]["last_ok"]
+    dispatch._record(led7, "enhance", now + timedelta(hours=3), "transient")
+    check("failure preserves last_ok", led7["jobs"]["enhance"]["last_ok"] == ok_ts)
+    check("failure sets last_result", led7["jobs"]["enhance"]["last_result"] == "transient")
+    check("attempt timestamp recorded", "last_attempt" in led7["jobs"]["enhance"])
+
     print(f"\n{PASSED} passed, {FAILED} failed")
     return 1 if FAILED else 0
 

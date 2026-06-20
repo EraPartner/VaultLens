@@ -484,6 +484,97 @@ def write_report(name: str, text: str, now: datetime) -> Path:
     return f
 
 
+STATUS_OK = ("ok", "noop")
+# A job is "stale" when its last success predates this many days, per cadence.
+_STALE_DAYS = {"daily": 2, "weekly": 9}
+
+
+def format_schedule_status(
+    jobs: dict, accounts: dict, step_meta: list[tuple[str, str]], now: datetime
+) -> str:
+    """Render a compact scheduler-health summary as markdown. Pure / no I/O.
+
+    `jobs` is the ledger's per-step record, `step_meta` is [(name, period), ...]
+    in run order, `accounts` is the cooldown ledger. A job is flagged failing when
+    its most recent attempt did not succeed, or stale when its last success is
+    older than the period threshold. Tested directly in test_schedule.py.
+    """
+    failing: list[str] = []
+    stale: list[str] = []
+    rows: list[str] = []
+    for name, period in step_meta:
+        rec = jobs.get(name, {})
+        last_ok = rec.get("last_ok")
+        result = rec.get("last_result")
+        ok_dt = parse(last_ok) if last_ok else None
+        last_ok_s = ok_dt.strftime("%Y-%m-%d %H:%M") if ok_dt else "never"
+        is_fail = result is not None and result not in STATUS_OK
+        is_stale = ok_dt is None or (now - ok_dt).days > _STALE_DAYS.get(period, 2)
+        if is_fail:
+            failing.append(name)
+            health = f"FAIL ({result})"
+        elif is_stale:
+            stale.append(name)
+            health = "stale"
+        else:
+            health = "ok"
+        rows.append(f"| {name} | {period} | {last_ok_s} | {result or 'none'} | {health} |")
+
+    limited = [
+        a for a, st in accounts.items()
+        if st.get("limited_until") and parse(st["limited_until"]) > now
+    ]
+
+    if failing:
+        verdict = f"WARNING: {len(failing)} job(s) failing: {', '.join(failing)}"
+    elif stale:
+        verdict = f"WARNING: {len(stale)} job(s) stale: {', '.join(stale)}"
+    else:
+        verdict = "OK: all scheduled jobs healthy"
+
+    lines = [
+        verdict,
+        f"_as of {now:%Y-%m-%d %H:%M}_",
+        "",
+        "| job | cadence | last success | last result | health |",
+        "|---|---|---|---|---|",
+        *rows,
+    ]
+    if limited:
+        lines += ["", f"Backend limited (LLM batch deferred): {', '.join(limited)}"]
+    return "\n".join(lines)
+
+
+def write_schedule_status(ledger: dict, steps: list["Step"], now: datetime) -> Path:
+    """Mirror the run ledger into the vault as a compact health page.
+
+    The live ledger lives at ~/.brain (outside the vault and the agent sandbox),
+    so the CoS cannot read it directly; this rolling page in wiki/reports lets the
+    morning brief surface nightly-batch failures.
+    """
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    body = format_schedule_status(
+        ledger.get("jobs", {}),
+        ledger.get("accounts", {}),
+        [(s.name, s.period) for s in steps],
+        now,
+    )
+    header = (
+        "---\n"
+        "type: report\n"
+        "title: Scheduler status\n"
+        "status: active\n"
+        f"created: {now:%Y-%m-%d}\n"
+        f"updated: {now:%Y-%m-%d}\n"
+        "summary: Live health of the nightly scheduled-agent batch: last success and last result per job.\n"
+        "tags: [scheduled, status, health]\n"
+        "---\n\n"
+    )
+    f = REPORTS_DIR / "schedule-status.md"
+    f.write_text(header + body.strip() + "\n")
+    return f
+
+
 def notify(title: str, msg: str) -> None:
     try:
         subprocess.run([OSASCRIPT, "-e",
@@ -606,12 +697,14 @@ def _run_steps(steps: list[Step], ledger: dict, gates: "Gates", now: datetime,
             continue
 
         all_ok = True
+        outcome = "ok"
         for args in invocations:
             log(f"run {step.name}: {' '.join(args)}")
             if step.kind == "host":
                 rc, out = run_host(args, step.timeout)
                 if rc == 124:
                     all_ok = False
+                    outcome = "timeout"
                     log(f"  {step.name} timed out; will retry next tick")
                 else:
                     # rc != 0 from a host tool means "issues found" (e.g. lint
@@ -630,16 +723,20 @@ def _run_steps(steps: list[Step], ledger: dict, gates: "Gates", now: datetime,
                         notify("Brain schedule", f"{step.name} ready: {f.name}")
                 elif status == "deferred":
                     all_ok = False
+                    outcome = "deferred"
                     llm_blocked = True
                     log(f"  {step.name} deferred: {who}")
                     notify("Brain schedule", "Claude usage limited; LLM jobs deferred")
                     break  # shared quota -> stop the LLM batch this tick
                 else:  # transient
                     all_ok = False
+                    outcome = "transient"
                     log(f"  {step.name} transient failure; will retry next tick")
 
         if all_ok:
             _record(ledger, step.name, now, "ok")
+        else:
+            _record(ledger, step.name, now, outcome)
 
 
 def cmd_run(dry_run: bool = False) -> int:
@@ -676,6 +773,8 @@ def cmd_run(dry_run: bool = False) -> int:
         try:
             _run_steps(steps, ledger, gates, now, dry_run, log)
             save_ledger(ledger)
+            if not dry_run:
+                write_schedule_status(ledger, steps, now)
         finally:
             if engaged:
                 keepawake_off(log)
@@ -691,7 +790,15 @@ def cmd_run(dry_run: bool = False) -> int:
 
 
 def _record(ledger: dict, name: str, now: datetime, result: str) -> None:
-    ledger["jobs"][name] = {"last_ok": iso(now), "last_result": result}
+    """Record a step outcome. `last_ok` advances only on success-equivalent
+    results (ok/noop) and still drives step_due; every attempt also updates
+    `last_attempt`/`last_result`, so failures stay visible to the status summary
+    and the Chief of Staff instead of being log-only."""
+    rec = ledger["jobs"].setdefault(name, {})
+    rec["last_attempt"] = iso(now)
+    rec["last_result"] = result
+    if result in ("ok", "noop"):
+        rec["last_ok"] = iso(now)
 
 
 def cmd_status() -> int:
