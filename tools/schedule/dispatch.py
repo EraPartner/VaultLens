@@ -23,6 +23,7 @@ import argparse
 import fcntl
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -222,8 +223,59 @@ class Step:
     report: bool = False            # capture stdout into wiki/reports/
 
 
+def _slugify(text: str) -> str:
+    """Lowercase-hyphen slug matching the wiki's source-page / source-text naming."""
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+def _select_ingest_pdfs(pdf_names: list[str], text_stems: set[str], ingested_pdf_names: set[str]) -> list[str]:
+    """Pure core of _ingest_targets: which source PDFs still need ingesting.
+
+    A PDF is skipped when either signal says it is already processed:
+      * a wiki/sources page already cites it (authoritative: the page is the
+        product of ingest, so its presence means ingest ran), or
+      * extracted text exists under its literal stem OR its slug. raw/sources-text
+        holds both naming conventions (preprocess writes the literal `<stem>.md`;
+        the agent PDF pre-extraction writes a slugified name), so checking only one
+        made the nightly batch re-ingest a fully-captured book every night.
+    Side-effect-free so tools/tests/test_schedule.py can exercise it.
+    """
+    out: list[str] = []
+    for name in pdf_names:
+        if name in ingested_pdf_names:
+            continue
+        stem = name[:-4] if name.lower().endswith(".pdf") else name
+        if stem in text_stems or _slugify(stem) in text_stems:
+            continue
+        out.append(name)
+    return out
+
+
+def _ingested_pdf_names() -> set[str]:
+    """PDF basenames already cited by a wiki/sources page via raw/sources/<name>.pdf.
+
+    Matches the wikilink ([[raw/sources/Foo.pdf]]) and markdown-link forms, anchoring
+    on the `raw/sources/` segment so a relative-path mirror still resolves.
+    """
+    names: set[str] = set()
+    srcdir = ROOT / "wiki" / "sources"
+    if srcdir.is_dir():
+        pat = re.compile(r"raw/sources/([^\]|>)\n]+\.pdf)", re.IGNORECASE)
+        for page in srcdir.glob("*.md"):
+            try:
+                text = page.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            names.update(m.group(1).strip() for m in pat.finditer(text))
+    return names
+
+
 def _ingest_targets() -> list[list[str]]:
-    """Unprocessed raw material: inbox files + source PDFs lacking extracted text."""
+    """Unprocessed raw material: inbox files + not-yet-ingested source PDFs.
+
+    See _select_ingest_pdfs for the (pure, tested) rule that decides when a source
+    PDF still needs ingesting; this wrapper just supplies the filesystem facts.
+    """
     targets: list[Path] = []
     inbox = ROOT / "raw" / "inbox"
     if inbox.is_dir():
@@ -231,9 +283,10 @@ def _ingest_targets() -> list[list[str]]:
     srcs = ROOT / "raw" / "sources"
     textdir = ROOT / "raw" / "sources-text"
     if srcs.is_dir():
-        for p in sorted(srcs.glob("*.pdf")):
-            if not (textdir / (p.stem + ".md")).exists():
-                targets.append(p)
+        pdf_names = [p.name for p in sorted(srcs.glob("*.pdf"))]
+        text_stems = {p.stem for p in textdir.glob("*.md")} if textdir.is_dir() else set()
+        selected = _select_ingest_pdfs(pdf_names, text_stems, _ingested_pdf_names())
+        targets += [srcs / name for name in selected]
     return [["ingest", "--source", str(p)] for p in targets[:3]]  # cap per night
 
 

@@ -112,6 +112,23 @@ def main() -> int:
     weekday = now + timedelta(days=3)  # a Wednesday, age >= 8 -> catch up
     check("weekly catches up when overdue >8d", dispatch.step_due(weekly, led6, weekday) is True)
 
+    print("ingest target selection:")
+    check("slugify matches source-text convention",
+          dispatch._slugify("Cryptology and Error Correction") == "cryptology-and-error-correction")
+    # The bug: a wiki/sources page already cites the PDF -> never re-ingest it,
+    # even when no literal-stem extracted text exists.
+    check("PDF with a wiki source page is skipped",
+          dispatch._select_ingest_pdfs(["Cryptology and Error Correction.pdf"], set(), {"Cryptology and Error Correction.pdf"}) == [])
+    # Extracted text under the slugified name also counts as processed.
+    check("slugified extracted text skips PDF",
+          dispatch._select_ingest_pdfs(["Cryptology and Error Correction.pdf"], {"cryptology-and-error-correction"}, set()) == [])
+    # ...as does extracted text under the literal stem (preprocess's naming).
+    check("literal-stem extracted text skips PDF",
+          dispatch._select_ingest_pdfs(["Foo Bar.pdf"], {"Foo Bar"}, set()) == [])
+    # A genuinely new PDF (no page, no text) is still selected.
+    check("new PDF is selected",
+          dispatch._select_ingest_pdfs(["Brand New.pdf"], set(), set()) == ["Brand New.pdf"])
+
     print(f"\n{PASSED} passed, {FAILED} failed")
     return 1 if FAILED else 0
 
