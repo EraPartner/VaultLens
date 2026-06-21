@@ -38,49 +38,65 @@ def _body_word_count(body: str) -> int:
 SHALLOW_WORD_THRESHOLD = 300
 SPARSE_TOPIC_CONCEPT_THRESHOLD = 5
 
+# Categories that never carry analytical coverage weight (skipped on both paths).
+# `reports/` holds scheduled-agent + lint/audit outputs — dated, unlinked, and
+# off-limits to the enhancer — so they must not surface as coverage targets even
+# though they trip every floor (short, 0 inbound, 0 outbound).
+COVERAGE_SKIP_CATEGORIES = {"system", "root", "entities", "inventory", "reports"}
+# The relative fallback only ranks the page kinds the enhancer is meant to deepen.
+COVERAGE_RELATIVE_CATEGORIES = {"concepts", "topics"}
 
-def coverage(as_json: bool, limit: int) -> int:
-    """Report sparse-coverage targets for the enhancer agent.
 
-    Ranks pages by weakness signals:
-      - Body word count (shallow < 300 words)
-      - Inbound wikilink count (underlinked < 2)
-      - Outbound wikilink count (isolated < 2)
-      - For topics: concept-page count mentioned in body
+def _page_metrics(page, inbound: dict[str, int]) -> dict:
+    """Per-page weakness metrics shared by both ranking paths."""
+    key = page.rel.with_suffix("").as_posix()
+    word_count = _body_word_count(page.body)
+    outbound = len(page.links)
+    inbound_count = inbound.get(key, 0)
+    concept_count = 0
+    if page.category == "topics":
+        concept_count = sum(
+            1
+            for raw in page.links
+            if normalize_link_target(raw).startswith("concepts/")
+        )
+    return {
+        "path": page.rel.as_posix(),
+        "category": page.category,
+        "title": page.title,
+        "words": word_count,
+        "inbound": inbound_count,
+        "outbound": outbound,
+        "concept_count": concept_count,
+    }
 
-    These are ABSOLUTE floors, not a relative ranking. Only pages that trip at
-    least one floor (score > 0) are reported. A mature, densely linked corpus
-    can clear every floor on every page, in which case this returns nothing —
-    that is "no page is starved", not a bug. As of 2026-06, the wiki's minimum
-    page is ~300+ words with >=2 inbound and >=3 outbound links, so the command
-    is empty by design. To resurface targets, lower the constants below
-    (SHALLOW_WORD_THRESHOLD etc.) or switch to relative percentile ranking.
+
+def rank_coverage(pages, inbound: dict[str, int], limit: int) -> tuple[list[dict], str]:
+    """Rank coverage targets, returning ``(rows, mode)``.
+
+    ``mode`` is ``"absolute"`` when at least one page trips an absolute floor
+    (those pages — and only those — are returned, ranked by descending score),
+    or ``"relative"`` when no page trips a floor and we fall back to a relative
+    bottom-N weakness ranking over concepts/topics (excluding archived pages),
+    sorted ascending by word count, then inbound, then outbound links. The
+    relative path guarantees a non-empty result on any non-trivial corpus.
+
+    Pure: no I/O, deterministic ordering. The CLI printer and the test suite
+    both call this so they rank identically.
     """
-    pages = list_content_pages()
-    canonical, basename_map = build_page_indexes(pages)
-    inbound, _broken, _ambiguous = compute_inbound_links(pages, canonical, basename_map)
-
     rows: list[dict] = []
     for page in pages:
-        if page.category in {"system", "root", "entities", "inventory"}:
+        if page.category in COVERAGE_SKIP_CATEGORIES:
             continue
-        key = page.rel.with_suffix("").as_posix()
-        word_count = _body_word_count(page.body)
-        outbound = len(page.links)
-        inbound_count = inbound.get(key, 0)
+        metrics = _page_metrics(page, inbound)
+        word_count = metrics["words"]
+        outbound = metrics["outbound"]
+        inbound_count = metrics["inbound"]
+        concept_count = metrics["concept_count"]
 
         shallow = word_count < SHALLOW_WORD_THRESHOLD
         underlinked = inbound_count < 2
         isolated = outbound < 2
-
-        concept_count = 0
-        if page.category == "topics":
-            concept_count = sum(
-                1
-                for raw in page.links
-                if normalize_link_target(raw).startswith("concepts/")
-            )
-
         sparse_topic = (
             page.category == "topics" and concept_count < SPARSE_TOPIC_CONCEPT_THRESHOLD
         )
@@ -98,43 +114,89 @@ def coverage(as_json: bool, limit: int) -> int:
         if score == 0:
             continue
 
-        source_origin = page._scalar("origin") if page.category == "sources" else ""
-
         rows.append(
             {
-                "path": page.rel.as_posix(),
-                "category": page.category,
-                "title": page.title,
-                "words": word_count,
-                "inbound": inbound_count,
-                "outbound": outbound,
-                "concept_count": concept_count,
+                **metrics,
                 "sparse_topic": sparse_topic,
                 "shallow": shallow,
                 "underlinked": underlinked,
                 "isolated": isolated,
                 "score": score,
-                "origin": source_origin,
+                "origin": page._scalar("origin") if page.category == "sources" else "",
             }
         )
 
-    rows.sort(key=lambda row: (-row["score"], row["path"]))
-    top = rows[:limit] if limit > 0 else rows
+    if rows:
+        rows.sort(key=lambda row: (-row["score"], row["path"]))
+        return (rows[:limit] if limit > 0 else rows), "absolute"
+
+    # Relative fallback: no page is starved by the absolute floors, but the
+    # enhancer still needs targets. Rank the weakest concepts/topics so the
+    # loop never silently degrades to a semantically blind wc -l ranking.
+    weak: list[dict] = []
+    for page in pages:
+        if page.category not in COVERAGE_RELATIVE_CATEGORIES:
+            continue
+        if page.is_archived:
+            continue
+        weak.append(_page_metrics(page, inbound))
+
+    weak.sort(
+        key=lambda row: (row["words"], row["inbound"], row["outbound"], row["path"])
+    )
+    return (weak[:limit] if limit > 0 else weak), "relative"
+
+
+def coverage(as_json: bool, limit: int) -> int:
+    """Report sparse-coverage targets for the enhancer agent.
+
+    Two ranking paths (see ``rank_coverage``), selected automatically:
+
+    1. ABSOLUTE (``mode == "absolute"``) — pages tripping a hard floor:
+       - Body word count (shallow < 300 words)
+       - Inbound wikilink count (underlinked < 2)
+       - Outbound wikilink count (isolated < 2)
+       - For topics: concept-page count mentioned in body (< 5)
+       Only flagged pages are returned, ranked by descending weakness score.
+
+    2. RELATIVE (``mode == "relative"``) — fallback when no page trips a floor.
+       A mature, densely linked corpus clears every absolute floor, which used
+       to make this command return nothing; the enhance loop then silently fell
+       back to a semantically blind ``wc -l`` ranking. Instead we now rank the
+       weakest concepts/topics (skipping archived pages) ascending by word
+       count, then inbound, then outbound links, so the enhancer always gets a
+       meaningfully-ordered, non-empty target list.
+
+    The chosen path is reported via the ``mode`` field in JSON output and a
+    one-line note in the human-readable output. When falling back, the note
+    reads: "All pages clear the absolute floors; showing the relative
+    bottom-N weakest concepts/topics."
+    """
+    pages = list_content_pages()
+    canonical, basename_map = build_page_indexes(pages)
+    inbound, _broken, _ambiguous = compute_inbound_links(pages, canonical, basename_map)
+
+    top, mode = rank_coverage(pages, inbound, limit)
 
     if as_json:
-        print(json.dumps(top, indent=2))
+        print(json.dumps([{**row, "mode": mode} for row in top], indent=2))
         return 0
 
-    print(f"Coverage candidates (top {len(top)} of {len(rows)} flagged):\n")
-    if not rows:
+    if mode == "relative":
+        print(f"Coverage candidates (relative fallback, top {len(top)} weakest):\n")
         print(
-            "No page trips the absolute floors (words<"
-            f"{SHALLOW_WORD_THRESHOLD}, inbound<2, outbound<2, topic concepts<"
-            f"{SPARSE_TOPIC_CONCEPT_THRESHOLD}). The corpus has outgrown these\n"
-            "thresholds; nothing is starved. Lower the constants in "
-            "wiki_query.py to resurface targets. See the coverage() docstring."
+            "All pages clear the absolute floors; showing the relative "
+            "bottom-N weakest concepts/topics."
         )
+        print(f"{'words':>5}  {'in':>3}  {'out':>3}  {'concepts':>8}  category   path")
+        for row in top:
+            print(
+                f"{row['words']:>5}  {row['inbound']:>3}  {row['outbound']:>3}  "
+                f"{row['concept_count']:>8}  {row['category']:<9}  {row['path']}"
+            )
         return 0
+
+    print(f"Coverage candidates (absolute floors, top {len(top)} flagged):\n")
     print(
         f"{'score':>5}  {'words':>5}  {'in':>3}  {'out':>3}  flags                    path"
     )

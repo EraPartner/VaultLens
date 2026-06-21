@@ -95,6 +95,7 @@ jobs:
       - name: Run tooling test suite (stdlib unittest)
         run: |
           python tools/tests/test_wiki.py
+          python tools/tests/test_coverage.py
           python tools/tests/test_schedule.py
 
   # ─────────────────────────────────────────────────────────────────────────────
