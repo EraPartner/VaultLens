@@ -11,7 +11,6 @@ import argparse
 import datetime as _dt
 import itertools
 import os
-import re
 import shutil
 import signal
 import subprocess
@@ -633,6 +632,22 @@ def _prepare_system_prompt(agent_file: Path, system_addon: str) -> str:
     return f"{agent_instructions}\n\nAdditional context:\n{system_addon}"
 
 
+def _build_allowed_tools(perms: dict) -> list[str]:
+    """The `--allowedTools` list for a permission profile. Read/Grep/Glob are
+    always granted (read-only navigation), so bash:false agents like quality and
+    verify can still check links and find orphans. shell and write add to it.
+    `Bash(<cmd> *)` is Claude Code's prefix-match form (confirmed against the
+    permissions docs); kept pure so tools/tests/test_agent.py can assert it."""
+    tools = ["Read", "Grep", "Glob"]
+    if perms["shell"]:
+        tools.extend(f"Bash({c} *)" for c in READ_ONLY_SHELL_COMMANDS)
+        if perms["write"]:
+            tools.extend(f"Bash({c} *)" for c in WRITE_SHELL_COMMANDS)
+    if perms["write"]:
+        tools.extend(["Edit", "Write", "NotebookEdit"])
+    return tools
+
+
 def invoke_agent(
     agent: str,
     cli: str,
@@ -661,14 +676,7 @@ def invoke_agent(
     cmd.extend(effort_flags)
     cmd.extend(["--system-prompt", system_text])
     # Build the --allowedTools list to match the agent's profile.
-    allowed_tools = ["Read"]
-    if perms["shell"]:
-        allowed_tools.extend(f"Bash({c} *)" for c in READ_ONLY_SHELL_COMMANDS)
-        if perms["write"]:
-            allowed_tools.extend(f"Bash({c} *)" for c in WRITE_SHELL_COMMANDS)
-    if perms["write"]:
-        allowed_tools.extend(["Edit", "Write", "NotebookEdit"])
-    cmd.extend(["--allowedTools", ",".join(allowed_tools)])
+    cmd.extend(["--allowedTools", ",".join(_build_allowed_tools(perms))])
     # Hard "no subagents": a wiki agent must never spawn its own
     # sub-agent. The orchestrator (this script) is the ONLY multi-agent
     # layer; a self-spawned subagent would be a privilege/injection vector
@@ -722,41 +730,6 @@ def invoke_agent(
         print(f"Error: failed to launch {cli}: {exc}")
         return 127
     return result.returncode
-
-
-def _slug_to_title(stem: str) -> str:
-    """Convert filename stem to a human-readable title."""
-    cleaned = re.sub(r"[-_]+", " ", stem).strip()
-    return cleaned.title()
-
-
-def _auto_log_ingest(source_path: str) -> None:
-    """Append an ingest log entry after a successful agent run."""
-    tools_dir = str(ROOT / "tools")
-    if tools_dir not in sys.path:
-        sys.path.insert(0, tools_dir)
-
-    try:
-        from wiki_log import append_log_entry  # type: ignore[import]
-    except ImportError as exc:
-        print(f"Warning: could not import wiki_log for auto-log: {exc}")
-        return
-
-    name = Path(source_path).stem
-    title = _slug_to_title(name)
-    try:
-        append_log_entry(
-            operation="ingest",
-            title=title,
-            summary=f"Ingested {source_path} via wiki-agent.py",
-            pages=[],
-            sources=[source_path],
-            notes="Auto-logged by wiki-agent.py",
-        )
-    except OSError as exc:
-        # A read-only profile (vault mounted RO) can't persist the log; the
-        # ingest itself already wrote to wiki/, so just warn.
-        print(f"Warning: could not write ingest log ({exc}); skipping.")
 
 
 def _promote_inbox_pdf(source_path: str) -> str:
@@ -829,10 +802,15 @@ def run_agent(args, strategy: str | None = None) -> int:
         # PDFs get pre-extracted to raw/sources-text/*.md so the model can read them.
         extra_args = [_resolve_pdf_to_markdown(args.source)]
     elif args.agent == "search":
-        # The query IS the prompt; only attach a file when a concrete path/topic
-        # was given. Never emit an empty -f/positional.
+        # The query IS the prompt (see the prompt builder). Only attach it as a
+        # file to read when it is an actual existing path; a free-text search term
+        # must never become a bogus "Files to read" entry that wastes a model turn.
         query = args.source or args.page or ""
-        extra_args = [query] if query else []
+        extra_args = (
+            [str((ROOT / query).resolve())]
+            if query and (ROOT / query).exists()
+            else []
+        )
     elif args.agent == "enhance":
         # Attach whatever is relevant: target wiki page(s) + extracted source markdown.
         targets = []
@@ -878,10 +856,10 @@ def run_agent(args, strategy: str | None = None) -> int:
     )
 
     if args.agent == "ingest" and rc == 0 and args.source:
-        # Promote the PDF out of raw/inbox/ into raw/sources/ now that it is in
-        # the wiki, then log under its canonical (post-move) path.
-        canonical_source = _promote_inbox_pdf(args.source)
-        _auto_log_ingest(canonical_source)
+        # Promote the PDF out of raw/inbox/ into raw/sources/ now that it is in the
+        # wiki. The ingest agent writes its own richer wiki/log.md entry (step 4 of
+        # wiki-ingest.md, like enhance), so the launcher no longer double-logs here.
+        _promote_inbox_pdf(args.source)
 
     return rc
 

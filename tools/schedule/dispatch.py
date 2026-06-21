@@ -184,7 +184,7 @@ def clear_account(ledger: dict, acct: str) -> None:
     st = ledger["accounts"].setdefault(acct, {})
     st["backoff"] = 0
     st["last_error"] = None
-    # leave limited_until in place only if still in the future; a success means healthy
+    # a success means the backend is healthy again: clear the cooldown outright
     st["limited_until"] = None
 
 
