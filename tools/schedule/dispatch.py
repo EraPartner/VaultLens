@@ -476,8 +476,11 @@ def write_report(name: str, text: str, now: datetime) -> Path:
     header = (
         "---\n"
         "type: report\n"
+        "status: active\n"
         f"title: Scheduled {name} {now:%Y-%m-%d}\n"
         f"created: {now:%Y-%m-%d}\n"
+        f"updated: {now:%Y-%m-%d}\n"
+        f"summary: Scheduled {name} run output for {now:%Y-%m-%d}.\n"
         f"tags: [scheduled, {name}]\n"
         "---\n\n"
     )

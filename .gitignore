@@ -41,12 +41,14 @@ raw/sources-text/*
 wiki/comparisons/*
 wiki/concepts/*
 wiki/entities/*
+wiki/inventory/*
 wiki/queries/*
 wiki/reports/*
 wiki/sources/*
 wiki/syntheses/*
 wiki/topics/*
 wiki/log.md
+wiki/log/
 wiki/index.md
 
 # Derived CLI-readable indexes (`wiki.py index --rebuild`). Per-category
