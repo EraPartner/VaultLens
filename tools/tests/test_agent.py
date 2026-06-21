@@ -37,27 +37,44 @@ def check(name: str, condition: bool, detail: str = "") -> None:
 def main() -> int:
     print("_build_allowed_tools:")
     ro = wa._build_allowed_tools({"shell": False, "write": False})
-    check("read-only agent still gets Read+Grep+Glob (B7)", ro == ["Read", "Grep", "Glob"])
-    check("read-only agent gets no Bash/Edit/Write",
-          not any(t.startswith(("Bash(", "Edit", "Write", "NotebookEdit")) for t in ro))
+    check(
+        "read-only agent still gets Read+Grep+Glob (B7)", ro == ["Read", "Grep", "Glob"]
+    )
+    check(
+        "read-only agent gets no Bash/Edit/Write",
+        not any(t.startswith(("Bash(", "Edit", "Write", "NotebookEdit")) for t in ro),
+    )
 
     sh = wa._build_allowed_tools({"shell": True, "write": False})
     bash_rules = [t for t in sh if t.startswith("Bash(")]
     check("shell agent gets Bash rules", len(bash_rules) > 0)
-    check("Bash rules use the space prefix-form, not colon (B1 verified)",
-          all(t.endswith(" *)") for t in bash_rules) and not any(":*" in t for t in bash_rules))
-    check("read-only shell agent cannot Edit/Write", not any(t in sh for t in ("Edit", "Write")))
+    check(
+        "Bash rules use the space prefix-form, not colon (B1 verified)",
+        all(t.endswith(" *)") for t in bash_rules)
+        and not any(":*" in t for t in bash_rules),
+    )
+    check(
+        "read-only shell agent cannot Edit/Write",
+        not any(t in sh for t in ("Edit", "Write")),
+    )
 
     wr = wa._build_allowed_tools({"shell": True, "write": True})
-    check("write agent gets Edit/Write/NotebookEdit",
-          all(t in wr for t in ("Edit", "Write", "NotebookEdit")))
-    check("write agent gets more Bash rules than a read-only one",
-          len([t for t in wr if t.startswith("Bash(")]) > len(bash_rules))
+    check("write agent gets Edit/Write", all(t in wr for t in ("Edit", "Write")))
+    check(
+        "write agent gets no NotebookEdit (markdown vault, no notebooks)",
+        "NotebookEdit" not in wr,
+    )
+    check(
+        "write agent gets more Bash rules than a read-only one",
+        len([t for t in wr if t.startswith("Bash(")]) > len(bash_rules),
+    )
 
     print("config integrity:")
-    check("every agent in AGENT_FILES has a permission profile",
-          set(wa.AGENT_FILES) == set(wa.AGENT_PERMISSIONS),
-          str(set(wa.AGENT_FILES) ^ set(wa.AGENT_PERMISSIONS)))
+    check(
+        "every agent in AGENT_FILES has a permission profile",
+        set(wa.AGENT_FILES) == set(wa.AGENT_PERMISSIONS),
+        str(set(wa.AGENT_FILES) ^ set(wa.AGENT_PERMISSIONS)),
+    )
 
     print(f"\n{PASSED} passed, {FAILED} failed")
     return 1 if FAILED else 0

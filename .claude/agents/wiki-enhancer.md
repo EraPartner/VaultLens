@@ -13,7 +13,7 @@ Think deeply. Be thorough. Prefer depth over breadth per run.
 
 ## Pre-approved shell commands
 
-Your Bash is the wiki's **read-only helper set** (`ls`/`grep`/`find`/`cat`/`qmd`/`python3 tools/wiki.py …`) **plus the file-management set** (`touch`/`mkdir`/`mv`/`cp`/`sed`/`awk`) for files in your writable scope — run those without asking. Nothing else: no `curl`, no `git`, no file deletion. The full lists are `READ_ONLY_SHELL_COMMANDS` / `WRITE_SHELL_COMMANDS` in `tools/agents/wiki-agent.py`, enforced as a hard `--allowedTools` allowlist (mirrored in this agent's `tools:` frontmatter); the egress-locked container mount is the backstop.
+Your shell is the wiki's **read-only helper set** plus the **file-management set** (`touch`/`mkdir`/`mv`/`cp`/`sed`/`awk`) for files in your writable scope — the full lists are `READ_ONLY_SHELL_COMMANDS` / `WRITE_SHELL_COMMANDS` in `tools/agents/wiki-agent.py`. No `curl`, `git`, or deletion. How this is enforced depends on the launch path: a **headless** `brain-wiki` run pins it as a hard `--allowedTools` allowlist and the container mount confines writes to `wiki/` (raw/ and projects/ stay read-only); an **interactive** subagent run can't command-scope Bash through `tools:` frontmatter (a `Bash` grant there is unrestricted), so it leans on the operator's write-confirmation prompts, the global bash guard, and that same container mount.
 
 ## Scope
 
@@ -80,7 +80,7 @@ Process:
 4. **For each enumerated topic, cross-check the wiki** and classify it:
    ```bash
    ls wiki/concepts/ | grep -iE "topic-fragment"
-   qmd query "<topic question>" --json     # semantic match — catches synonyms
+   qmd query "<topic question>" --format json     # semantic match — catches synonyms
    python3 tools/wiki.py search "<keywords>"
    ```
    Classify each topic as one of:
@@ -111,7 +111,7 @@ Before changing anything, understand what already exists:
 
 - Read the target source/topic/concept page fully.
 - **Search the wiki for related material** (preferred order):
-  - `qmd query "<topic question or keywords>" --json` — hybrid BM25 + vector + LLM reranking. Best for surfacing semantically related pages even when keywords differ. Prefer `mcp__qmd__*` tools when available.
+  - `qmd query "<topic question or keywords>" --format json` — hybrid BM25 + vector + LLM reranking. Best for surfacing semantically related pages even when keywords differ. Prefer `mcp__qmd__*` tools when available.
   - `qmd search "<topic-keywords>"` — BM25 only. Fast and free.
   - `python3 tools/wiki.py search "<topic-keywords>"` — substring fallback.
 - Run `python3 tools/wiki.py tags <tag>` (AND across multiple tags supported) to find every page sharing the current page's frontmatter tags — fastest way to surface siblings by topic membership.
@@ -124,7 +124,7 @@ For every PDF in `raw/sources/`, a sibling exists at `raw/sources-text/<same-ste
 
 - Read the attached `raw/sources-text/*.md` with the Read tool. Treat it as ground truth.
 - Do NOT attempt to Read any `.pdf` file — most models cannot parse PDF input directly, and the sandbox blocks shelling out to `pdftotext`.
-- If a source you need is not yet preprocessed, run from the Bash tool: `python3 tools/wiki.py preprocess --pdf raw/sources/<file>.pdf`. This is the only sanctioned way to materialize source text.
+- If a source you need is not yet preprocessed, read its PDF (`raw/sources/<file>.pdf`) directly with the Read tool — the launcher attaches it, and you cannot materialize `raw/sources-text/` yourself (your write scope is `wiki/` only; `raw/` is read-only in the sandbox). Pre-extraction to `raw/sources-text/` is a host/ingest-time step (`python3 tools/wiki.py preprocess --pdf …`); if a missing extraction is blocking, flag it rather than attempting the write.
 - Layout artifacts (page-number lines, broken paragraphs, table noise) are expected — read past them. Do not write extracts, scratch files, or outputs anywhere outside the project tree — the one sanctioned exception is the transient log-entry JSON written under `/tmp/` in step 7 (Maintenance).
 
 **Source identification when the page lists none** (`requires: []`, no `## Sources`): infer from the page title and tags. Then search across all raw sources:

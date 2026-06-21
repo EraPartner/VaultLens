@@ -36,7 +36,19 @@ REQUIRED_FRONTMATTER_BASE = {"title", "type", "status", "created", "updated", "s
 REQUIRED_FRONTMATTER_BY_CATEGORY = {
     "sources": {"source_id", "source_type", "origin", "ingested_on"},
 }
-PROJECT_REQUIRED_FIELDS = {"title", "type", "status", "created", "updated", "summary"}
+# project.md is load-bearing for search scoping, so wiki_refs/tags/domain are
+# required (presence, not non-empty) alongside the base content fields.
+PROJECT_REQUIRED_FIELDS = {
+    "title",
+    "type",
+    "status",
+    "created",
+    "updated",
+    "summary",
+    "wiki_refs",
+    "tags",
+    "domain",
+}
 
 # Link/orphan handling: `system/` pages are excluded from link validation, and a
 # couple of well-known landing pages are exempt from the orphan check.
@@ -121,7 +133,9 @@ def lint_projects(
     broken: list[str] = []
     for project in projects:
         rel = project.path.relative_to(ROOT).as_posix()
-        gaps = sorted(key for key in PROJECT_REQUIRED_FIELDS if key not in project.frontmatter)
+        gaps = sorted(
+            key for key in PROJECT_REQUIRED_FIELDS if key not in project.frontmatter
+        )
         if gaps:
             missing.append(f"{rel}: missing {', '.join(gaps)}")
         for ref in project.wiki_refs:
@@ -172,7 +186,9 @@ def check_status_values(pages: list[Page]) -> list[str]:
             continue
         st = page.status
         if st and st not in ALLOWED_STATUS:
-            out.append(f"{page.rel.as_posix()}: status '{st}' not in {sorted(ALLOWED_STATUS)}")
+            out.append(
+                f"{page.rel.as_posix()}: status '{st}' not in {sorted(ALLOWED_STATUS)}"
+            )
     return out
 
 
@@ -191,8 +207,14 @@ def check_dates(pages: list[Page]) -> tuple[list[str], list[str]]:
             try:
                 parsed[field] = dt.date.fromisoformat(raw)
             except ValueError:
-                malformed.append(f"{page.rel.as_posix()}: {field} '{raw}' is not YYYY-MM-DD")
-        if "created" in parsed and "updated" in parsed and parsed["updated"] < parsed["created"]:
+                malformed.append(
+                    f"{page.rel.as_posix()}: {field} '{raw}' is not YYYY-MM-DD"
+                )
+        if (
+            "created" in parsed
+            and "updated" in parsed
+            and parsed["updated"] < parsed["created"]
+        ):
             reversed_dates.append(
                 f"{page.rel.as_posix()}: updated {parsed['updated']} < created {parsed['created']}"
             )
@@ -217,7 +239,9 @@ def apply_fixes(pages: list[Page]) -> list[str]:
             normalized = raw.strip().lower()
             if raw and raw != normalized and normalized in allowed:
                 text = _set_frontmatter_field(text, field, normalized)
-                fixes.append(f"{page.rel.as_posix()}: {field} '{raw}' -> '{normalized}'")
+                fixes.append(
+                    f"{page.rel.as_posix()}: {field} '{raw}' -> '{normalized}'"
+                )
                 changed = True
         if changed:
             page.path.write_text(text, encoding="utf-8")
@@ -242,7 +266,9 @@ def build_report(pages: list[Page], strict: bool) -> dict:
     invalid_enums, low_confidence = check_field_enums(pages)
     malformed_dates, reversed_dates = check_dates(pages)
     projects = list_projects()
-    project_missing, project_broken_refs = lint_projects(projects, canonical, basename_map)
+    project_missing, project_broken_refs = lint_projects(
+        projects, canonical, basename_map
+    )
 
     errors = {
         "missing_fields": check_missing_fields(pages),

@@ -122,7 +122,10 @@ AGENT_PERMISSIONS: dict[str, dict] = {
     "enhance": {
         "shell": True,
         "write": True,
-        "writable_dirs": ["wiki", "raw/sources-text"],
+        # The author profile mounts only wiki/ RW (raw/ is read-only in the
+        # sandbox), so raw/sources-text cannot be a write target here.
+        # Pre-extraction to raw/sources-text is a host/ingest-time step.
+        "writable_dirs": ["wiki"],
     },
     "cos": {"shell": True, "write": False, "writable_dirs": []},
     # Read-only "thinking" agents — search the vault, emit text, never write.
@@ -623,6 +626,11 @@ def _prepare_system_prompt(agent_file: Path, system_addon: str) -> str:
     subagent loader; only the body below it is the system prompt.
     """
     agent_instructions = agent_file.read_text(encoding="utf-8")
+    # Tolerate a UTF-8 BOM and CRLF line endings from non-Unix editors so the
+    # frontmatter still strips (otherwise the YAML leaks into the system prompt).
+    if agent_instructions.startswith(chr(0xFEFF)):  # UTF-8 BOM
+        agent_instructions = agent_instructions[1:]
+    agent_instructions = agent_instructions.replace("\r\n", "\n")
     if agent_instructions.startswith("---\n"):
         end = agent_instructions.find("\n---\n", 4)
         if end != -1:
@@ -644,7 +652,7 @@ def _build_allowed_tools(perms: dict) -> list[str]:
         if perms["write"]:
             tools.extend(f"Bash({c} *)" for c in WRITE_SHELL_COMMANDS)
     if perms["write"]:
-        tools.extend(["Edit", "Write", "NotebookEdit"])
+        tools.extend(["Edit", "Write"])
     return tools
 
 
@@ -693,9 +701,7 @@ def invoke_agent(
         cmd.extend(["--add-dir", str(ROOT / d)])
     # Permission mode: acceptEdits allows non-interactive edits within
     # the allowed tool set; default still prompts for anything else.
-    cmd.extend(
-        ["--permission-mode", "acceptEdits" if perms["write"] else "default"]
-    )
+    cmd.extend(["--permission-mode", "acceptEdits" if perms["write"] else "default"])
     # extra_args are file paths. claude has no attachment flag and keeps only
     # the FIRST positional, silently dropping the rest — so passing paths as
     # positionals would discard the real instruction. Fold them into the
@@ -807,9 +813,7 @@ def run_agent(args, strategy: str | None = None) -> int:
         # must never become a bogus "Files to read" entry that wastes a model turn.
         query = args.source or args.page or ""
         extra_args = (
-            [str((ROOT / query).resolve())]
-            if query and (ROOT / query).exists()
-            else []
+            [str((ROOT / query).resolve())] if query and (ROOT / query).exists() else []
         )
     elif args.agent == "enhance":
         # Attach whatever is relevant: target wiki page(s) + extracted source markdown.
@@ -934,12 +938,12 @@ def main(argv=None) -> int:
     # still infer from an appended --system context block, connect cannot.
     if args.agent == "challenge" and not (args.source or args.page or args.prompt):
         print(
-            "Warning: challenge works best with --source \"<the position to red-team>\". "
+            'Warning: challenge works best with --source "<the position to red-team>". '
             "Without it the agent will report that a position is required."
         )
     if args.agent == "connect" and not (args.source and args.page):
         print(
-            "Error: connect requires two domains — pass --source \"<A>\" and --page \"<B>\"."
+            'Error: connect requires two domains — pass --source "<A>" and --page "<B>".'
         )
         parser.print_help()
         return 1

@@ -86,11 +86,17 @@ Reads are auto-approved; writes require explicit confirmation. Enforcement is la
 | Write shell (`touch`, `mkdir`, `mv`, `cp`, `sed`, `awk`) | auto-approved for write-access agents only |
 | Write or edit files | requires confirmation |
 
-- Interactive sessions: `.claude/settings.json` `permissions.allow` (read-only command allowlist).
+- Interactive sessions: `.claude/settings.json` `permissions.allow` is the exact source of truth for
+  the auto-approved set — beyond the read-only commands above it also pre-approves a few scoped-write
+  `wiki.py` subcommands (`preprocess`, `append-log`) and extra read helpers (`wiki_extra.py …`,
+  `qmd vsearch`/`ls`).
 - Headless agent runs: `wiki-agent.py` builds a per-agent `--allowedTools` allowlist from the
-  agent's permission profile and passes `--disallowedTools Task` (a wiki agent must never spawn
-  its own subagent). The same profiles are mirrored in each `.claude/agents/*.md` `tools:`
-  frontmatter for interactive subagent use.
+  agent's permission profile, runs `--permission-mode acceptEdits` (writers) / `default`
+  (read-only), and passes `--disallowedTools Task` (a wiki agent must never spawn its own
+  subagent). Each `.claude/agents/*.md` `tools:` frontmatter mirrors the read/write *capability
+  tier* — but a frontmatter `Bash` token is unrestricted (it cannot encode the per-command
+  allowlist), so interactive subagent runs rely on the operator's permission prompts, the global
+  bash guard, and the container mount for command scoping, not the `tools:` line.
 - The egress-locked devcontainer mount (see `## Devcontainer sandbox`) is the kernel-level backstop.
 
 `raw/` may contain symlinks to files/dirs outside the vault; they're followed automatically by the
@@ -146,7 +152,10 @@ loops, CoS live-context gathering, PDF pre-extraction, and auto-logging.
 ## Devcontainer sandbox
 
 The agents run in a hardened devcontainer (`.devcontainer/`, see its `README.md`): egress is locked
-to an allowlist proxy and the CLI runs as a non-root user with `--dangerously-skip-permissions`.
+to an allowlist proxy. Interactive sessions (`brain-claude`/`brain-shell`) run the CLI as a non-root
+user with `--dangerously-skip-permissions`; headless `wiki-agent.py` runs instead pass an explicit
+`--allowedTools` allowlist with `--permission-mode acceptEdits`/`default` and `--disallowedTools Task`
+(see `## Tool permissions`).
 Launch from the host with the `brain-*` wrappers
 (`brain-cos`, `brain-wiki <agent> …`, `brain-claude`, `brain-shell`).
 `tools/agents/wiki-agent.py` refuses to run on the host — invoke wiki agents via `brain-wiki`
@@ -238,6 +247,6 @@ Day-to-day core — everything else lives in the per-operation runbooks under
 ```bash
 python3 tools/wiki.py lint                       # fast health check (links, metadata, staleness)
 python3 tools/wiki.py search "term"              # substring search (qmd preferred — see Search)
-qmd search "<keywords>"                          # BM25; `qmd query "<question>" --json` for hybrid
+qmd search "<keywords>"                          # BM25; `qmd query "<question>" --format json` for hybrid
 qmd update                                       # re-index after content changes
 ```

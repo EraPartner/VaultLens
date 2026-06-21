@@ -37,9 +37,9 @@ from typing import Callable
 # Paths & constants
 # --------------------------------------------------------------------------- #
 
-ROOT = Path(__file__).resolve().parents[2]          # the vault root
+ROOT = Path(__file__).resolve().parents[2]  # the vault root
 HOME = Path.home()
-STATE_DIR = HOME / ".brain"                          # outside iCloud (no sync conflicts)
+STATE_DIR = HOME / ".brain"  # outside iCloud (no sync conflicts)
 STATE_FILE = STATE_DIR / "schedule-state.json"
 LOCK_FILE = STATE_DIR / "schedule.lock"
 LOG_DIR = STATE_DIR / "logs"
@@ -76,6 +76,7 @@ REPORT_RETENTION = 14
 RATELIMIT_BACKOFF_CAP = 2 * 3600
 QUOTA_COOLDOWN = 24 * 3600
 
+
 # Tool resolution (launchd runs with a minimal PATH; resolve defensively).
 def _tool(name: str, *fallbacks: str) -> str:
     found = shutil.which(name)
@@ -102,6 +103,7 @@ SUDO = _tool("sudo", "/usr/bin/sudo")
 # Time helpers (local, tz-aware so stored/compared values are consistent)
 # --------------------------------------------------------------------------- #
 
+
 def now_local() -> datetime:
     return datetime.now().astimezone()
 
@@ -122,6 +124,7 @@ def in_window(now: datetime, window: tuple[int, int]) -> bool:
 # Ledger (per-step last_ok + per-account cooldown)
 # --------------------------------------------------------------------------- #
 
+
 def load_ledger() -> dict:
     if STATE_FILE.exists():
         try:
@@ -133,7 +136,9 @@ def load_ledger() -> dict:
     data.setdefault("jobs", {})
     data.setdefault("accounts", {})
     for acct in ACCOUNTS:
-        data["accounts"].setdefault(acct, {"limited_until": None, "last_error": None, "backoff": 0})
+        data["accounts"].setdefault(
+            acct, {"limited_until": None, "last_error": None, "backoff": 0}
+        )
     return data
 
 
@@ -148,12 +153,22 @@ def save_ledger(ledger: dict) -> None:
 # Pure decision helpers (unit-tested)
 # --------------------------------------------------------------------------- #
 
+
 def classify_failure(returncode: int, text: str) -> str:
     """Map a CLI exit into one of: ok | quota | ratelimit | transient."""
     if returncode == 0:
         return "ok"
     t = text.lower()
-    if any(s in t for s in ("quota", "premium request", "monthly limit", "upgrade your plan", "usage limit")):
+    if any(
+        s in t
+        for s in (
+            "quota",
+            "premium request",
+            "monthly limit",
+            "upgrade your plan",
+            "usage limit",
+        )
+    ):
         return "quota"
     if any(s in t for s in ("rate limit", "rate-limit", "429", "too many requests")):
         return "ratelimit"
@@ -213,17 +228,20 @@ def step_due(step: "Step", ledger: dict, now: datetime) -> bool:
 # Step model
 # --------------------------------------------------------------------------- #
 
+
 @dataclass
 class Step:
     name: str
-    kind: str                       # "host" (wiki.py, offline) | "llm" (brain-wiki claude)
-    period: str                     # "daily" | "weekly"
+    kind: str  # "host" (wiki.py, offline) | "llm" (brain-wiki claude)
+    period: str  # "daily" | "weekly"
     window: tuple[int, int]
-    gates: list[str]                # subset of {"ac","online","container","icloud","battery"}
-    builder: Callable[[], list[list[str]]]   # -> list of arg-vectors ([] = nothing to do)
-    effort: str = "low"
+    gates: list[str]  # subset of {"ac","online","container","icloud","battery"}
+    builder: Callable[
+        [], list[list[str]]
+    ]  # -> list of arg-vectors ([] = nothing to do)
+    effort: str = "low"  # NOTE: currently inert — wiki-agent.py EFFORT_MAP maps every level to no claude CLI flag; kept to express intended depth for when the CLI gains a thinking-budget control.
     timeout: int = 1800
-    report: bool = False            # capture stdout into wiki/reports/
+    report: bool = False  # capture stdout into wiki/reports/
 
 
 def _slugify(text: str) -> str:
@@ -231,7 +249,9 @@ def _slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
-def _select_ingest_pdfs(pdf_names: list[str], text_stems: set[str], ingested_pdf_names: set[str]) -> list[str]:
+def _select_ingest_pdfs(
+    pdf_names: list[str], text_stems: set[str], ingested_pdf_names: set[str]
+) -> list[str]:
     """Pure core of _ingest_targets: which source PDFs still need ingesting.
 
     A PDF is skipped when either signal says it is already processed:
@@ -263,6 +283,11 @@ def _ingested_pdf_names() -> set[str]:
     names: set[str] = set()
     srcdir = ROOT / "wiki" / "sources"
     if srcdir.is_dir():
+        # Capture the PDF basename across the three link forms — wikilink
+        # [[raw/sources/Foo.pdf]], markdown [..](raw/sources/Foo.pdf), and the
+        # angle-bracket [..](<../../raw/sources/Foo.pdf>). The class excludes the
+        # three close delimiters (] ) >) and newline but ALLOWS spaces, so
+        # space-bearing names like "The Mad King.pdf" still match.
         pat = re.compile(r"raw/sources/([^\]|>)\n]+\.pdf)", re.IGNORECASE)
         for page in srcdir.glob("*.md"):
             try:
@@ -282,12 +307,18 @@ def _ingest_targets() -> list[list[str]]:
     targets: list[Path] = []
     inbox = ROOT / "raw" / "inbox"
     if inbox.is_dir():
-        targets += [p for p in sorted(inbox.iterdir()) if p.is_file() and not p.name.startswith(".")]
+        targets += [
+            p
+            for p in sorted(inbox.iterdir())
+            if p.is_file() and not p.name.startswith(".")
+        ]
     srcs = ROOT / "raw" / "sources"
     textdir = ROOT / "raw" / "sources-text"
     if srcs.is_dir():
         pdf_names = [p.name for p in sorted(srcs.glob("*.pdf"))]
-        text_stems = {p.stem for p in textdir.glob("*.md")} if textdir.is_dir() else set()
+        text_stems = (
+            {p.stem for p in textdir.glob("*.md")} if textdir.is_dir() else set()
+        )
         selected = _select_ingest_pdfs(pdf_names, text_stems, _ingested_pdf_names())
         targets += [srcs / name for name in selected]
     return [["ingest", "--source", str(p)] for p in targets[:3]]  # cap per night
@@ -298,32 +329,93 @@ def build_steps() -> list[Step]:
     in this order; cos-brief is the lone morning step."""
     return [
         # 1. maintenance: offline, host-native, runs even on a battery night.
-        Step("lint", "host", "daily", NIGHTLY_WINDOW, [],
-             lambda: [["lint"]], timeout=600),
-        Step("index", "host", "daily", NIGHTLY_WINDOW, [],
-             lambda: [["index", "--rebuild"]], timeout=600),
+        Step(
+            "lint", "host", "daily", NIGHTLY_WINDOW, [], lambda: [["lint"]], timeout=600
+        ),
+        Step(
+            "index",
+            "host",
+            "daily",
+            NIGHTLY_WINDOW,
+            [],
+            lambda: [["index", "--rebuild"]],
+            timeout=600,
+        ),
         # 2. ingest new raw material (only if any), before enhance.
-        Step("ingest", "llm", "daily", NIGHTLY_WINDOW, ["ac", "online", "container", "icloud"],
-             _ingest_targets, effort="low", timeout=2400),
+        Step(
+            "ingest",
+            "llm",
+            "daily",
+            NIGHTLY_WINDOW,
+            ["ac", "online", "container", "icloud"],
+            _ingest_targets,
+            effort="low",
+            timeout=2400,
+        ),
         # 3. enhance, capped at 10 iterations/night (the biggest budget consumer).
-        Step("enhance", "llm", "daily", NIGHTLY_WINDOW, ["ac", "online", "container", "icloud"],
-             lambda: [["enhance", "--iterations", "10", "--strategy", "alternate"]], effort="low", timeout=7200),
+        Step(
+            "enhance",
+            "llm",
+            "daily",
+            NIGHTLY_WINDOW,
+            ["ac", "online", "container", "icloud"],
+            lambda: [["enhance", "--iterations", "10", "--strategy", "alternate"]],
+            effort="low",
+            timeout=7200,
+        ),
         # 4. weekly thinking digests (prefer Sunday); reports filed for you.
-        Step("contradict", "llm", "weekly", NIGHTLY_WINDOW, ["ac", "online", "container", "icloud"],
-             lambda: [["contradict"]], effort="high", timeout=2400, report=True),
-        Step("emerge", "llm", "weekly", NIGHTLY_WINDOW, ["ac", "online", "container", "icloud"],
-             lambda: [["emerge"]], effort="high", timeout=2400, report=True),
-        Step("discover", "llm", "weekly", NIGHTLY_WINDOW, ["ac", "online", "container", "icloud"],
-             lambda: [["discover"]], effort="high", timeout=2400, report=True),
+        Step(
+            "contradict",
+            "llm",
+            "weekly",
+            NIGHTLY_WINDOW,
+            ["ac", "online", "container", "icloud"],
+            lambda: [["contradict"]],
+            effort="high",
+            timeout=2400,
+            report=True,
+        ),
+        Step(
+            "emerge",
+            "llm",
+            "weekly",
+            NIGHTLY_WINDOW,
+            ["ac", "online", "container", "icloud"],
+            lambda: [["emerge"]],
+            effort="high",
+            timeout=2400,
+            report=True,
+        ),
+        Step(
+            "discover",
+            "llm",
+            "weekly",
+            NIGHTLY_WINDOW,
+            ["ac", "online", "container", "icloud"],
+            lambda: [["discover"]],
+            effort="high",
+            timeout=2400,
+            report=True,
+        ),
         # morning: daily chief-of-staff brief (battery OK, no AC gate).
-        Step("cos-brief", "llm", "daily", MORNING_WINDOW, ["online", "container", "icloud"],
-             lambda: [["cos", "--mode", "brief"]], effort="low", timeout=1800, report=True),
+        Step(
+            "cos-brief",
+            "llm",
+            "daily",
+            MORNING_WINDOW,
+            ["online", "container", "icloud", "battery"],
+            lambda: [["cos", "--mode", "brief"]],
+            effort="low",
+            timeout=1800,
+            report=True,
+        ),
     ]
 
 
 # --------------------------------------------------------------------------- #
 # Gates (system probes, cached per tick)
 # --------------------------------------------------------------------------- #
+
 
 class Gates:
     def __init__(self, log: Callable[[str], None]):
@@ -351,7 +443,9 @@ class Gates:
             return True
         self.log("apple/container system not running; starting it")
         try:
-            subprocess.run([CONTAINER, "system", "start"], capture_output=True, timeout=60)
+            subprocess.run(
+                [CONTAINER, "system", "start"], capture_output=True, timeout=60
+            )
         except Exception:
             return False
         for _ in range(12):  # ~60s
@@ -380,7 +474,9 @@ class Gates:
             return False
         # Best-effort: ask iCloud to materialise the dirs we touch.
         try:
-            subprocess.run([BRCTL, "download", str(REPORTS_DIR)], capture_output=True, timeout=30)
+            subprocess.run(
+                [BRCTL, "download", str(REPORTS_DIR)], capture_output=True, timeout=30
+            )
         except Exception:
             pass
         return True
@@ -388,22 +484,34 @@ class Gates:
     # raw probes
     def _nc(self, host: str, port: int) -> bool:
         try:
-            return subprocess.run([NC, "-z", "-G", "5", host, str(port)],
-                                  capture_output=True, timeout=10).returncode == 0
+            return (
+                subprocess.run(
+                    [NC, "-z", "-G", "5", host, str(port)],
+                    capture_output=True,
+                    timeout=10,
+                ).returncode
+                == 0
+            )
         except Exception:
             return False
 
     def _container_up(self) -> bool:
         # apple/container runtime (the Docker-free sandbox launcher, bin/agent).
         try:
-            return subprocess.run([CONTAINER, "system", "status"],
-                                  capture_output=True, timeout=30).returncode == 0
+            return (
+                subprocess.run(
+                    [CONTAINER, "system", "status"], capture_output=True, timeout=30
+                ).returncode
+                == 0
+            )
         except Exception:
             return False
 
     def _pmset_batt(self) -> str:
         try:
-            return subprocess.run([PMSET, "-g", "batt"], capture_output=True, text=True, timeout=10).stdout
+            return subprocess.run(
+                [PMSET, "-g", "batt"], capture_output=True, text=True, timeout=10
+            ).stdout
         except Exception:
             return ""
 
@@ -412,24 +520,49 @@ class Gates:
 # Execution
 # --------------------------------------------------------------------------- #
 
+
 def run_host(args: list[str], timeout: int) -> tuple[int, str]:
     cmd = [PYTHON, str(ROOT / "tools" / "wiki.py")] + args
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=str(ROOT))
+        p = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, cwd=str(ROOT)
+        )
         return p.returncode, (p.stdout or "") + (p.stderr or "")
     except subprocess.TimeoutExpired:
         return 124, "timeout"
 
 
-def exec_brain_wiki(args: list[str], acct: str, effort: str, timeout: int) -> tuple[int, str]:
-    inner_parts = ["brain-wiki", *args, "--cli", CLI, "--model", MODEL, "--effort", effort]
+def exec_brain_wiki(
+    args: list[str], acct: str, effort: str, timeout: int
+) -> tuple[int, str]:
+    inner_parts = [
+        "brain-wiki",
+        *args,
+        "--cli",
+        CLI,
+        "--model",
+        MODEL,
+        "--effort",
+        effort,
+    ]
     inner = " ".join(_q(p) for p in inner_parts)
     env = dict(os.environ)
+    # Keep the sandbox VM warm for the whole tick. bin/agent powers its container
+    # down on exit BY DEFAULT (so a manual `brain-wiki` run cleans up after itself),
+    # but one tick runs several steps back-to-back and should reuse a single warm
+    # box; cmd_run's end-of-tick teardown stops it once the batch is done.
+    env["BRAIN_KEEP_WARM"] = "1"
     # `acct` is the failover-ledger identity. The Claude CLI authenticates via
     # its own subscription login, so no per-exec env steering is needed; the
     # parameter stays for the multi-identity ledger interface.
     try:
-        p = subprocess.run([FISH, "-lc", inner], capture_output=True, text=True, timeout=timeout, env=env)
+        p = subprocess.run(
+            [FISH, "-lc", inner],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
         return p.returncode, (p.stdout or "") + (p.stderr or "")
     except subprocess.TimeoutExpired:
         return 124, "timeout"
@@ -437,11 +570,18 @@ def exec_brain_wiki(args: list[str], acct: str, effort: str, timeout: int) -> tu
 
 def _q(s: str) -> str:
     import shlex
+
     return shlex.quote(s)
 
 
-def run_llm(args: list[str], effort: str, timeout: int, ledger: dict, now: datetime,
-            log: Callable[[str], None]) -> tuple[str, str, str]:
+def run_llm(
+    args: list[str],
+    effort: str,
+    timeout: int,
+    ledger: dict,
+    now: datetime,
+    log: Callable[[str], None],
+) -> tuple[str, str, str]:
     """Run one LLM invocation on the single Claude backend.
 
     Returns (status, backend, output), status in {ok, transient, deferred}. A
@@ -469,6 +609,7 @@ def run_llm(args: list[str], effort: str, timeout: int, ledger: dict, now: datet
 # --------------------------------------------------------------------------- #
 # Reports & notifications
 # --------------------------------------------------------------------------- #
+
 
 def write_report(name: str, text: str, now: datetime) -> Path:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -523,10 +664,13 @@ def format_schedule_status(
             health = "stale"
         else:
             health = "ok"
-        rows.append(f"| {name} | {period} | {last_ok_s} | {result or 'none'} | {health} |")
+        rows.append(
+            f"| {name} | {period} | {last_ok_s} | {result or 'none'} | {health} |"
+        )
 
     limited = [
-        a for a, st in accounts.items()
+        a
+        for a, st in accounts.items()
         if st.get("limited_until") and parse(st["limited_until"]) > now
     ]
 
@@ -618,9 +762,15 @@ def prune_reports(retention: int = REPORT_RETENTION) -> list[str]:
 
 def notify(title: str, msg: str) -> None:
     try:
-        subprocess.run([OSASCRIPT, "-e",
-                        f"display notification {json.dumps(msg)} with title {json.dumps(title)}"],
-                       capture_output=True, timeout=10)
+        subprocess.run(
+            [
+                OSASCRIPT,
+                "-e",
+                f"display notification {json.dumps(msg)} with title {json.dumps(title)}",
+            ],
+            capture_output=True,
+            timeout=10,
+        )
     except Exception:
         pass
 
@@ -643,10 +793,15 @@ def notify(title: str, msg: str) -> None:
 # `sudo -n` never prompts: if the rule is absent these fail fast and we fall back
 # to "won't run reliably lid-closed" rather than hanging.
 
+
 def lid_closed() -> bool:
     try:
-        out = subprocess.run([IOREG, "-r", "-k", "AppleClamshellState"],
-                             capture_output=True, text=True, timeout=10).stdout
+        out = subprocess.run(
+            [IOREG, "-r", "-k", "AppleClamshellState"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout
         for line in out.splitlines():
             if "AppleClamshellState" in line:
                 return "Yes" in line
@@ -657,16 +812,23 @@ def lid_closed() -> bool:
 
 def _sudo_pmset(args: list[str]) -> bool:
     try:
-        return subprocess.run([SUDO, "-n", PMSET, *args],
-                              capture_output=True, timeout=20).returncode == 0
+        return (
+            subprocess.run(
+                [SUDO, "-n", PMSET, *args], capture_output=True, timeout=20
+            ).returncode
+            == 0
+        )
     except Exception:
         return False
 
 
 def keepawake_on(log: Callable[[str], None]) -> bool:
     ok = _sudo_pmset(["-a", "disablesleep", "1"])
-    log("disablesleep 1 (lid-close override ON)" if ok
-        else "WARN: could not set disablesleep -- sudoers rule missing? (won't hold lid-closed)")
+    log(
+        "disablesleep 1 (lid-close override ON)"
+        if ok
+        else "WARN: could not set disablesleep -- sudoers rule missing? (won't hold lid-closed)"
+    )
     return ok
 
 
@@ -682,6 +844,7 @@ def sleep_now(log: Callable[[str], None]) -> None:
 # --------------------------------------------------------------------------- #
 # Logging & lock
 # --------------------------------------------------------------------------- #
+
 
 def make_logger() -> Callable[[str], None]:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -714,10 +877,19 @@ def acquire_lock():
 # Commands
 # --------------------------------------------------------------------------- #
 
-def _run_steps(steps: list[Step], ledger: dict, gates: "Gates", now: datetime,
-               dry_run: bool, log: Callable[[str], None]) -> None:
+
+def _run_steps(
+    steps: list[Step],
+    ledger: dict,
+    gates: "Gates",
+    now: datetime,
+    dry_run: bool,
+    log: Callable[[str], None],
+) -> None:
     """Run every due step in order, honoring gates, account failover, and reports."""
-    llm_blocked = False  # set once the backend is usage-limited; skip remaining LLM steps
+    llm_blocked = (
+        False  # set once the backend is usage-limited; skip remaining LLM steps
+    )
     for step in steps:
         if not step_due(step, ledger, now):
             continue
@@ -757,7 +929,9 @@ def _run_steps(steps: list[Step], ledger: dict, gates: "Gates", now: datetime,
                     if step.report:
                         write_report(step.name, out, now)
             else:  # llm
-                status, who, out = run_llm(args, step.effort, step.timeout, ledger, now, log)
+                status, who, out = run_llm(
+                    args, step.effort, step.timeout, ledger, now, log
+                )
                 if status == "ok":
                     if step.report:
                         f = write_report(step.name, out, now)
@@ -779,9 +953,48 @@ def _run_steps(steps: list[Step], ledger: dict, gates: "Gates", now: datetime,
         else:
             _record(ledger, step.name, now, outcome)
             if ledger["jobs"][step.name].get("fail_streak", 0) == FAIL_STREAK_ALERT:
-                notify("Brain schedule",
-                       f"{step.name}: failed {FAIL_STREAK_ALERT} runs in a row "
-                       f"({outcome}); see wiki/reports/schedule-status.md")
+                notify(
+                    "Brain schedule",
+                    f"{step.name}: failed {FAIL_STREAK_ALERT} runs in a row "
+                    f"({outcome}); see wiki/reports/schedule-status.md",
+                )
+
+
+def _running_brain_containers(log) -> set[str]:
+    """Names of currently-running `brain-*` sandbox containers (apple/container).
+
+    bin/agent names each VM `brain-<root-hash>-<profile>` (e.g. -reader/-author),
+    so the `brain-` prefix selects exactly the sandboxes this vault launches and
+    never the build shim or another project's container."""
+    try:
+        out = subprocess.run(
+            [CONTAINER, "ls", "-q"], capture_output=True, text=True, timeout=15
+        ).stdout
+    except Exception as e:  # noqa: BLE001 - teardown bookkeeping must never abort a tick
+        log(f"container ls failed ({e}); skipping container teardown")
+        return set()
+    return {n for n in out.split() if n.startswith("brain-")}
+
+
+def _stop_new_brain_containers(pre_running: set[str], log) -> None:
+    """Power down the sandbox VMs THIS tick started.
+
+    bin/agent launches each container detached (`container run -d`, `--init` as PID
+    1) and reuses it across steps but never stops it, so a finished 6 GB job would
+    otherwise stay "running" and pin its full -m allocation until reboot. We stop
+    only the set that appeared during the tick (now-running minus pre-running), which
+    preserves warm reuse WITHIN a tick and never tears down an interactive
+    brain-claude/brain-shell session that predated the tick. `container stop` is
+    graceful (PID 1 traps SIGTERM) and a no-op if already stopped."""
+    started = sorted(_running_brain_containers(log) - pre_running)
+    for name in started:
+        try:
+            subprocess.run(
+                [CONTAINER, "stop", name], capture_output=True, text=True, timeout=60
+            )
+            log(f"powered down sandbox container {name} (tick teardown)")
+        except Exception as e:  # noqa: BLE001
+            log(f"failed to stop {name} ({e}); stop it manually to free RAM")
 
 
 def cmd_run(dry_run: bool = False) -> int:
@@ -809,11 +1022,23 @@ def cmd_run(dry_run: bool = False) -> int:
         lid = lid_closed()
         any_llm_due = any(step_due(s, ledger, now) for s in steps if s.kind == "llm")
         if dry_run:
-            log(f"keep-awake check: on_ac={on_ac} lid_closed={lid} llm_due={any_llm_due}")
+            log(
+                f"keep-awake check: on_ac={on_ac} lid_closed={lid} llm_due={any_llm_due}"
+            )
         engaged = bool(
-            not dry_run and on_ac and lid and any_llm_due
-            and gates.get("online") and gates.get("container") and keepawake_on(log)
+            not dry_run
+            and on_ac
+            and lid
+            and any_llm_due
+            and gates.get("online")
+            and gates.get("container")
+            and keepawake_on(log)
         )
+
+        # Snapshot the brain sandbox VMs already running BEFORE this tick, so the
+        # post-tick teardown stops only the ones THIS tick starts and never an
+        # interactive brain-claude/brain-shell session that predates it.
+        pre_running = set() if dry_run else _running_brain_containers(log)
 
         try:
             _run_steps(steps, ledger, gates, now, dry_run, log)
@@ -822,13 +1047,21 @@ def cmd_run(dry_run: bool = False) -> int:
                 write_schedule_status(ledger, steps, now)
                 pruned = prune_reports()
                 if pruned:
-                    log(f"pruned {len(pruned)} old report(s) (keep latest "
-                        f"{REPORT_RETENTION}/type)")
+                    log(
+                        f"pruned {len(pruned)} old report(s) (keep latest "
+                        f"{REPORT_RETENTION}/type)"
+                    )
         finally:
             if engaged:
                 keepawake_off(log)
                 if lid_closed():  # only return to sleep if it woke headless for the job
                     sleep_now(log)
+            # Power down the sandbox VMs this tick started so a finished 6 GB job
+            # stops pinning RAM (bin/agent launches them detached and never stops
+            # them). Only the newly-started set is stopped -> warm reuse within the
+            # tick is preserved; the cross-tick RAM leak is closed.
+            if not dry_run:
+                _stop_new_brain_containers(pre_running, log)
         return 0
     finally:
         try:
@@ -866,7 +1099,9 @@ def cmd_status() -> int:
         last = rec.get("last_ok")
         last_s = parse(last).strftime("%m-%d %H:%M") if last else "never"
         due = "yes" if step_due(step, ledger, now) else "-"
-        print(f"{step.name:12} {step.period:7} {due:4} {last_s:16} {rec.get('last_result', '')}")
+        print(
+            f"{step.name:12} {step.period:7} {due:4} {last_s:16} {rec.get('last_result', '')}"
+        )
     print("\naccounts:")
     for acct in ACCOUNTS:
         st = ledger["accounts"].get(acct, {})
@@ -878,7 +1113,9 @@ def cmd_status() -> int:
         print(f"  {acct:28} {state}")
     # scheduled wakes
     try:
-        sched = subprocess.run([PMSET, "-g", "sched"], capture_output=True, text=True, timeout=10).stdout.strip()
+        sched = subprocess.run(
+            [PMSET, "-g", "sched"], capture_output=True, text=True, timeout=10
+        ).stdout.strip()
         print(f"\npmset scheduled wakes:\n{sched or '  (none)'}")
     except Exception:
         pass
@@ -889,7 +1126,9 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Brain scheduled-agent dispatcher")
     sub = p.add_subparsers(dest="cmd", required=True)
     run = sub.add_parser("run", help="one dispatcher tick")
-    run.add_argument("--dry-run", action="store_true", help="evaluate gates/due-ness, run nothing")
+    run.add_argument(
+        "--dry-run", action="store_true", help="evaluate gates/due-ness, run nothing"
+    )
     sub.add_parser("status", help="human-readable ledger view")
     args = p.parse_args(argv)
     if args.cmd == "run":

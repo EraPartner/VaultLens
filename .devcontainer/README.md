@@ -3,8 +3,10 @@
 Hardened sandbox for running the wiki-builder agents on this vault. The Python
 orchestrator (`tools/wiki.py`, `tools/agents/wiki-agent.py`) and the **claude**
 CLI it drives, plus the **qmd** local search engine, run inside the container.
-The agents run with `--dangerously-skip-permissions` / headless flags, so the
-container is the isolation boundary.
+Interactive sessions (`brain-claude`/`brain-shell`) run with `--dangerously-skip-permissions`; the
+headless agents (`brain-wiki`/`brain-cos`) instead run with an explicit `--allowedTools` allowlist +
+`--permission-mode acceptEdits`/`default` and `--disallowedTools Task`. Either way the container is
+the isolation boundary.
 
 Modelled on the Vision/Watchman devcontainers; the differences are this
 project's stack (no web app, no database), the agent toolchain, and the

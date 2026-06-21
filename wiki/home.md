@@ -161,7 +161,7 @@ python3 tools/wiki_extra.py stats           # Wiki statistics
 qmd search "query"         # BM25 (fast, keyword)
 qmd vsearch "query"        # Vector (semantic)
 qmd query "query"          # Hybrid (best quality)
-qmd query "query" --json   # For LLM context
+qmd query "query" --format json  # For LLM context
 ```
 
 ## Workflows

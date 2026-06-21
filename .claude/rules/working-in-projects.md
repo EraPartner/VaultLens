@@ -9,7 +9,7 @@ Follow these on top of `## Rules` in the project's `project.md` — project rule
 
 **Wiki search ladder** — try in order, stop when you have enough:
 
-1. `qmd query "<question>" --json` — hybrid BM25 + vector + LLM rerank; best for conceptual questions.
+1. `qmd query "<question>" --format json` — hybrid BM25 + vector + LLM rerank; best for conceptual questions.
 2. `qmd search "<keywords>"` — BM25 only; fast, free, good for exact terms.
 3. `python3 tools/wiki.py search "<query>"` — substring fallback when qmd is unavailable.
 4. `python3 tools/wiki.py tags <tag> [<tag>...]` — AND-filter wiki pages by the project's `tags`.

@@ -15,7 +15,7 @@ Process raw source material and create/update wiki pages following the LLM Wiki 
 
 ## Pre-approved shell commands
 
-Your Bash is the wiki's **read-only helper set** (`ls`/`grep`/`find`/`cat`/`qmd`/`python3 tools/wiki.py …`) **plus the file-management set** (`touch`/`mkdir`/`mv`/`cp`/`sed`/`awk`) for files in your writable scope — run those without asking. Nothing else: no `curl`, no `git`, no file deletion. The full lists are `READ_ONLY_SHELL_COMMANDS` / `WRITE_SHELL_COMMANDS` in `tools/agents/wiki-agent.py`, enforced as a hard `--allowedTools` allowlist (mirrored in this agent's `tools:` frontmatter); the egress-locked container mount is the backstop.
+Your shell is the wiki's **read-only helper set** plus the **file-management set** (`touch`/`mkdir`/`mv`/`cp`/`sed`/`awk`) for files in your writable scope — the full lists are `READ_ONLY_SHELL_COMMANDS` / `WRITE_SHELL_COMMANDS` in `tools/agents/wiki-agent.py`. No `curl`, `git`, or deletion. How this is enforced depends on the launch path: a **headless** `brain-wiki` run pins it as a hard `--allowedTools` allowlist and the container mount confines writes to `wiki/` (raw/ and projects/ stay read-only); an **interactive** subagent run can't command-scope Bash through `tools:` frontmatter (a `Bash` grant there is unrestricted), so it leans on the operator's write-confirmation prompts, the global bash guard, and that same container mount.
 
 ## Scope
 
@@ -47,7 +47,7 @@ Your Bash is the wiki's **read-only helper set** (`ls`/`grep`/`find`/`cat`/`qmd`
 
 ### 3. Link and Update
 - **Find related existing pages** before creating new ones — search first:
-  - `qmd query "<concept or topic>" --json` — hybrid BM25 + vector + LLM reranking. Best for finding semantically related pages even when keywords differ. Prefer `mcp__qmd__*` tools when available.
+  - `qmd query "<concept or topic>" --format json` — hybrid BM25 + vector + LLM reranking. Best for finding semantically related pages even when keywords differ. Prefer `mcp__qmd__*` tools when available.
   - `qmd search "<keywords>"` — BM25 only. Fast, good for exact term lookups.
   - `python3 tools/wiki.py search "<query>"` — substring fallback when qmd is unavailable.
 - Create/update entity pages in `wiki/entities/`

@@ -193,8 +193,8 @@ next eligible tick. Sleep / offline / closed-lid become non-events.
 |---|---|---|---|---|
 | lint | `wiki.py lint` | **nightly** (batch step 1) | offline-ok, host-native | notify only on errors |
 | index | `wiki.py index --check` (→ `--rebuild` if stale) | **nightly** (batch step 1) | offline-ok, host-native | log |
-| links | `wiki.py links --fix` | weekly | offline-ok, host-native | log |
-| coverage snapshot | `wiki.py coverage --json` | weekly | offline-ok, host-native | feeds enhance |
+| links | `wiki.py links --fix` | weekly *(manual — not in the dispatcher; writes wiki/, needs the author profile)* | offline-ok, host-native | log |
+| coverage snapshot | `wiki.py coverage --json` | weekly *(manual — not in the dispatcher)* | offline-ok, host-native | feeds enhance |
 | **cos brief** | `brain-wiki cos --mode brief` | daily, 07:00 window | online, container, icloud, battery-ok | `wiki/reports/` + macOS notify |
 | contradict | `brain-wiki contradict` | weekly, overnight AC window | online, container, icloud, **AC** | `wiki/reports/` |
 | emerge | `brain-wiki emerge` | weekly | online, container, icloud | `wiki/reports/` + notify |
@@ -203,8 +203,9 @@ next eligible tick. Sleep / offline / closed-lid become non-events.
 | ingest | `brain-wiki ingest --source <new>` | **nightly**, before enhance, only if `raw/inbox` / `raw/sources` has unprocessed files | online, container, icloud, **AC** | wiki + promote inbox PDF |
 | enhance | `brain-wiki enhance --iterations 10` | **nightly**, after ingest (capped, not `--forever`) | online, container, icloud, **AC** | writes wiki directly |
 
-**Scheduled:** lint, index, links, coverage, cos brief, contradict, emerge,
-discover, (optional verify), enhance, ingest.
+**Scheduled (in `build_steps`):** lint, index, ingest, enhance, contradict,
+emerge, discover, cos brief. **Documented but not yet wired into the dispatcher
+(run manually):** links, coverage snapshot, (optional) verify.
 **On-demand only — never scheduled** (need human input): `challenge` (a position),
 `connect` (two domains), `search` (a query). `emerge`/`discover` may *suggest*
 running these, but never auto-fire them.

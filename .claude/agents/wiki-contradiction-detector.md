@@ -15,7 +15,7 @@ Find and analyze potential contradictions across wiki pages. Be thorough but rec
 
 ## Pre-approved shell commands
 
-Your Bash is restricted to the wiki's **read-only helper set** (`ls`/`grep`/`find`/`cat`/`head`/`qmd`/`python3 tools/wiki.py …`, and the rest of `READ_ONLY_SHELL_COMMANDS` in `tools/agents/wiki-agent.py`) — run those without asking. Nothing else: no writes, no `curl`, no `git`, no file deletion. The launcher enforces this as a hard `--allowedTools` allowlist (mirrored in this agent's `tools:` frontmatter); the egress-locked container mount is the backstop. Never write.
+Use only the wiki's **read-only helper set** for shell — `READ_ONLY_SHELL_COMMANDS` in `tools/agents/wiki-agent.py` (`ls`/`find`/`grep`/`cat`/`head`/`qmd`/`python3 tools/wiki.py …`). Never write, `curl`, `git`, or delete. How this is enforced depends on the launch path: a **headless** `brain-wiki` run is the real guarantee — it pins a hard `--allowedTools` allowlist *and* uses the `reader` profile, which mounts the whole workspace read-only, so any write fails at the kernel no matter how broad the Bash grant. An **interactive** subagent run can't command-scope Bash through `tools:` frontmatter (a `Bash` grant there is unrestricted) and may sit on a writable filesystem (the host, or the in-container `master` profile), so there the guardrails are the operator's permission prompts and the global bash guard — not a read-only mount. Hold yourself to read-only either way — never write.
 
 ## Scope
 
@@ -34,7 +34,7 @@ Your Bash is restricted to the wiki's **read-only helper set** (`ls`/`grep`/`fin
 1. Build a candidate set of pages with shared context. Use any of:
    - `python3 tools/wiki.py tags <tag>` — list pages sharing a frontmatter tag (AND across multiple tags supported).
    - `python3 tools/wiki.py tags --domain <domain>` — restrict by `domain` frontmatter.
-   - `qmd query "<topic question>" --json` — hybrid semantic + lexical search. Surfaces pages that touch the same concept even when keywords differ; useful when tags are sparse or the conflict is wording-level. Prefer `mcp__qmd__*` if available.
+   - `qmd query "<topic question>" --format json` — hybrid semantic + lexical search. Surfaces pages that touch the same concept even when keywords differ; useful when tags are sparse or the conflict is wording-level. Prefer `mcp__qmd__*` if available.
    - `qmd search "<keywords>"` — BM25 only when you want speed and exact-term hits.
    - `python3 tools/wiki.py search "<keywords>"` — substring fallback.
 2. Scan for contradictory language keywords:
