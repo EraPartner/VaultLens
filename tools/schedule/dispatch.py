@@ -66,6 +66,10 @@ MIN_BATTERY_PCT = 20
 # config error (e.g. a misrouted agent exiting 2) otherwise retries every tick
 # forever, surfacing only in schedule-status; this raises one alarm.
 FAIL_STREAK_ALERT = 3
+# Keep the latest N dated scheduled-<type> reports per type; older ones are
+# pruned each tick so wiki/reports/ does not pile up. The CoS is read-only, so
+# this hygiene runs host-side in the dispatcher that writes the reports.
+REPORT_RETENTION = 14
 
 # Backoff for short rate-limits (seconds): 30m -> 1h -> 2h (capped). Monthly quota
 # uses a flat ~24h re-probe (we don't try to compute the exact reset).
@@ -573,6 +577,42 @@ def write_schedule_status(ledger: dict, steps: list["Step"], now: datetime) -> P
     return f
 
 
+def _reports_to_prune(names: list[str], retention: int) -> list[str]:
+    """Pure: of `scheduled-<type>-<date>.md` names, those to delete to keep only
+    the latest `retention` per type. Any other filename is ignored, so
+    schedule-status.md and hand-written reports are never touched. Tested directly."""
+    pat = re.compile(r"^scheduled-(.+)-(\d{4}-\d{2}-\d{2})\.md$")
+    groups: dict[str, list[tuple[str, str]]] = {}
+    for n in names:
+        m = pat.match(n)
+        if m:
+            groups.setdefault(m.group(1), []).append((m.group(2), n))
+    out: list[str] = []
+    for items in groups.values():
+        items.sort()  # date strings sort chronologically; oldest first
+        stale = items[:-retention] if retention > 0 else items
+        out.extend(n for _d, n in stale)
+    return out
+
+
+def prune_reports(retention: int = REPORT_RETENTION) -> list[str]:
+    """Delete dated scheduled reports beyond the retention window so wiki/reports/
+    does not grow without bound. Touches only scheduled-<type>-<date>.md (the
+    dispatcher's own outputs), never schedule-status.md or other files. The CoS is
+    read-only, so report hygiene lives here, on the host side that writes them."""
+    if not REPORTS_DIR.is_dir():
+        return []
+    names = [f.name for f in REPORTS_DIR.glob("scheduled-*.md")]
+    removed: list[str] = []
+    for n in _reports_to_prune(names, retention):
+        try:
+            (REPORTS_DIR / n).unlink()
+            removed.append(n)
+        except OSError:
+            pass
+    return removed
+
+
 def notify(title: str, msg: str) -> None:
     try:
         subprocess.run([OSASCRIPT, "-e",
@@ -777,6 +817,10 @@ def cmd_run(dry_run: bool = False) -> int:
             save_ledger(ledger)
             if not dry_run:
                 write_schedule_status(ledger, steps, now)
+                pruned = prune_reports()
+                if pruned:
+                    log(f"pruned {len(pruned)} old report(s) (keep latest "
+                        f"{REPORT_RETENTION}/type)")
         finally:
             if engaged:
                 keepawake_off(log)

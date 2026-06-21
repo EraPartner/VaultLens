@@ -152,6 +152,20 @@ def main() -> int:
     check("failure sets last_result", led7["jobs"]["enhance"]["last_result"] == "transient")
     check("attempt timestamp recorded", "last_attempt" in led7["jobs"]["enhance"])
 
+    print("report retention:")
+    names = ([f"scheduled-cos-brief-2026-06-{d:02d}.md" for d in range(1, 21)]
+             + ["scheduled-contradict-2026-06-07.md", "scheduled-contradict-2026-06-14.md",
+                "schedule-status.md", "lint-report.md", ".gitkeep"])
+    prune = dispatch._reports_to_prune(names, 14)
+    check("prunes oldest cos-briefs beyond 14/type", sum("cos-brief" in n for n in prune) == 6)
+    check("deletes oldest, keeps newest",
+          "scheduled-cos-brief-2026-06-01.md" in prune
+          and "scheduled-cos-brief-2026-06-20.md" not in prune)
+    check("keeps a type that is under the limit", not any("contradict" in n for n in prune))
+    check("never touches schedule-status / non-scheduled files",
+          not any(n in prune for n in ("schedule-status.md", "lint-report.md", ".gitkeep")))
+    check("retention 0 prunes all matching", len(dispatch._reports_to_prune(names, 0)) == 22)
+
     print(f"\n{PASSED} passed, {FAILED} failed")
     return 1 if FAILED else 0
 

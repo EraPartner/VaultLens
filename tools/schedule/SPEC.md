@@ -239,6 +239,11 @@ running these, but never auto-fire them.
 - **Reports:** dispatcher writes `wiki/reports/scheduled-<job>-<YYYY-MM-DD>.md`
   from captured stdout. (The vault `wiki/reports/` is gitignored personal content;
   fine — these are local artifacts.)
+- **Retention:** each tick the dispatcher prunes dated `scheduled-<type>-*.md` to
+  the latest `REPORT_RETENTION` (14) per type, so daily cos-brief / weekly digests
+  do not pile up. Only `scheduled-*` files are touched — never `schedule-status.md`
+  or hand-written reports. The CoS is read-only, so this hygiene lives in the
+  dispatcher (which owns report writing), not the agent.
 - **Notifications:** `osascript -e 'display notification …'` (or `terminal-notifier`
   if present) on completion of cos brief / emerge / discover, and on any job error.
 - **Logs:** `~/.brain/logs/schedule-<date>.log`; LaunchAgent `StandardOutPath` /
