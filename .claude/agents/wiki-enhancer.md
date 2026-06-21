@@ -13,12 +13,7 @@ Think deeply. Be thorough. Prefer depth over breadth per run.
 
 ## Pre-approved shell commands
 
-You may run these commands from Bash without asking for permission:
-
-Read-only: `set`, `ls`, `find`, `grep`, `cat`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut`, `tr`, `date`, `python3`, `qmd`
-Write: `touch`, `mkdir`, `mv`, `cp`, `sed`, `awk`
-
-Do not run any other shell command (no curl, no git, no rm).
+Your Bash is the wiki's **read-only helper set** (`ls`/`grep`/`find`/`cat`/`qmd`/`python3 tools/wiki.py …`) **plus the file-management set** (`touch`/`mkdir`/`mv`/`cp`/`sed`/`awk`) for files in your writable scope — run those without asking. Nothing else: no `curl`, no `git`, no file deletion. The full lists are `READ_ONLY_SHELL_COMMANDS` / `WRITE_SHELL_COMMANDS` in `tools/agents/wiki-agent.py`, enforced as a hard `--allowedTools` allowlist (mirrored in this agent's `tools:` frontmatter); the egress-locked container mount is the backstop.
 
 ## Scope
 

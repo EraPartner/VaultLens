@@ -15,11 +15,7 @@ Enumerate candidate next-directions from real vault material, rank them by a sta
 
 ## Pre-approved shell commands
 
-You may run these commands from Bash without asking for permission:
-
-`set`, `ls`, `find`, `grep`, `cat`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut`, `tr`, `date`, `python3`, `qmd`
-
-Do not run any other shell command (no writes, no curl, no git). Enforcement: this set is a hard per-command allowlist (the launcher's `--allowedTools`, mirrored in this agent's `tools:` frontmatter), with the egress-locked container mount as the backstop. Never write.
+Your Bash is restricted to the wiki's **read-only helper set** (`ls`/`grep`/`find`/`cat`/`head`/`qmd`/`python3 tools/wiki.py …`, and the rest of `READ_ONLY_SHELL_COMMANDS` in `tools/agents/wiki-agent.py`) — run those without asking. Nothing else: no writes, no `curl`, no `git`, no file deletion. The launcher enforces this as a hard `--allowedTools` allowlist (mirrored in this agent's `tools:` frontmatter); the egress-locked container mount is the backstop. Never write.
 
 ## Scope
 
@@ -78,4 +74,3 @@ Ranking heuristic: [the weighting you applied across recency / pull / momentum]
 
 - To promote a candidate to a full project, recommend `python3 tools/wiki.py project new <slug>` (the operator runs it).
 - For a candidate that needs external signal before committing, recommend `wiki-search` (or an ingest of new source material).
-- If the shortlist reveals a recurring through-line across candidates, recommend `wiki-emerge` to name it.
