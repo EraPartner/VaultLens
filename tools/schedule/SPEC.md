@@ -131,12 +131,14 @@ Budget-shaping (build into the job table):
 
 The dispatcher ticks every ~30 min only to check gates + the ledger. Actual work:
 
-**Nightly batch — once per night, ~03:00 (pmset wake 02:55), AC-gated, in order:**
-1. `lint` + `index` (offline, host-native pre-check; clean state for enhance)
+**Nightly batch — once per night, ~01:30 (pmset wake 01:25), AC-gated, in order:**
+1. `lint` + `index` (offline, host-native pre-check; clean state for the LLM steps)
 2. `ingest` **if** `raw/inbox` / `raw/sources` has unprocessed files
    (checked here, **once a night**, not per tick)
-3. `enhance --iterations 10` (capped)
-4. **Sundays only:** `contradict` + `emerge` + `discover`
+3. **Sundays only:** `contradict` + `emerge` + `discover` (read-only digests run
+   before enhance, so they analyse the pre-enhance wiki and claim the budget first)
+4. `enhance --iterations 10` (capped) — **last**, the biggest budget consumer;
+   soaks up whatever time/quota remains after the digests
 
 All LLM steps: `--cli claude --model sonnet`, deferred if a usage limit is hit
 (single identity, no failover) or if offline. The whole batch runs at most once per night; if a night is missed
@@ -169,11 +171,11 @@ next eligible tick. Sleep / offline / closed-lid become non-events.
 
 | # | Component | Path | Notes |
 |---|---|---|---|
-| 1 | LaunchAgent plist | `~/Library/LaunchAgents/com.brain.schedule.plist` | **User agent, not a daemon** — only the GUI session has Keychain, iCloud, and the apple/container runtime. **No `StartInterval` polling** (work runs at most once/day). `RunAtLoad` + `StartCalendarInterval` anchors spanning the windows (nightly 03/06/09, morning 07:05/10). launchd reruns a missed anchor on the next wake; the spread anchors give same-day retry if a gate was temporarily down. |
+| 1 | LaunchAgent plist | `~/Library/LaunchAgents/com.brain.schedule.plist` | **User agent, not a daemon** — only the GUI session has Keychain, iCloud, and the apple/container runtime. **No `StartInterval` polling** (work runs at most once/day). `RunAtLoad` + `StartCalendarInterval` anchors spanning the windows (nightly 01:30/04, morning 07:05, catch-up 09/10). launchd reruns a missed anchor on the next wake; the spread anchors give same-day retry if a gate was temporarily down. |
 | 2 | Dispatcher | `tools/schedule/dispatch.py` | stdlib only (matches the rest of `tools/`). Reads job table, checks gates, runs due jobs, writes ledger, captures + files output. |
 | 3 | Ledger + lock | `~/.brain/schedule-state.json` | per-job last-run timestamps + a `flock` so ticks never overlap and never collide with the enhance loop. Outside the iCloud vault to avoid sync conflict copies. |
 | 4 | Job table | inline in `dispatch.py` (or sibling `jobs.json`) | declarative: command, cadence, window, gates, invocation path. |
-| 5 | pmset wake | one-time `sudo pmset repeat wakeorpoweron MTWRFSU 02:55:00` | wakes the Mac before the overnight heavy window; AC gate in the dispatcher decides whether to actually run. |
+| 5 | pmset wake | one-time `sudo pmset repeat wakeorpoweron MTWRFSU 01:25:00` | wakes the Mac before the overnight heavy window; AC gate in the dispatcher decides whether to actually run. |
 
 ## Invocation paths
 
@@ -201,10 +203,10 @@ next eligible tick. Sleep / offline / closed-lid become non-events.
 | discover | `brain-wiki discover` | weekly | online, container, icloud | `wiki/reports/` + notify |
 | verify *(optional)* | `brain-wiki verify --source <changed>` | weekly, on recently-changed source pages | online, container, icloud | report |
 | ingest | `brain-wiki ingest --source <new>` | **nightly**, before enhance, only if `raw/inbox` / `raw/sources` has unprocessed files | online, container, icloud, **AC** | wiki + promote inbox PDF |
-| enhance | `brain-wiki enhance --iterations 10` | **nightly**, after ingest (capped, not `--forever`) | online, container, icloud, **AC** | writes wiki directly |
+| enhance | `brain-wiki enhance --iterations 10` | **nightly**, last step, after the weekly digests (capped, not `--forever`) | online, container, icloud, **AC** | writes wiki directly |
 
-**Scheduled (in `build_steps`):** lint, index, ingest, enhance, contradict,
-emerge, discover, cos brief. **Documented but not yet wired into the dispatcher
+**Scheduled (in `build_steps`), in run order:** lint, index, ingest, contradict,
+emerge, discover, enhance, cos brief. **Documented but not yet wired into the dispatcher
 (run manually):** links, coverage snapshot, (optional) verify.
 **On-demand only — never scheduled** (need human input): `challenge` (a position),
 `connect` (two domains), `search` (a query). `emerge`/`discover` may *suggest*
@@ -278,7 +280,7 @@ left in place; only the LaunchAgent and the forced wake were turned off:
 
 ```sh
 launchctl bootout gui/$(id -u)/com.brain.schedule   # stop the agent firing
-sudo pmset repeat cancel                             # stop the nightly 02:55 wake
+sudo pmset repeat cancel                             # stop the nightly 01:25 wake
 ```
 
 **To reactivate** (after verifying `claude -p` runs non-interactively from a
@@ -286,7 +288,7 @@ launchd-spawned login `fish` — see "Backend & model"):
 
 ```sh
 tools/schedule/install.sh                            # re-copies plist, re-bootstraps, kickstarts one run
-sudo pmset repeat wakeorpoweron MTWRFSU 02:55:00     # restore the overnight wake
+sudo pmset repeat wakeorpoweron MTWRFSU 01:25:00     # restore the overnight wake
 launchctl list | grep com.brain                      # confirm loaded
 python3 tools/schedule/dispatch.py status            # confirm ledger + "claude-plan healthy"
 ```

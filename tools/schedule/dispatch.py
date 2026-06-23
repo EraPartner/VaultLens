@@ -58,8 +58,8 @@ CLI = "claude"
 MODEL = "sonnet"
 
 # Windows are [start_hour, end_hour). Generous so a morning wake still catches a
-# missed 03:00 batch (the ledger makes it run at most once/day either way).
-NIGHTLY_WINDOW = (2, 11)
+# missed 01:30 batch (the ledger makes it run at most once/day either way).
+NIGHTLY_WINDOW = (1, 11)
 MORNING_WINDOW = (7, 12)
 MIN_BATTERY_PCT = 20
 # Notify once when a job has failed this many runs in a row. A deterministic
@@ -352,18 +352,10 @@ def build_steps() -> list[Step]:
             effort="low",
             timeout=2400,
         ),
-        # 3. enhance, capped at 10 iterations/night (the biggest budget consumer).
-        Step(
-            "enhance",
-            "llm",
-            "daily",
-            NIGHTLY_WINDOW,
-            ["ac", "online", "container", "icloud"],
-            lambda: [["enhance", "--iterations", "10", "--strategy", "alternate"]],
-            effort="low",
-            timeout=7200,
-        ),
-        # 4. weekly thinking digests (prefer Sunday); reports filed for you.
+        # 3. weekly thinking digests (prefer Sunday); reports filed for you. They
+        #    run BEFORE enhance so they analyse the night's pre-enhance wiki, and
+        #    so the cheaper read-only digests claim the budget first on a contended
+        #    night (a usage limit then defers only enhance, the biggest consumer).
         Step(
             "contradict",
             "llm",
@@ -396,6 +388,18 @@ def build_steps() -> list[Step]:
             effort="high",
             timeout=2400,
             report=True,
+        ),
+        # 4. enhance LAST, capped at 10 iterations/night (the biggest budget
+        #    consumer); soaks up whatever time/quota is left after the digests.
+        Step(
+            "enhance",
+            "llm",
+            "daily",
+            NIGHTLY_WINDOW,
+            ["ac", "online", "container", "icloud"],
+            lambda: [["enhance", "--iterations", "10", "--strategy", "alternate"]],
+            effort="low",
+            timeout=7200,
         ),
         # morning: daily chief-of-staff brief (battery OK, no AC gate).
         Step(

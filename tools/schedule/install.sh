@@ -39,7 +39,7 @@ Installed. Useful commands:
   python3 "$HERE/dispatch.py" run --dry-run
 
 To enable the overnight forced wake (AC-gated in the dispatcher), run with sudo:
-  sudo pmset repeat wakeorpoweron MTWRFSU 02:55:00
+  sudo pmset repeat wakeorpoweron MTWRFSU 01:25:00
   pmset -g sched                          # verify
 To remove the wake later:
   sudo pmset repeat cancel
