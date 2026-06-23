@@ -50,9 +50,15 @@ PROJECT_REQUIRED_FIELDS = {
     "domain",
 }
 
-# Link/orphan handling: `system/` pages are excluded from link validation, and a
-# couple of well-known landing pages are exempt from the orphan check.
-LINK_VALIDATION_SKIP_CATEGORIES = {"system"}
+# Reports (`wiki/reports/`) are generated, ephemeral outputs — scheduled-agent
+# results, lint/audit dumps, the rolling schedule-status page — not
+# hand-maintained content, so lint ignores them entirely (see build_report).
+REPORTS_CATEGORY = "reports"
+
+# Link/orphan handling: `system/` and `reports/` pages are excluded from link
+# validation (their own links are not flagged and they are not link sources), and
+# a couple of well-known landing pages are exempt from the orphan check.
+LINK_VALIDATION_SKIP_CATEGORIES = {"system", REPORTS_CATEGORY}
 ORPHAN_EXEMPT = {"home", "system/schema"}
 
 # Trust/refresh enums validated by `check_field_enums`.
@@ -253,6 +259,12 @@ def build_report(pages: list[Page], strict: bool) -> dict:
     inbound, broken_links, ambiguous_links = compute_inbound_links(
         pages, canonical, basename_map, skip_categories=LINK_VALIDATION_SKIP_CATEGORIES
     )
+
+    # Reports stay in the link graph above (so links *to* them still resolve) but
+    # drop out of every per-page content check below: machine-written, dated
+    # outputs should not generate orphan, staleness, frontmatter, enum, or date
+    # findings. Filtering here is the single point that covers all of them.
+    pages = [page for page in pages if page.category != REPORTS_CATEGORY]
 
     orphan_pages = [
         page.rel.as_posix()

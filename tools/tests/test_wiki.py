@@ -86,18 +86,104 @@ def test_golden() -> None:
         make_clean_wiki(root)
         rep = report_for(root, strict=True)
         check("golden has no errors", rep["error_count"] == 0, str(rep["errors"]))
-        check("golden has no orphans (strict)", not rep["errors"].get("orphans"), str(rep["errors"].get("orphans")))
+        check(
+            "golden has no orphans (strict)",
+            not rep["errors"].get("orphans"),
+            str(rep["errors"].get("orphans")),
+        )
+
+
+def test_reports_excluded() -> None:
+    print("reports excluded from lint:")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "wiki"
+        make_clean_wiki(root)
+        # A generated report: no inbound links (would be an orphan), stale dates,
+        # and a broken wikilink in its body. None of these should be flagged.
+        write_page(
+            root,
+            "reports/scheduled-cos-brief-2020-01-01.md",
+            "Brief referencing [[concepts/gone]].",
+            **base_fields(
+                title="Brief", type="report", created="2020-01-01", updated="2020-01-01"
+            ),
+        )
+        rep = report_for(root, strict=True)
+        orphans = rep["errors"].get("orphans", [])
+        check(
+            "report not flagged orphan",
+            not any("reports/" in o for o in orphans),
+            str(orphans),
+        )
+        check(
+            "report broken link not flagged",
+            not any("reports/" in b for b in rep["errors"]["broken_links"]),
+            str(rep["errors"]["broken_links"]),
+        )
+        check(
+            "report not flagged stale",
+            not any("reports/" in s for s in rep["warnings"]["stale_pages"]),
+            str(rep["warnings"]["stale_pages"]),
+        )
+        check(
+            "clean content pages still pass",
+            rep["error_count"] == 0,
+            str(rep["errors"]),
+        )
 
 
 def test_defects() -> None:
     print("defects (each fixture trips exactly its rule):")
     cases = [
-        ("missing_fields", lambda r: write_page(r, "concepts/c.md", "[[concepts/a]]",
-            title="C", type="concept", status="active", created="2026-01-01", updated="2026-01-02")),  # no summary
-        ("broken_links", lambda r: write_page(r, "concepts/c.md", "[[concepts/nope]] [[concepts/a]]", **base_fields(title="C"))),
-        ("invalid_status", lambda r: write_page(r, "concepts/c.md", "[[concepts/a]]", **base_fields(title="C", status="bogus"))),
-        ("invalid_enums", lambda r: write_page(r, "concepts/c.md", "[[concepts/a]]", **base_fields(title="C", confidence="wrong"))),
-        ("malformed_dates", lambda r: write_page(r, "concepts/c.md", "[[concepts/a]]", **base_fields(title="C", created="nope"))),
+        (
+            "missing_fields",
+            lambda r: write_page(
+                r,
+                "concepts/c.md",
+                "[[concepts/a]]",
+                title="C",
+                type="concept",
+                status="active",
+                created="2026-01-01",
+                updated="2026-01-02",
+            ),
+        ),  # no summary
+        (
+            "broken_links",
+            lambda r: write_page(
+                r,
+                "concepts/c.md",
+                "[[concepts/nope]] [[concepts/a]]",
+                **base_fields(title="C"),
+            ),
+        ),
+        (
+            "invalid_status",
+            lambda r: write_page(
+                r,
+                "concepts/c.md",
+                "[[concepts/a]]",
+                **base_fields(title="C", status="bogus"),
+            ),
+        ),
+        (
+            "invalid_enums",
+            lambda r: write_page(
+                r,
+                "concepts/c.md",
+                "[[concepts/a]]",
+                **base_fields(title="C", confidence="wrong"),
+            ),
+        ),
+        (
+            "malformed_dates",
+            lambda r: write_page(
+                r,
+                "concepts/c.md",
+                "[[concepts/a]]",
+                **base_fields(title="C", created="nope"),
+            ),
+        ),
     ]
     for rule, add_defect in cases:
         with tempfile.TemporaryDirectory() as tmp:
@@ -114,11 +200,20 @@ def test_warnings() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / "wiki"
         make_clean_wiki(root)
-        write_page(root, "concepts/c.md", "[[concepts/a]]",
-                   **base_fields(title="C", summary="", updated="2025-01-01", created="2026-01-01"))
+        write_page(
+            root,
+            "concepts/c.md",
+            "[[concepts/a]]",
+            **base_fields(
+                title="C", summary="", updated="2025-01-01", created="2026-01-01"
+            ),
+        )
         rep = report_for(root, strict=False)
         check("empty_required warns", len(rep["warnings"]["empty_required"]) >= 1)
-        check("updated_before_created warns", len(rep["warnings"]["updated_before_created"]) >= 1)
+        check(
+            "updated_before_created warns",
+            len(rep["warnings"]["updated_before_created"]) >= 1,
+        )
 
 
 def test_fix() -> None:
@@ -126,14 +221,20 @@ def test_fix() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / "wiki"
         make_clean_wiki(root)
-        write_page(root, "concepts/c.md", "[[concepts/a]]",
-                   **base_fields(title="C", status="Active", confidence="HIGH"))
+        write_page(
+            root,
+            "concepts/c.md",
+            "[[concepts/a]]",
+            **base_fields(title="C", status="Active", confidence="HIGH"),
+        )
         use_wiki(root)
         fixes = wiki_lint.apply_fixes(wiki.list_content_pages())
         check("two fixes applied", len(fixes) == 2, str(fixes))
         rep = report_for(root, strict=False)
-        check("no invalid status/enums after fix",
-              not rep["errors"]["invalid_status"] and not rep["errors"]["invalid_enums"])
+        check(
+            "no invalid status/enums after fix",
+            not rep["errors"]["invalid_status"] and not rep["errors"]["invalid_enums"],
+        )
 
 
 def test_links() -> None:
@@ -177,35 +278,57 @@ def test_raw_source_links() -> None:
         (repo / "raw/sources/Foo Bar.pdf").write_bytes(b"%PDF-")
         wiki.ROOT = repo
         try:
-            check("source-text target resolves (no .md)",
-                  wiki.is_raw_file_target("raw/sources-text/Foo Bar"))
-            check("pdf target resolves", wiki.is_raw_file_target("raw/sources/Foo Bar.pdf"))
-            check("missing raw target rejected",
-                  not wiki.is_raw_file_target("raw/sources/Nope.pdf"))
-            check("non-raw target rejected",
-                  not wiki.is_raw_file_target("concepts/whatever"))
-            check("path traversal rejected",
-                  not wiki.is_raw_file_target("raw/../../etc/passwd"))
+            check(
+                "source-text target resolves (no .md)",
+                wiki.is_raw_file_target("raw/sources-text/Foo Bar"),
+            )
+            check(
+                "pdf target resolves",
+                wiki.is_raw_file_target("raw/sources/Foo Bar.pdf"),
+            )
+            check(
+                "missing raw target rejected",
+                not wiki.is_raw_file_target("raw/sources/Nope.pdf"),
+            )
+            check(
+                "non-raw target rejected",
+                not wiki.is_raw_file_target("concepts/whatever"),
+            )
+            check(
+                "path traversal rejected",
+                not wiki.is_raw_file_target("raw/../../etc/passwd"),
+            )
 
             root = repo / "wiki"
-            write_page(root, "concepts/a.md", "Links [[concepts/b]].", **base_fields(title="A"))
             write_page(
-                root, "sources/src-x.md",
+                root, "concepts/a.md", "Links [[concepts/b]].", **base_fields(title="A")
+            )
+            write_page(
+                root,
+                "sources/src-x.md",
                 "## Sources\n\n- Source text: [[raw/sources-text/Foo Bar]]\n"
                 "- Source PDF: [[raw/sources/Foo Bar.pdf]]\n[[concepts/a]]",
                 **base_fields(title="X"),
             )
-            write_page(root, "concepts/b.md", "Links [[concepts/a]] [[sources/src-x]].",
-                       **base_fields(title="B"))
+            write_page(
+                root,
+                "concepts/b.md",
+                "Links [[concepts/a]] [[sources/src-x]].",
+                **base_fields(title="B"),
+            )
             rep = report_for(root, strict=False)
-            check("real raw wikilinks not flagged broken",
-                  not rep["errors"]["broken_links"], str(rep["errors"]["broken_links"]))
+            check(
+                "real raw wikilinks not flagged broken",
+                not rep["errors"]["broken_links"],
+                str(rep["errors"]["broken_links"]),
+            )
         finally:
             wiki.ROOT = saved_root
 
 
 def main() -> int:
     test_golden()
+    test_reports_excluded()
     test_defects()
     test_warnings()
     test_fix()
