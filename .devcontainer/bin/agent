@@ -219,7 +219,13 @@ if ! container exec --user "$SVC_USER" -e BASH_ENV= "$NAME" brain-verify-pins --
   exit 1
 fi
 
-sandbox_install_autosync_trap brain "$CID" "$CONFIG_AUTOSYNC"
+# Power down the sandbox VM when this invocation ends (so it stops pinning its 6 GB)
+# UNLESS BRAIN_KEEP_WARM=1 — the scheduler (dispatch.py) sets that so back-to-back
+# steps in one tick reuse a single warm box and it stops them at end of tick. A
+# manual brain-wiki / brain-claude / brain-shell run therefore powers its own
+# container down on exit. Override explicitly with BRAIN_STOP_ON_EXIT=0|1.
+if [[ "${BRAIN_KEEP_WARM:-0}" == 1 ]]; then _brain_stop=0; else _brain_stop=1; fi
+sandbox_install_autosync_trap brain "$CID" "$CONFIG_AUTOSYNC" "${BRAIN_STOP_ON_EXIT:-$_brain_stop}"
 
 # --- 9) Open the session -----------------------------------------------------
 TTY_FLAGS=()

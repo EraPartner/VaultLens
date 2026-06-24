@@ -96,25 +96,43 @@ sandbox_forward_llm_creds() {
   return 0
 }
 
-# --- Install an exit trap that pushes container config back to the host -------
-# Usage: sandbox_install_autosync_trap <profile> <container-id> <enabled:0|1>
-# On shell exit, runs `<profile>-claude-sync push <cid>` via fish (idempotent;
-# guarded so it fires at most once and degrades to a no-op if fish is absent).
+# --- Install an exit trap: push config back, then optionally power down --------
+# Usage: sandbox_install_autosync_trap <profile> <container-id> <autosync:0|1> [stop_on_exit:0|1]
+# On shell exit the trap runs, at most once:
+#   1) if <autosync>=1, `<profile>-claude-sync push <cid>` via fish (idempotent;
+#      no-op if fish is absent) — pushes in-container config back to the host.
+#   2) if [stop_on_exit]=1, `container stop <cid>` — powers the sandbox VM down.
+# WHY stop_on_exit: the launchers start the box detached (`container run -d`) with a
+# keep-alive PID 1, so it NEVER stops itself; left running it pins its whole `-m`
+# allocation (4–6 GB) as a live VM until the next reboot. It defaults to 0 so an
+# INTERACTIVE session keeps the container WARM for instant reuse; headless/scheduled
+# launchers pass 1 to reclaim that RAM when the run ends. The push (step 1) runs
+# BEFORE the stop (step 2) because the sync needs the container still up.
 sandbox_install_autosync_trap() {
-  local profile="$1" cid="$2" enabled="$3"
+  local profile="$1" cid="$2" enabled="$3" stop_on_exit="${4:-0}"
   _SANDBOX_AUTOSYNC_PROFILE="$profile"
   _SANDBOX_AUTOSYNC_CID="$cid"
   _SANDBOX_AUTOSYNC_ENABLED="$enabled"
+  _SANDBOX_STOP_ON_EXIT="$stop_on_exit"
   _SANDBOX_AUTOSYNC_DONE=0
   trap _sandbox_autosync_push EXIT
 }
 _sandbox_autosync_push() {
   [[ "${_SANDBOX_AUTOSYNC_DONE:-0}" == 1 ]] && return 0
   _SANDBOX_AUTOSYNC_DONE=1
-  [[ "${_SANDBOX_AUTOSYNC_ENABLED:-0}" != 1 || -z "${_SANDBOX_AUTOSYNC_CID:-}" ]] && return 0
-  command -v fish >/dev/null 2>&1 || return 0
-  fish -c "${_SANDBOX_AUTOSYNC_PROFILE}-claude-sync push ${_SANDBOX_AUTOSYNC_CID}" \
-    || echo "launcher: auto config-sync push failed — run '${_SANDBOX_AUTOSYNC_PROFILE}-claude-sync push' to retry." >&2
+  # 1) Config-sync push (opt-in; needs the container still running).
+  if [[ "${_SANDBOX_AUTOSYNC_ENABLED:-0}" == 1 && -n "${_SANDBOX_AUTOSYNC_CID:-}" ]] \
+     && command -v fish >/dev/null 2>&1; then
+    fish -c "${_SANDBOX_AUTOSYNC_PROFILE}-claude-sync push ${_SANDBOX_AUTOSYNC_CID}" \
+      || echo "launcher: auto config-sync push failed — run '${_SANDBOX_AUTOSYNC_PROFILE}-claude-sync push' to retry." >&2
+  fi
+  # 2) Power down the detached VM (opt-in) so it stops pinning RAM. PID 1 traps
+  # SIGTERM for a graceful shutdown; `container stop` is a no-op if already stopped.
+  if [[ "${_SANDBOX_STOP_ON_EXIT:-0}" == 1 && -n "${_SANDBOX_AUTOSYNC_CID:-}" ]] \
+     && command -v container >/dev/null 2>&1; then
+    container stop "${_SANDBOX_AUTOSYNC_CID}" >/dev/null 2>&1 \
+      || echo "launcher: 'container stop ${_SANDBOX_AUTOSYNC_CID}' failed — stop it manually to free RAM." >&2
+  fi
 }
 
 # --- Warn if a reused/started container's BAKED egress allowlist is stale ------
