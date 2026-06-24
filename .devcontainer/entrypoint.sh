@@ -37,8 +37,8 @@ if (( ! has_iface )) || [[ -z "$default_route" ]]; then
 EOF
 fi
 
-# 2) LOCK EGRESS FIRST. Default-deny + proxy-UID-only (+ the ollama host hole),
-#    applied before the proxy (or anything else) can talk to the network. The
+# 2) LOCK EGRESS FIRST. Default-deny + proxy-UID-only, applied before the proxy
+#    (or anything else) can talk to the network. The
 #    owner-match rule references the `proxy` user, which exists from image
 #    build, so this is valid even before squid starts. fail-closed: see
 #    init-firewall.sh.

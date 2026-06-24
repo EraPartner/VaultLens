@@ -11,8 +11,8 @@
 # This is the shared floor. Per-project additions live in each project's
 # .devcontainer/allowlist.extra.txt; `sync.sh` concatenates base + extra into
 # the baked .devcontainer/allowlist.txt. Keep this MINIMAL — anything added here
-# widens egress for all five containers (Brain, Vision, Watchman, git-agent,
-# sandbox). The generic sandbox keeps its dev floor (npm/PyPI) in its OWN
+# widens egress for all six containers (Brain, Vision, Watchman, Napoleon-relay,
+# git-agent, sandbox). The generic sandbox keeps its dev floor (npm/PyPI) in its OWN
 # allowlist.extra.txt, NOT here, so the others stay tight.
 
 # Anthropic / Claude Code — the LLM API + auth/token refresh.

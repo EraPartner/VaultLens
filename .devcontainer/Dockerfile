@@ -1,10 +1,10 @@
 # Brain (VaultLens) sandbox image — devcontainer-FREE (built by `container build`).
 #
-# Self-contained twin of ./Dockerfile. The devcontainer build relied on
-# devcontainer FEATURES (node:1, python:1, anthropics/claude-code:1.0) plus the
-# local ./features/agent-clis (qmd). Compose has no feature
-# system, so this file installs all of them itself. Everything else (PDF tooling,
-# hardening, egress proxy, baked scripts) is identical to Dockerfile.
+# Self-contained image (no separate root Dockerfile). The former devcontainer-CLI
+# build relied on devcontainer FEATURES (node:1, python:1, anthropics/claude-code:1.0)
+# plus the local ./features/agent-clis (qmd). apple/container has no feature
+# system, so this file installs all of them itself. PDF tooling, hardening, the
+# egress proxy, and the baked scripts are unchanged from that build.
 
 FROM debian:bookworm-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb
 

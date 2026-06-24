@@ -7,8 +7,8 @@
 # WHY: stage_claude_config(), the Keychain credential block, and the
 # autosync-on-exit trap were copy-pasted near-verbatim across all launchers and
 # had begun to drift. This is the single source; per-launcher specifics
-# (git-agent's push token + ssh signing, the charter)
-# stay in the individual launchers and run alongside these.
+# (git-agent's push token + ssh signing, the charter) stay in the individual
+# launchers and run alongside these.
 #
 # Must stay POSIX-bash-3.2 compatible (macOS /bin/bash). No associative arrays,
 # no ${var^^}. Functions use a shared global EXEC_ENV array by design.
