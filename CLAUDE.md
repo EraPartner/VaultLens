@@ -46,7 +46,7 @@ template. The Chief of Staff launcher injects it automatically into its live con
   `wiki/inventory/<kind>/` tracked intentions (ingest-candidate/question/task/watch/corpus/artifact/item) ·
   `wiki/_templates/` page templates · `wiki/log/` runtime background-agent logs (gitignored) ·
   `wiki/home.md` + `wiki/SETUP.md` reader-facing nav docs
-- `projects/<slug>/` one folder per project · `project.md` metadata · `notes/` scratch · `queries/` durable Q&A
+- `projects/<slug>/` one folder per project · `project.md` metadata · `notes/` scratch · `queries/` durable Q&A · `AGENDA.md` dormant autonomous-runner agenda (opt-in via its `enabled` frontmatter flag)
 - `tools/wiki.py` CLI dispatcher → focused modules (`wiki_ingest`, `wiki_lint`, `wiki_query`,
   `wiki_projects`, `wiki_index`, `wiki_links`, `wiki_log`, `wiki_inventory`, `wiki_archive`) ·
   `tools/wiki_extra.py` extras · `tools/scripts/` setup helpers · `tools/tests/` tooling test suite ·
@@ -105,13 +105,21 @@ model and the wiki tools, so existing data need not be duplicated.
 ## Projects layer
 
 `projects/` consumes the wiki as a knowledge base. Each subfolder is one project workspace that owns
-its structure. The scaffold (`project new`) creates `project.md`, `CLAUDE.md`, `TODO.md`, and
-`queries/`; `CLAUDE.md` is the AI entrypoint (it imports `project.md`; this root schema loads
+its structure. The scaffold (`project new`) creates `project.md`, `CLAUDE.md`, `TODO.md`, `AGENDA.md`,
+and `queries/`; `CLAUDE.md` is the AI entrypoint (it imports `project.md`; this root schema loads
 automatically via directory walking).
 
+**Autonomous runner:** every project carries a dormant `AGENDA.md` (loose `## Inbox` + groomed
+`## Tasks`). Flip its frontmatter `enabled: true` to opt the project into the nightly `project-runner`
+agent, which grooms loose tasks into a clear structured form, executes the ones that are 100% clear
+and due (writing only inside `projects/<slug>/`, applied-not-committed with a pre-run snapshot for
+undo), and files clarifications for anything ambiguous. Resolve those interactively with
+`/project-clarify`. See `## Scheduled agents` and the runbook below.
+
 **Runbook:** scaffolded structure, the `project.md` page schema, `project new/link/show` usage,
-keeping `project.md` current, and the TODO.md format/aggregators live in
-`.claude/skills/wiki-projects/SKILL.md` — read it before creating or restructuring a project.
+keeping `project.md` current, the TODO.md format/aggregators, and the `AGENDA.md` schema +
+`project agenda` subcommands live in `.claude/skills/wiki-projects/SKILL.md` — read it before
+creating or restructuring a project.
 
 Always-needed facts: `project.md` is the per-project source of truth — `wiki_refs` and `tags`
 in its frontmatter are load-bearing (they scope which wiki pages agents pull into context; add refs
@@ -174,8 +182,11 @@ workspace and needs no sync. Outside the devcontainer this does not apply.
 A host-side **catch-up dispatcher** (`tools/schedule/`) runs the maintenance/thinking agents on a
 ~30-minute launchd tick; each tick is a gate-checker, not an LLM trigger — all LLM work runs in one
 nightly batch (AC-only, defer-until-online) on the Claude CLI. Read-only agents stay read-only:
-outputs are filed as dated reports under `wiki/reports/`. Design rationale and operational detail:
-`tools/schedule/SPEC.md`; install with `tools/schedule/install.sh`.
+outputs are filed as dated reports under `wiki/reports/`. The one **writer** in the nightly batch is
+`project-runner` (runs before `enhance`): for each opted-in project it executes due `AGENDA.md` tasks
+inside `projects/<slug>/` (applied-not-committed; the dispatcher clones the project first, so the
+roll-up's restore command is the undo since `projects/` is gitignored). Design rationale and
+operational detail: `tools/schedule/SPEC.md`; install with `tools/schedule/install.sh`.
 
 ## Canonical operations
 

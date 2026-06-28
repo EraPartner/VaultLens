@@ -100,6 +100,7 @@ AGENT_FILES = {
     "connect": "wiki-connect.md",
     "emerge": "wiki-emerge.md",
     "discover": "wiki-idea-discovery.md",
+    "project-run": "wiki-project-runner.md",
 }
 
 CLI_OPTIONS = {
@@ -128,6 +129,11 @@ AGENT_PERMISSIONS: dict[str, dict] = {
         "writable_dirs": ["wiki"],
     },
     "cos": {"shell": True, "write": False, "writable_dirs": []},
+    # Nightly autonomous project runner. Writes only inside projects/; the
+    # per-slug `project` mount profile (selected host-side by brain-wiki via
+    # BRAIN_WRITE_PATH=projects/<slug>) is the real boundary — this broad
+    # writable_dirs only drives --add-dir.
+    "project-run": {"shell": True, "write": True, "writable_dirs": ["projects"]},
     # Read-only "thinking" agents — search the vault, emit text, never write.
     "challenge": {"shell": True, "write": False, "writable_dirs": []},
     "connect": {"shell": True, "write": False, "writable_dirs": []},
@@ -606,6 +612,13 @@ def build_prompt(
             "Rank 3-5 next-direction candidates from existing vault material "
             "(open questions, ungraduated ideas, orphan and sparse pages)."
         ),
+        "project-run": (
+            f"Run the nightly autonomous pass for project '{project or '(missing — a slug is required)'}'. "
+            f"Read and manage projects/{project}/AGENDA.md per your wiki-project-runner "
+            f"instructions: groom the Inbox, execute the clear+due tasks, file clarifications "
+            f"for anything ambiguous, mark tasks needing a non-allowlisted host as blocked, "
+            f"advance state via the agenda CLI, and print the run report block."
+        ),
     }
 
     base = prompts.get(agent, "Analyze and report.")
@@ -947,6 +960,19 @@ def main(argv=None) -> int:
         )
         parser.print_help()
         return 1
+
+    if args.agent == "project-run":
+        if not args.project:
+            print("Error: project-run requires --project <slug>.")
+            parser.print_help()
+            return 1
+        agenda_md = ROOT / "projects" / args.project / "AGENDA.md"
+        if not agenda_md.exists():
+            print(
+                f"Error: no AGENDA.md for '{args.project}'. "
+                "Run: python3 tools/wiki.py project agenda scaffold-all"
+            )
+            return 1
 
     if (
         args.agent == "cos"

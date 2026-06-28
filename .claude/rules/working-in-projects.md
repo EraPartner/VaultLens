@@ -35,3 +35,8 @@ for trivial one-line Q&A.
 
 **Write boundary** — a project session writes only inside `projects/<slug>/`; never modify `wiki/`
 or `raw/` (recommend `wiki-enhancer` / `wiki-ingest` follow-ups instead).
+
+**AGENDA.md** is the autonomous-runner agenda — agent-managed task state in `key:: value` form.
+Its mechanical transitions (`last_run`/`next_due`/`status: done`, resolving clarifications) go
+through `python3 tools/wiki.py project agenda …`, not hand edits. Do not put runner tasks in
+`TODO.md` (that is the operator's Obsidian Tasks list, a separate system).

@@ -22,6 +22,7 @@ per-agent tool allowlist. The agents are **orthogonal** — pick by what you hav
 | Two unrelated domains | Bridge them for novel ideas | `wiki-connect` |
 | Recent activity, no named theme | Surface unnamed patterns | `wiki-emerge` |
 | Loose ends, no clear next move | Rank next-direction candidates | `wiki-idea-discovery` (`discover`) |
+| An opted-in project's due AGENDA tasks | Execute them overnight (scheduler-driven) | `wiki-project-runner` (`project-run --project <slug>`) |
 | A question about a `projects/` project | Project-scoped cited answer | Launch any AI CLI from `projects/<slug>/` |
 
 **Reads / writes:** ingest (raw+wiki → wiki) · enhance (raw+wiki → wiki) · quality/verify/contradict/
@@ -51,6 +52,14 @@ python3 tools/agents/wiki-agent.py connect --source "domain A" --page "domain B"
 python3 tools/agents/wiki-agent.py emerge [--source "2 weeks"]
 python3 tools/agents/wiki-agent.py discover
 ```
+
+**Project runner (`project-run`)** is a **writer**, normally driven by the nightly scheduler — one
+invocation per opted-in (`enabled: true`) project with a due `AGENDA.md` task. It grooms the Inbox,
+executes clear+due tasks inside `projects/<slug>/` (applied-not-committed), files clarifications for
+ambiguous ones, and prints a roll-up block. Run it by hand only to test:
+`brain-wiki project-run --project <slug>` (needs the `project` sandbox profile, so launch via
+`brain-wiki`, not bare `wiki-agent.py`). Resolve its clarifications with the `/project-clarify` skill;
+manage agendas with `wiki.py project agenda …` (see `.claude/skills/wiki-projects/SKILL.md`).
 
 **Models:** `sonnet` (default) / `haiku` / `opus` via `--model`. **Effort:** `low` / `medium` /
 `high` (default) / `xhigh` via `--effort` (currently informational — the headless CLI inherits the

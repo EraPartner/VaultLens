@@ -6,16 +6,20 @@ power rule), `install.sh` (installer), `../tests/test_schedule.py` (21 tests).
 Activate with `tools/schedule/install.sh` + the `sudo pmset repeat wake` and
 sudoers commands it prints. This file remains the design rationale.
 
-> **2026-06-02 — backend migrated to the Claude plan; scheduler deactivated.**
+> **2026-06-02 — backend migrated to the Claude plan.**
 > The copilot accounts (`talicaddy`, `Noortjekjzecbkjzcebkjczeh`) are no longer
 > usable. LLM jobs now run on `--cli claude --model sonnet` (the logged-in
 > `claude` CLI = the Claude plan subscription). The two-account failover
 > collapsed to a single identity (`ACCOUNTS = ["claude-plan"]`): a Claude
 > usage-limit error marks it limited and defers the batch (no second account to
-> switch to). The scheduler is currently **deactivated** (LaunchAgent unloaded +
-> `pmset repeat` cancelled) — see "Reactivation" at the bottom of this file.
-> The copilot prose below is kept as historical rationale; where it says
-> "copilot / gpt-5.2 / two accounts," read "claude / sonnet / one identity."
+> switch to). The copilot prose below is kept as historical rationale; where it
+> says "copilot / gpt-5.2 / two accounts," read "claude / sonnet / one identity."
+>
+> **2026-06-20 — reactivated and live.** The LaunchAgent is loaded
+> (`launchctl list | grep com.brain`) and `pmset repeat wake 01:25` is restored;
+> the nightly batch runs (the ledger shows recent `lint`/`index`/`cos-brief`
+> successes). The "Deactivation / reactivation" section at the bottom remains the
+> procedure if it is ever paused again.
 
 ## Lid-closed runs (AC-gated keep-awake)
 
@@ -137,7 +141,11 @@ The dispatcher ticks every ~30 min only to check gates + the ledger. Actual work
    (checked here, **once a night**, not per tick)
 3. **Sundays only:** `contradict` + `emerge` + `discover` (read-only digests run
    before enhance, so they analyse the pre-enhance wiki and claim the budget first)
-4. `enhance --iterations 10` (capped) — **last**, the biggest budget consumer;
+4. `project-runner` — one invocation per opted-in (`enabled: true`) project with a
+   due `AGENDA.md` task (capped `MAX_PROJECTS_PER_NIGHT`). Runs before enhance so the
+   user-facing work claims budget first; writes `projects/<slug>/` (not wiki/),
+   applied-not-committed, with a pre-run snapshot per project for undo
+5. `enhance --iterations 10` (capped) — **last**, the biggest budget consumer;
    soaks up whatever time/quota remains after the digests
 
 All LLM steps: `--cli claude --model sonnet`, deferred if a usage limit is hit
@@ -203,11 +211,24 @@ next eligible tick. Sleep / offline / closed-lid become non-events.
 | discover | `brain-wiki discover` | weekly | online, container, icloud | `wiki/reports/` + notify |
 | verify *(optional)* | `brain-wiki verify --source <changed>` | weekly, on recently-changed source pages | online, container, icloud | report |
 | ingest | `brain-wiki ingest --source <new>` | **nightly**, before enhance, only if `raw/inbox` / `raw/sources` has unprocessed files | online, container, icloud, **AC** | wiki + promote inbox PDF |
+| project-runner | `brain-wiki project-run --project <slug>` (one per due, opted-in project) | **nightly**, after the digests, before enhance | online, container, icloud, **AC** | writes `projects/<slug>/` (applied-not-committed; pre-run snapshot) + roll-up `wiki/reports/` |
 | enhance | `brain-wiki enhance --iterations 10` | **nightly**, last step, after the weekly digests (capped, not `--forever`) | online, container, icloud, **AC** | writes wiki directly |
 
 **Scheduled (in `build_steps`), in run order:** lint, index, ingest, contradict,
-emerge, discover, enhance, cos brief. **Documented but not yet wired into the dispatcher
-(run manually):** links, coverage snapshot, (optional) verify.
+emerge, discover, project-runner, enhance, cos brief. **Documented but not yet wired into the
+dispatcher (run manually):** links, coverage snapshot, (optional) verify.
+
+The `project-runner` builder (`_project_runner_targets`) is pure-python: it reads each
+project's `AGENDA.md` via `tools/agenda.py`, skips dormant (`enabled: false`) and
+review-paused projects, and emits one `project-run --project <slug>` arg-vector per
+enabled project with a clear, due task (capped at `MAX_PROJECTS_PER_NIGHT`). The dispatcher
+clones each project to `~/.brain/project-snapshots/<date>/` before the run (the apply-don't-commit
+undo, since `projects/` is gitignored) and writes one aggregated roll-up. **Egress note:**
+research tasks fetch via in-container `python3` bound by the squid allowlist — a task needing a
+non-allowlisted host is marked `blocked`, not run. **Host note:** `project-run` routing lives in
+the host fish function `~/.config/fish/functions/brain-wiki.fish` (it selects the `project` mount
+profile + `BRAIN_WRITE_PATH=projects/<slug>`); that file is outside the vault repo, so re-apply it
+after a host reset alongside the reactivation steps below.
 **On-demand only — never scheduled** (need human input): `challenge` (a position),
 `connect` (two domains), `search` (a query). `emerge`/`discover` may *suggest*
 running these, but never auto-fire them.

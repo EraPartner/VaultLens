@@ -71,6 +71,19 @@ FAIL_STREAK_ALERT = 3
 # this hygiene runs host-side in the dispatcher that writes the reports.
 REPORT_RETENTION = 14
 
+# The AGENDA.md format + recurrence engine (tools/agenda.py, stdlib-only). Imported
+# so the project-runner builder can decide which projects are enabled-and-due
+# without spending any LLM budget.
+sys.path.insert(0, str(ROOT / "tools"))
+import agenda  # noqa: E402
+
+# Project-runner caps + snapshot store. projects/ is gitignored (apply-don't-commit
+# has no git to revert from), so the dispatcher clones each project BEFORE the runner
+# edits it; the morning roll-up points at the clone as the undo path.
+MAX_PROJECTS_PER_NIGHT = 4
+SNAPSHOT_DIR = STATE_DIR / "project-snapshots"
+SNAPSHOT_RETENTION_DAYS = 14
+
 # Backoff for short rate-limits (seconds): 30m -> 1h -> 2h (capped). Monthly quota
 # uses a flat ~24h re-probe (we don't try to compute the exact reset).
 RATELIMIT_BACKOFF_CAP = 2 * 3600
@@ -324,6 +337,107 @@ def _ingest_targets() -> list[list[str]]:
     return [["ingest", "--source", str(p)] for p in targets[:3]]  # cap per night
 
 
+def _project_runner_targets() -> list[list[str]]:
+    """Opted-in projects with a clear, due AGENDA task — one arg-vector each.
+
+    Pure-python (no LLM): agenda.due_projects reads only the ≤N AGENDA.md files,
+    skips dormant (enabled:false) and malformed ones, and returns slugs with work.
+    Projects whose unreviewed edits have stacked up (is_paused_for_review) are held
+    back until the operator runs `wiki.py project agenda ack <slug>`. Capped so a
+    night with many due projects cannot blow the shared LLM budget; deferred
+    projects stay due and are caught up on the next eligible night.
+    """
+    today = now_local().date()
+    out: list[list[str]] = []
+    for slug in agenda.due_projects(ROOT / "projects", today):
+        if agenda.is_paused_for_review(slug):
+            continue
+        out.append(["project-run", "--project", slug])
+    return out[:MAX_PROJECTS_PER_NIGHT]
+
+
+def _runner_slug(args: list[str]) -> str | None:
+    """Extract the project slug from a ["project-run", "--project", <slug>] vector."""
+    if "--project" in args:
+        i = args.index("--project")
+        if i + 1 < len(args):
+            return args[i + 1]
+    return None
+
+
+def _parse_executed(out: str) -> int:
+    """Read the runner's `Executed: <n>` line from its stdout report block."""
+    m = re.search(r"^Executed:\s*(\d+)", out or "", re.MULTILINE)
+    return int(m.group(1)) if m else 0
+
+
+def _snapshot_project(
+    slug: str, now: datetime, log: Callable[[str], None]
+) -> Path | None:
+    """Clone projects/<slug>/ before the runner edits it (apply-don't-commit undo).
+
+    Uses an APFS clonefile (`cp -c`) so it is instant and near-zero space; falls
+    back to a plain recursive copy if clonefile is unavailable (e.g. across volumes).
+    Idempotent per date — the first snapshot of the night wins, so it captures the
+    pre-run state even if the step retries."""
+    src = ROOT / "projects" / slug
+    if not src.is_dir():
+        return None
+    dst = SNAPSHOT_DIR / f"{now:%Y-%m-%d}" / slug
+    if dst.exists():
+        return dst
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    for cmd in (
+        ["cp", "-c", "-R", str(src), str(dst)],
+        ["cp", "-R", str(src), str(dst)],
+    ):
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, timeout=300)
+            return dst
+        except Exception:  # noqa: BLE001 - try the plain-copy fallback, then give up
+            continue
+    log(f"snapshot {slug} failed; no pre-run clone for tonight's edits")
+    return None
+
+
+def _prune_snapshots(retention_days: int = SNAPSHOT_RETENTION_DAYS) -> int:
+    """Drop project-snapshot date-dirs older than the retention window."""
+    if not SNAPSHOT_DIR.is_dir():
+        return 0
+    cutoff = now_local().date() - timedelta(days=retention_days)
+    removed = 0
+    for date_dir in SNAPSHOT_DIR.iterdir():
+        try:
+            d = datetime.strptime(date_dir.name, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if d < cutoff:
+            shutil.rmtree(date_dir, ignore_errors=True)
+            removed += 1
+    return removed
+
+
+def _project_runner_header(slugs: list[str], now: datetime) -> str:
+    """Host-built preamble for the roll-up: the per-project restore command for the
+    apply-don't-commit snapshots (projects/ is gitignored, so this is the undo)."""
+    lines = [
+        f"# Project runner roll-up — {now:%Y-%m-%d}",
+        "",
+        "Edits were applied to the working tree (not committed). To undo a project,",
+        "restore it from tonight's pre-run snapshot:",
+        "",
+    ]
+    for slug in slugs:
+        snap = SNAPSHOT_DIR / f"{now:%Y-%m-%d}" / slug
+        lines.append(f"- `{slug}`: `cp -c -R {snap} {ROOT / 'projects' / slug}`")
+    lines.append("")
+    lines.append(
+        "Once reviewed, resume a project's nightly runs with "
+        "`python3 tools/wiki.py project agenda ack <slug>`."
+    )
+    return "\n".join(lines)
+
+
 def build_steps() -> list[Step]:
     """Ordered step list. The nightly batch is just the nightly-window steps run
     in this order; cos-brief is the lone morning step."""
@@ -389,7 +503,22 @@ def build_steps() -> list[Step]:
             timeout=2400,
             report=True,
         ),
-        # 4. enhance LAST, capped at 10 iterations/night (the biggest budget
+        # 4. project runner: execute opted-in projects' due AGENDA tasks. Runs
+        #    BEFORE enhance so this user-facing work claims the shared budget first
+        #    (a usage limit then defers only enhance). Writes projects/ (not wiki/),
+        #    so it never conflicts with enhance; report=True drives the roll-up.
+        Step(
+            "project-runner",
+            "llm",
+            "daily",
+            NIGHTLY_WINDOW,
+            ["ac", "online", "container", "icloud"],
+            _project_runner_targets,
+            effort="low",
+            timeout=2400,
+            report=True,
+        ),
+        # 5. enhance LAST, capped at 10 iterations/night (the biggest budget
         #    consumer); soaks up whatever time/quota is left after the digests.
         Step(
             "enhance",
@@ -915,6 +1044,8 @@ def _run_steps(
 
         all_ok = True
         outcome = "ok"
+        report_chunks: list[str] = []  # collected across invocations, written once
+        ran_slugs: list[str] = []  # project-runner: projects actually executed
         for args in invocations:
             log(f"run {step.name}: {' '.join(args)}")
             if step.kind == "host":
@@ -931,15 +1062,23 @@ def _run_steps(
                         log(f"  {step.name} reported issues (rc={rc})")
                         notify("Brain schedule", f"{step.name}: issues found (rc={rc})")
                     if step.report:
-                        write_report(step.name, out, now)
+                        report_chunks.append(out)
             else:  # llm
+                # apply-don't-commit undo: clone the project before the runner edits
+                # it (projects/ is gitignored, so this snapshot is the only revert).
+                slug = _runner_slug(args) if step.name == "project-runner" else None
+                if slug:
+                    _snapshot_project(slug, now, log)
                 status, who, out = run_llm(
                     args, step.effort, step.timeout, ledger, now, log
                 )
                 if status == "ok":
+                    if slug:
+                        # Only edit-producing passes advance the stacking guard.
+                        agenda.record_run(slug, _parse_executed(out), iso(now))
+                        ran_slugs.append(slug)
                     if step.report:
-                        f = write_report(step.name, out, now)
-                        notify("Brain schedule", f"{step.name} ready: {f.name}")
+                        report_chunks.append(out)
                 elif status == "deferred":
                     all_ok = False
                     outcome = "deferred"
@@ -951,6 +1090,17 @@ def _run_steps(
                     all_ok = False
                     outcome = "transient"
                     log(f"  {step.name} transient failure; will retry next tick")
+
+        # Write the step's report ONCE, after all invocations, so a multi-invocation
+        # step (project-runner) yields a single aggregated roll-up rather than each
+        # invocation overwriting the last. Single-invocation report steps are
+        # unaffected (one chunk -> identical output).
+        if step.report and report_chunks:
+            body = "\n\n---\n\n".join(c.strip() for c in report_chunks)
+            if step.name == "project-runner":
+                body = _project_runner_header(ran_slugs, now) + "\n\n" + body
+            f = write_report(step.name, body, now)
+            notify("Brain schedule", f"{step.name} ready: {f.name}")
 
         if all_ok:
             _record(ledger, step.name, now, "ok")
@@ -1054,6 +1204,12 @@ def cmd_run(dry_run: bool = False) -> int:
                     log(
                         f"pruned {len(pruned)} old report(s) (keep latest "
                         f"{REPORT_RETENTION}/type)"
+                    )
+                snaps = _prune_snapshots()
+                if snaps:
+                    log(
+                        f"pruned {snaps} old project-snapshot day(s) (keep "
+                        f"{SNAPSHOT_RETENTION_DAYS}d)"
                     )
         finally:
             if engaged:

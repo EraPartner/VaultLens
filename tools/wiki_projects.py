@@ -14,6 +14,8 @@ import datetime as dt
 import json
 import subprocess
 
+import agenda
+
 from wiki import (
     PROJECTS_DIR,
     ROOT,
@@ -215,6 +217,7 @@ def _project_new(slug: str) -> int:
     (project_dir / "TODO.md").write_text(
         TODO_TEMPLATE.format(slug=cleaned), encoding="utf-8"
     )
+    agenda.scaffold(project_dir / "AGENDA.md", cleaned, dt.date.today())
     _rebuild_projects_todo()
     print(f"Created project '{cleaned}' at {project_dir.relative_to(ROOT)}")
     print("  - project.md")
@@ -223,6 +226,9 @@ def _project_new(slug: str) -> int:
     )
     print(
         "  - TODO.md        (per-project todo; embedded into projects/TODO.md, P1 items surface in projects/TODO-widget.md)"
+    )
+    print(
+        "  - AGENDA.md      (dormant autonomous-runner agenda; set enabled: true + dump tasks to opt in)"
     )
     print(
         "  - queries/       (default Q&A artifact dir; redefine in ## Rules if you want)"
@@ -332,11 +338,174 @@ def _project_link(slug: str, ref: str) -> int:
     return 0
 
 
+def _agenda_path(slug: str):
+    return PROJECTS_DIR / slug / "AGENDA.md"
+
+
+def _all_agenda_slugs() -> list[str]:
+    return [p.parent.name for p in sorted(PROJECTS_DIR.glob("*/AGENDA.md"))]
+
+
+def _project_agenda(
+    sub: str | None, proj: str | None, item_id: str | None, as_json: bool
+) -> int:
+    """Handle `project agenda <sub> [<slug>] [<id>]`, delegating to tools/agenda.py."""
+    today = dt.date.today()
+
+    if sub == "scaffold-all":
+        created = agenda.scaffold_all(PROJECTS_DIR, today)
+        if created:
+            print(
+                f"Scaffolded dormant AGENDA.md in {len(created)} project(s): "
+                + ", ".join(created)
+            )
+        else:
+            print("All projects already have an AGENDA.md.")
+        return 0
+
+    if sub in ("enable", "disable"):
+        if not proj:
+            print(f"Error: project agenda {sub} <slug> requires a slug")
+            return 1
+        path = _agenda_path(proj)
+        if not path.exists():
+            print(f"No AGENDA.md for '{proj}' — run: project agenda scaffold-all")
+            return 1
+        text = path.read_text(encoding="utf-8")
+        text = _set_frontmatter_field(
+            text, "enabled", "true" if sub == "enable" else "false"
+        )
+        text = _set_frontmatter_field(text, "updated", today.isoformat())
+        path.write_text(text, encoding="utf-8")
+        state = "enabled (nightly runs ON)" if sub == "enable" else "disabled (dormant)"
+        print(f"Project '{proj}' agenda {state}.")
+        return 0
+
+    if sub == "due":
+        rows = []
+        for slug in agenda.due_projects(PROJECTS_DIR, today):
+            _, tasks = agenda.parse_agenda(_agenda_path(slug))
+            for t in agenda.due_tasks(tasks, today):
+                rows.append(
+                    {
+                        "slug": slug,
+                        "id": t.id,
+                        "title": t.title,
+                        "schedule": t.schedule,
+                        "next_due": t.next_due.isoformat() if t.next_due else None,
+                    }
+                )
+        if as_json:
+            print(json.dumps(rows, indent=2))
+        elif not rows:
+            print("No due tasks in any enabled project.")
+        else:
+            for r in rows:
+                print(f"  {r['slug']:<24} [{r['id']}] {r['title']}  ({r['schedule']})")
+        return 0
+
+    if sub == "clarifications":
+        rows = []
+        for slug in _all_agenda_slugs():
+            try:
+                _, tasks = agenda.parse_agenda(_agenda_path(slug))
+            except OSError:
+                continue
+            for t in tasks:
+                if t.status == "needs-clarification":
+                    rows.append(
+                        {
+                            "slug": slug,
+                            "id": t.id,
+                            "title": t.title,
+                            "questions": t.questions,
+                        }
+                    )
+        if as_json:
+            print(json.dumps(rows, indent=2))
+        elif not rows:
+            print("No pending clarifications.")
+        else:
+            for r in rows:
+                print(f"  {r['slug']:<24} [{r['id']}] {r['title']}")
+                for q in r["questions"]:
+                    print(f"      - {q}")
+        return 0
+
+    if sub == "status":
+        slugs = [proj] if proj else _all_agenda_slugs()
+        for slug in slugs:
+            path = _agenda_path(slug)
+            if not path.exists():
+                print(f"  {slug:<24} (no AGENDA.md)")
+                continue
+            fm, tasks = agenda.parse_agenda(path)
+            counts: dict[str, int] = {}
+            for t in tasks:
+                counts[t.status] = counts.get(t.status, 0) + 1
+            flag = "ON " if agenda.is_enabled(fm) else "off"
+            paused = " PAUSED(review)" if agenda.is_paused_for_review(slug) else ""
+            n_due = len(agenda.due_tasks(tasks, today))
+            summary = (
+                ", ".join(f"{k}:{v}" for k, v in sorted(counts.items())) or "no tasks"
+            )
+            print(f"  {slug:<24} [{flag}] due:{n_due}  {summary}{paused}")
+        return 0
+
+    if sub == "lint":
+        slugs = [proj] if proj else _all_agenda_slugs()
+        any_bad = False
+        for slug in slugs:
+            problems = agenda.lint(_agenda_path(slug))
+            if problems:
+                any_bad = True
+                print(f"  {slug}:")
+                for p in problems:
+                    print(f"      - {p}")
+        if not any_bad:
+            print("All agendas lint clean.")
+        return 1 if any_bad else 0
+
+    if sub in ("complete", "resolve"):
+        if not proj or not item_id:
+            print(f"Error: project agenda {sub} <slug> <task-id> requires both")
+            return 1
+        fn = agenda.complete if sub == "complete" else agenda.resolve
+        ok = fn(_agenda_path(proj), item_id, today)
+        if not ok:
+            print(f"Task '{item_id}' not found in project '{proj}'")
+            return 1
+        print(f"{sub.title()}d [{item_id}] in project '{proj}'.")
+        return 0
+
+    if sub == "new-id":
+        if not proj:
+            print("Error: project agenda new-id <slug> requires a slug")
+            return 1
+        print(agenda.new_id(_agenda_path(proj)))
+        return 0
+
+    if sub == "ack":
+        if not proj:
+            print("Error: project agenda ack <slug> requires a slug")
+            return 1
+        agenda.ack(proj)
+        print(f"Acked '{proj}' — stacking counter reset; nightly runs resume.")
+        return 0
+
+    print(
+        "Unknown agenda subcommand. Use one of: scaffold-all, enable, disable, status, "
+        "lint, due, clarifications, complete, resolve, new-id, ack"
+    )
+    return 1
+
+
 def cmd_project(
     action: str,
     slug: str | None,
     ref: str | None,
     as_json: bool,
+    extra: str | None = None,
 ) -> int:
     if action == "list":
         return _project_list(as_json)
@@ -355,5 +524,10 @@ def cmd_project(
             print("Error: project link <slug> <wiki-ref> requires both arguments")
             return 1
         return _project_link(slug, ref)
+    if action == "agenda":
+        # `project agenda <sub> [<slug>] [<id>]`: argparse packs the agenda
+        # subcommand into `slug`, the target project into `ref`, the task id
+        # into `extra`.
+        return _project_agenda(sub=slug, proj=ref, item_id=extra, as_json=as_json)
     print(f"Unknown project action: {action}")
     return 1

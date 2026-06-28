@@ -131,7 +131,9 @@ def _coerce_str_list(value: str | list[str] | None) -> list[str]:
     if not value:
         return []
     text = str(value).strip().strip("[]")
-    return [item.strip().strip('"').strip("'") for item in text.split(",") if item.strip()]
+    return [
+        item.strip().strip('"').strip("'") for item in text.split(",") if item.strip()
+    ]
 
 
 def slug_to_title(slug: str) -> str:
@@ -369,7 +371,7 @@ def _set_frontmatter_field(text: str, key: str, value: str | list[str]) -> str:
             new_lines.append(line)
     if not found:
         new_lines.append(f"{key}: {rendered}")
-    return "---\n" + "\n".join(new_lines) + f"\n---\n{text[end + 5:]}"
+    return "---\n" + "\n".join(new_lines) + f"\n---\n{text[end + 5 :]}"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -473,27 +475,32 @@ def build_parser() -> argparse.ArgumentParser:
 
     project_parser = sub.add_parser(
         "project",
-        help="Manage application projects that consume the wiki KB (list/new/show/link)",
+        help="Manage application projects that consume the wiki KB (list/new/show/link/agenda)",
     )
     project_parser.add_argument(
         "action",
-        choices=["list", "new", "show", "link"],
+        choices=["list", "new", "show", "link", "agenda"],
         help="Project subaction",
     )
     project_parser.add_argument(
         "slug",
         nargs="?",
-        help="Project slug (required for new/show/link)",
+        help="Project slug (required for new/show/link); for agenda, the agenda subcommand",
     )
     project_parser.add_argument(
         "ref",
         nargs="?",
-        help="Wiki page reference (required for link, e.g. concepts/some-page)",
+        help="Wiki ref for link (e.g. concepts/some-page); for agenda, the target project slug",
+    )
+    project_parser.add_argument(
+        "extra",
+        nargs="?",
+        help="For agenda complete/resolve: the task id (e.g. T1)",
     )
     project_parser.add_argument(
         "--json",
         action="store_true",
-        help="Emit machine-readable JSON for list/show",
+        help="Emit machine-readable JSON for list/show/agenda due/clarifications",
     )
 
     index_parser = sub.add_parser(
@@ -517,7 +524,9 @@ def build_parser() -> argparse.ArgumentParser:
         "ref", nargs="?", help="Page reference (e.g. concepts/foo) for page/restore"
     )
     archive_parser.add_argument(
-        "--reason", default="", help="Why the page is being archived (recorded in registry)"
+        "--reason",
+        default="",
+        help="Why the page is being archived (recorded in registry)",
     )
     archive_parser.add_argument(
         "--json", action="store_true", help="Emit machine-readable JSON for list"
@@ -539,12 +548,16 @@ def build_parser() -> argparse.ArgumentParser:
     inventory_parser.add_argument("slug", nargs="?", help="Slug (required for new)")
     inventory_parser.add_argument("--title", default="", help="Record title")
     inventory_parser.add_argument(
-        "--status", default="", help="Status (filter for list; default proposed for new)"
+        "--status",
+        default="",
+        help="Status (filter for list; default proposed for new)",
     )
     inventory_parser.add_argument(
         "--priority", default="", help="Priority p0-p4 (default p2 for new)"
     )
-    inventory_parser.add_argument("--summary", default="", help="One-line summary for new")
+    inventory_parser.add_argument(
+        "--summary", default="", help="One-line summary for new"
+    )
     inventory_parser.add_argument(
         "--json", action="store_true", help="Emit machine-readable JSON for list/show"
     )
@@ -640,6 +653,7 @@ def main(argv: list[str] | None = None) -> int:
             slug=args.slug,
             ref=args.ref,
             as_json=args.json,
+            extra=args.extra,
         )
     if args.command == "index":
         from wiki_index import cmd_index
