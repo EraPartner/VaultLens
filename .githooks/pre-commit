@@ -158,13 +158,17 @@ fi
 # --- 6. wiki health: lint + _index.md freshness -------------------------------
 # Gated on touching tracked wiki pages/templates or the wiki tooling, so
 # unrelated commits are not held hostage by personal-vault state.
-wiki_touched=0
+wiki_touched=0          # wiki pages OR wiki tooling — gates the lint check
+wiki_pages_touched=0    # tracked wiki pages/templates only — gates the index nudge
 for f in "${staged[@]}"; do
-  case "$f" in wiki/*|tools/wiki*.py) wiki_touched=1;; esac
+  case "$f" in
+    wiki/*)         wiki_touched=1; wiki_pages_touched=1;;
+    tools/wiki*.py) wiki_touched=1;;
+  esac
 done
 
-if [ "$wiki_touched" -eq 1 ] && [ "$have_py" -eq 1 ]; then
-  if [ -z "${SKIP_WIKI_LINT:-}" ]; then
+if [ "$have_py" -eq 1 ]; then
+  if [ "$wiki_touched" -eq 1 ] && [ -z "${SKIP_WIKI_LINT:-}" ]; then
     if ! lout="$(python3 tools/wiki.py lint 2>&1)"; then
       err "wiki.py lint reported errors:"
       printf '%s\n' "$lout" | grep -iE 'error|broken|missing|malform|invalid' \
@@ -172,11 +176,16 @@ if [ "$wiki_touched" -eq 1 ] && [ "$have_py" -eq 1 ]; then
       info "Inspect: python3 tools/wiki.py lint   (try --fix; SKIP_WIKI_LINT=1 to bypass)"
     fi
   fi
-  if [ -z "${SKIP_WIKI_INDEX:-}" ]; then
+  # The _index.md mirrors are generated AND gitignored — they never enter a commit,
+  # so a stale local mirror is a housekeeping nudge, not a commit defect. WARN (never
+  # block), and only when the commit actually stages tracked wiki pages/templates
+  # (a tooling-only commit cannot change the page set that the mirror reflects, and
+  # gitignored-content drift is invisible to git anyway). Blocking here used to hold
+  # unrelated commits hostage to local vault state.
+  if [ "$wiki_pages_touched" -eq 1 ] && [ -z "${SKIP_WIKI_INDEX:-}" ]; then
     if ! python3 tools/wiki.py index >/dev/null 2>&1; then
-      err "_index.md mirror is stale (generated file out of date)."
-      info "Regenerate + stage: python3 tools/wiki.py index --rebuild && git add wiki/_index.md wiki/*/_index.md"
-      info "Note: local gitignored pages can also trip this; SKIP_WIKI_INDEX=1 to bypass."
+      note "_index.md mirror is stale (generated, gitignored — not blocking)."
+      info "Refresh local mirror when convenient: python3 tools/wiki.py index --rebuild"
     fi
   fi
 fi

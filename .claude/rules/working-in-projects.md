@@ -40,3 +40,16 @@ or `raw/` (recommend `wiki-enhancer` / `wiki-ingest` follow-ups instead).
 Its mechanical transitions (`last_run`/`next_due`/`status: done`, resolving clarifications) go
 through `python3 tools/wiki.py project agenda …`, not hand edits. Do not put runner tasks in
 `TODO.md` (that is the operator's Obsidian Tasks list, a separate system).
+
+**Resolving runner clarifications (do this from a plain request — no command name needed).** When the
+operator asks to "answer / sort out / clear the runner's questions" for a project (or just asks about
+what the runner flagged), this is the flow — you do not need them to invoke any skill:
+1. `python3 tools/wiki.py project agenda clarifications [--json]` — list the `needs-clarification`
+   tasks and their open questions (scope to the named project).
+2. Ask the operator the open questions (one task at a time; batch a task's questions together).
+3. Edit the task's `### [id]` block in `AGENDA.md` so it is now executable: rewrite `acceptance::`
+   into a single objective line, fix `schedule::`/`output::`/`notes::` as answered. Do **not**
+   hand-edit `status`/`next_due`/the `questions` block or the `## Clarifications` entry.
+4. `python3 tools/wiki.py project agenda resolve <slug> <id>` — flips it to `clear`, sets `next_due`,
+   removes the questions + clarification entry, logs it. The next nightly run then executes it.
+The `/project-clarify` skill is just a shortcut for this same flow; the operator never has to name it.

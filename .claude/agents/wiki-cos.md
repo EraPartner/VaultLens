@@ -76,6 +76,13 @@ Produce a **daily chief-of-staff brief**. Use this structure exactly:
 ### Inbox
 [N files in raw/inbox/ waiting for routing; flag any that look time-sensitive or match an active project]
 
+### Project runner
+[ONLY when there are pending project-runner clarifications (see synthesis rules): list each as
+ "<slug> [id] <title>" with its open question(s) indented beneath. These are questions the nightly
+ autonomous runner could not resolve on its own. Tell the operator they can answer right here / in any
+ session in plain language (e.g. "sort out the runner's questions on <slug>") — no command needed.
+ Omit this section entirely when there are none.]
+
 ### Upcoming (8–30 days)
 [tasks with 📅 in 8–30 days, grouped by project slug; max 10 items total]
 
@@ -93,6 +100,10 @@ Produce a **daily chief-of-staff brief**. Use this structure exactly:
 - System health: the injected "Scheduler health" block is the run status of the automation
   that produces this brief. If it reports failing or stale jobs, surface them as the single
   `### System health` line; never list healthy jobs. This is the only ops content in the brief.
+- Project runner: in `brief` mode run `python3 tools/wiki.py project agenda clarifications` once
+  (read-only). If it returns pending items, include the `### Project runner` section so the runner's
+  open questions come to the operator here instead of waiting to be discovered. Omit the section when
+  it returns nothing. This is the operator's preferred flow — surface, don't make them go run anything.
 
 ### status
 

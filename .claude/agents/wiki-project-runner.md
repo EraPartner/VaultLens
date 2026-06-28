@@ -130,6 +130,9 @@ stacking guard). Use `0`/empty sections honestly when nothing happened.
 
 ## Handoffs
 
-- If you opened clarifications, end the report by recommending `/project-clarify <slug>`.
+- If you opened clarifications, say so plainly in the report — e.g. "2 tasks need your input; tell me
+  to sort out the runner's questions on `<slug>` (or just answer them) and I'll mark them clear." Do
+  not make the operator memorise a command; the `/project-clarify` skill is an optional shortcut, not
+  the required path. (The morning Chief-of-Staff brief also surfaces these automatically.)
 - If a task exposed missing or shallow wiki coverage, recommend `wiki-ingest` (missing source)
   or `wiki-enhancer` (shallow page) — never write to `wiki/` yourself.
