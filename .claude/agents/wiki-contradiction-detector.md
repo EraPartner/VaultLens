@@ -44,8 +44,6 @@ Use only the wiki's **read-only helper set** for shell — `READ_ONLY_SHELL_COMM
 4. Cross-reference source pages with conflicting conclusions
 5. Think about whether conflicts are genuine or can be reconciled
 
-You may run the helper commands above via the Bash tool. Do NOT modify wiki files — bash is granted only to query the wiki, not to edit it.
-
 ## What constitutes a contradiction
 
 - Direct logical opposition (A is true, A is false)
@@ -70,6 +68,10 @@ You may run the helper commands above via the Bash tool. Do NOT modify wiki file
 - Check dates - newer isn't necessarily correct
 - Look for explicit "superseded" markers
 - Verify the conflict isn't about different things
+
+## Citation discipline
+
+Every flagged contradiction names the specific pages and locates the conflicting claims, with inline wikilinks (`[[...]]`). Any reconciliation reasoning that goes beyond what the pages actually state is marked `[outside wiki — agent inference]`.
 
 ## Output format
 
