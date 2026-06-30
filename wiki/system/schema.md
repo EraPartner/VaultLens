@@ -3,7 +3,7 @@ title: Schema
 type: page
 status: active
 created: 2026-04-11
-updated: 2026-06-01
+updated: 2026-06-29
 summary: Operating conventions and schema for this wiki.
 ---
 
@@ -60,6 +60,25 @@ ingested_on: YYYY-MM-DD
 - Prefer explicit path-based links when ambiguous
 - Source citations in `## Sources` section
 - Template examples in `wiki/_templates/` are placeholders - copy and customize
+
+### Page Content Standard
+
+Wiki pages are a **knowledge map / dense reference**, not a study guide or learning tool:
+
+- **At most one worked example per page.** One concrete example (numbers, trace, code, or proof sketch)
+  illustrates the mechanism; cover further variation in prose under `How It Works` / `Variants`, not as
+  a second example. One is enough.
+- Favour encyclopedic density (definition, properties, mechanism, nuances, cross-links) over repeated
+  illustration.
+
+Going forward, the `wiki-enhancer` agent caps any page it creates or rewrites at one worked example and
+never adds a second. Pages that predate this standard and still carry surplus examples are listed in
+`reports/worked-example-backlog-2026-06-29.md` — a **manual cleanup checklist** to work through
+deliberately. Nothing trims them automatically (the enhancer rarely revisits already-dense pages and is
+told to preserve, not cut), and there is no bulk rewrite.
+
+See [[system/enhancement-strategies]] ([Enhancement Strategies](enhancement-strategies.md)) for the companion standard on *which* pages get created in the
+first place (the source-first vs topic-first axis).
 
 ### Additional Types
 

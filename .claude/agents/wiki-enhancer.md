@@ -261,8 +261,11 @@ API subtleties, portability concerns, and things that bite in practice.
 
 ## Worked Examples
 
-At least one concrete, end-to-end worked example with numbers, code, or a trace.
-Multiple examples if the concept has distinct operating modes.
+At most one concrete, end-to-end worked example with numbers, code, or a trace (for math pages, a
+computed example or proof sketch). One is enough; never add a second. The wiki is a knowledge map /
+dense reference, not a study guide: a single example illustrates the mechanism, then stop. Cover any
+additional variation (distinct operating modes, edge cases) in prose under `How It Works` or `Variants`
+rather than as extra examples.
 
 ## Use Cases
 
@@ -353,7 +356,7 @@ Grep broadly first, then narrow to chapter headings and proposition/theorem mark
 A page is "done" when:
 
 - Every section in **Canonical Structure** is present and substantive (not one-liners).
-- At least one worked example with concrete values, traces, code, or a proof sketch exists.
+- At most one worked example (one is enough; never more) with concrete values, traces, code, or a proof sketch.
 - `Key Properties` has ≥ 6 bullets with real content.
 - `Implementation Nuances` (or equivalent) has ≥ 8 bullets from actual source material, not generic advice.
 - All wikilinks resolve (lint is clean).

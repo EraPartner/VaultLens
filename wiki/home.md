@@ -24,6 +24,7 @@ This wiki implements the [LLM Wiki pattern](https://gist.github.com/karpathy/442
 - [[log|Activity Log]] - Chronological history
 - [[entities/user-background|Operator Profile]] ([Operator Profile](entities/user-background.md)) - Who this Brain serves; read first to calibrate tone and priorities
 - [[system/schema|Schema]] ([Schema](system/schema.md)) - Operating conventions
+- [[system/enhancement-strategies|Enhancement Strategies]] ([Enhancement Strategies](system/enhancement-strategies.md)) - Source-first vs topic-first coverage axis
 - [[SETUP|Setup Guide]] ([Setup Guide](SETUP.md)) - Installation and configuration
 
 ## Dashboard
