@@ -28,7 +28,7 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
@@ -909,6 +909,221 @@ def notify(title: str, msg: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Chief-of-Staff proposals → per-project inboxes (the CoS→AGENDA routing seam)
+# --------------------------------------------------------------------------- #
+#
+# The CoS is read-only by design (SPEC decision 4): it emits a machine-readable
+# `## Proposals` block in its brief but writes nothing. The dispatcher — which
+# already captures the brief's stdout into a report — also parses that block and
+# appends each proposal to the `## Inbox` of the PROJECT it names. The existing
+# project-runner then grooms + (when that project is enabled) actions them, so
+# there is ONE executor per project, not a second write-capable agent. Keeps the
+# orthogonal split: CoS decides what should happen (and where), the dispatcher
+# wires, each project's runner acts within its own scope. A proposal whose target
+# is not a real project is left advisory (logged + still in the brief/report), not
+# force-filed somewhere — so there is no catch-all "assistant" project to maintain.
+
+
+# The shared routed-work-item grammar for BOTH CoS proposals and inter-role
+# handoffs: `<keyword>:: <target-project> | <imperative task> | <why-or-ref>`.
+def _routed_re(keyword: str):
+    return re.compile(
+        rf"^\s*{keyword}::\s*(?P<target>[^|]+?)\s*\|\s*(?P<task>[^|]+?)\s*\|\s*(?P<why>.+?)\s*$"
+    )
+
+
+_PROPOSAL_RE = _routed_re("proposal")  # CoS → project
+_HANDOFF_RE = _routed_re("handoff")  # any producer role → another desk
+
+
+def _parse_routed(text: str, pattern) -> list[dict]:
+    """Extract routed work-item lines matching `pattern`. Pure / side-effect-free
+    (tested in test_schedule.py). Malformed lines (wrong pipe count, empty
+    target/task) are skipped, so a sloppy producer degrades to "nothing routed"
+    rather than corrupting an inbox."""
+    out: list[dict] = []
+    for line in (text or "").splitlines():
+        m = pattern.match(line)
+        if not m:
+            continue
+        target, task, why = (
+            m.group("target").strip(),
+            m.group("task").strip(),
+            m.group("why").strip(),
+        )
+        if task and target:
+            out.append({"target": target, "task": task, "why": why})
+    return out
+
+
+def parse_cos_proposals(text: str) -> list[dict]:
+    """CoS `proposal:: <project> | <task> | <why>` lines from a brief."""
+    return _parse_routed(text, _PROPOSAL_RE)
+
+
+def parse_handoffs(text: str) -> list[dict]:
+    """Inter-role `handoff:: <to-project> | <ask> | <deliverable-ref>` lines from a
+    producer agent's output."""
+    return _parse_routed(text, _HANDOFF_RE)
+
+
+def resolve_proposal_dest(target: str, projects_dir: Path | None = None) -> Path | None:
+    """The AGENDA.md of the project a proposal names, or None if it names no real
+    project. Routing the work to the owning project is safe because that project's
+    runner is scoped to its own dir; an empty / unknown / typo target resolves to
+    None and the proposal is left advisory (never force-filed). Pure (only a
+    `.exists()` check) so it is testable against a temp projects dir."""
+    base = Path(projects_dir) if projects_dir is not None else (ROOT / "projects")
+    slug = (target or "").strip()
+    if not slug:
+        return None
+    cand = base / slug / "AGENDA.md"
+    return cand if cand.exists() else None
+
+
+def format_work_item(source: str, item: dict) -> str:
+    """One inbox bullet body for a routed work-item. Provenance `[from:<source>]`
+    (no date) so an identical item re-routed on a later day dedupes against the
+    existing line, and so every hop is visible/auditable in the receiving inbox."""
+    why = f" — {item['why']}" if item.get("why") else ""
+    return f"[from:{source}] {item['task']}{why}"
+
+
+MAX_ROUTED_PER_TICK = (
+    12  # backstop: bound how many items routing can append per dispatcher run
+)
+
+
+@dataclass
+class RoutingGuard:
+    """Anti-loop / anti-runaway guard for the handoff bus. One instance is shared by
+    every routing call within a SINGLE dispatcher tick, so its cap and cycle-blocks span
+    all producers that route in that tick — within the nightly batch that means every
+    project-runner handoff across projects; a cos-brief that routes in the same tick
+    shares it too, but a cos-brief running in a separate morning tick gets its own guard.
+    Blocks self-handoffs, direct reciprocal edges (A→B when B→A was already routed this
+    tick), and a hard per-tick cap. Longer cycles are bounded by the cap plus the facts
+    that desks default `enabled: false` and the operator reviews the brief daily; precise
+    multi-hop cycle detection (hop propagation through agents) is deferred.
+
+    `record` counts routing *decisions*, not post-dedup writes: an item that
+    `append_inbox_items` later dedups to a no-op still consumes cap budget and records its
+    edge. Deliberate — the cap then also bounds a producer that spams duplicates, and
+    cycle-blocking stays independent of whether the item was already in the inbox."""
+
+    cap: int = MAX_ROUTED_PER_TICK
+    routed: int = 0
+    edges: set = field(default_factory=set)
+
+    def allow(self, source: str, dest_slug: str) -> tuple[bool, str]:
+        if source == dest_slug:
+            return False, "self-handoff"
+        if self.routed >= self.cap:
+            return False, f"per-tick routing cap ({self.cap}) reached"
+        if f"{dest_slug}>{source}" in self.edges:
+            return (
+                False,
+                f"reciprocal edge {dest_slug}->{source} already routed (cycle)",
+            )
+        return True, ""
+
+    def record(self, source: str, dest_slug: str) -> None:
+        self.edges.add(f"{source}>{dest_slug}")
+        self.routed += 1
+
+
+def _route_work_items(
+    items: list[dict],
+    source: str,
+    now: datetime,
+    log: Callable[[str], None],
+    guard: "RoutingGuard",
+    projects_dir: Path | None = None,
+) -> int:
+    """Append each work-item to the `## Inbox` of the project it names, honoring the
+    guard. Items whose target is not a real project are left advisory (logged). Groups
+    by destination so each file is written once. Returns new items appended."""
+    buckets: dict[Path, list[str]] = {}
+    for it in items:
+        dest = resolve_proposal_dest(it["target"], projects_dir)
+        if dest is None:
+            log(
+                f"routing: '{it['target']}' is not a project; '{it['task'][:50]}' left advisory"
+            )
+            continue
+        dest_slug = dest.parent.name
+        ok, why = guard.allow(source, dest_slug)
+        if not ok:
+            log(f"routing: dropped {source}->{dest_slug} ({why})")
+            continue
+        guard.record(source, dest_slug)
+        buckets.setdefault(dest, []).append(format_work_item(source, it))
+    total = 0
+    for dest, lines in buckets.items():
+        n = agenda.append_inbox_items(dest, lines, now.date())
+        if n:
+            total += n
+            log(
+                f"routing: {n} new item(s) {source} -> projects/{dest.parent.name} inbox"
+            )
+    return total
+
+
+def route_cos_proposals(
+    out: str,
+    now: datetime,
+    log: Callable[[str], None],
+    guard: "RoutingGuard | None" = None,
+    projects_dir: Path | None = None,
+) -> int:
+    """Route a CoS brief's `## Proposals` into the named projects' inboxes. Best-effort:
+    catches everything so a routing problem can never abort the morning tick."""
+    try:
+        props = parse_cos_proposals(out)
+        if not props:
+            return 0
+        total = _route_work_items(
+            props, "cos", now, log, guard or RoutingGuard(), projects_dir
+        )
+        if total:
+            notify(
+                "Brain schedule", f"CoS routed {total} proposal(s) to project inboxes"
+            )
+        return total
+    except Exception as e:  # noqa: BLE001 - routing must never break the tick
+        log(f"cos proposals: routing failed ({e}); brief unaffected")
+        return 0
+
+
+def route_handoffs(
+    out: str,
+    source: str,
+    now: datetime,
+    log: Callable[[str], None],
+    guard: "RoutingGuard | None" = None,
+    projects_dir: Path | None = None,
+) -> int:
+    """Route a producer agent's `handoff::` lines to other desks' inboxes — the same
+    guarded path as CoS proposals (sharing one guard means caps and cycle-blocks span
+    both). Best-effort: never raises into the tick."""
+    try:
+        items = parse_handoffs(out)
+        if not items:
+            return 0
+        total = _route_work_items(
+            items, source, now, log, guard or RoutingGuard(), projects_dir
+        )
+        if total:
+            notify(
+                "Brain schedule", f"{source} handed off {total} item(s) to other desks"
+            )
+        return total
+    except Exception as e:  # noqa: BLE001 - routing must never break the tick
+        log(f"handoffs from {source}: routing failed ({e}); run unaffected")
+        return 0
+
+
+# --------------------------------------------------------------------------- #
 # Lid state + AC-gated keep-awake (lid-close override)
 # --------------------------------------------------------------------------- #
 #
@@ -1023,6 +1238,10 @@ def _run_steps(
     llm_blocked = (
         False  # set once the backend is usage-limited; skip remaining LLM steps
     )
+    # One routing guard per tick: its cap + cycle-blocks span every item routed during
+    # this dispatcher run — CoS proposals and/or project-runner handoffs, whichever steps
+    # run this tick (a step that runs in a different tick gets a fresh guard).
+    routing_guard = RoutingGuard()
     for step in steps:
         if not step_due(step, ledger, now):
             continue
@@ -1079,6 +1298,14 @@ def _run_steps(
                         ran_slugs.append(slug)
                     if step.report:
                         report_chunks.append(out)
+                    # Routing seam: the CoS brief's proposals, and any project-runner
+                    # pass's `handoff::` lines, are filed into the named projects'
+                    # inboxes by the dispatcher (the agents are read-only / dir-scoped;
+                    # the dispatcher does the guarded cross-project write).
+                    if step.name == "cos-brief":
+                        route_cos_proposals(out, now, log, routing_guard)
+                    elif slug:
+                        route_handoffs(out, slug, now, log, routing_guard)
                 elif status == "deferred":
                     all_ok = False
                     outcome = "deferred"

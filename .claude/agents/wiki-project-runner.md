@@ -120,6 +120,8 @@ Clarifications opened: <m>
 - [T2] <title>: <one-line open question>
 Blocked: <k>
 - [T3] <title>: <host / reason>
+Handoffs: <h>
+- handoff:: <other-project-slug> | <imperative ask> | <deliverable ref, e.g. projects/<slug>/notes/x.md>
 Files changed:
 - projects/<slug>/AGENDA.md
 - projects/<slug>/<path>
@@ -127,6 +129,22 @@ Files changed:
 
 `Executed: <n>` must be the count of tasks you actually completed (it drives the operator-review
 stacking guard). Use `0`/empty sections honestly when nothing happened.
+
+### Routing work to another desk (the `Handoffs:` block — optional, rare)
+
+If a task you completed produces something **another project should act on**, emit one
+`handoff:: <to-project> | <ask> | <deliverable-ref>` line per handoff in the `Handoffs:` block.
+The host dispatcher (not you) files each into that project's `## Inbox`; you never write another
+project's files. Strict rules so this stays a clean, acyclic, low-cost flow:
+
+- `<to-project>` must be the **exact slug of a different, real project** — never this project
+  (self-handoffs are dropped), and never invent a slug (an unknown target is dropped).
+- Hand off only when there is a concrete deliverable to point at — reference the artifact path
+  you wrote under `projects/<slug>/`. Don't hand off vague "someone should look at this" notes.
+- Keep it **rare** (most runs have zero). The dispatcher caps handoffs per run and blocks direct
+  back-and-forth (A→B then B→A) to prevent loops; staying within your charter avoids tripping it.
+- A handoff is a *request to another desk*, gated by that desk's own `enabled` flag and clarity
+  gate — not a guarantee it runs. Do not assume it has been done.
 
 ## Handoffs
 

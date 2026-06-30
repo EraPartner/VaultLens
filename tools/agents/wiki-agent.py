@@ -329,6 +329,24 @@ def _gather_cos_context(mode: str, project_filter: str | None) -> str:
             except OSError:
                 pass
 
+    # --- Desk status (per-project "agents": enabled, queue, blocked, routed handoffs)
+    # Lets the brief show the whole roster at a glance, including cross-desk handoffs
+    # routed into a desk's inbox (tagged [from:…]) but not yet groomed.
+    if mode in ("brief", "status"):
+        try:
+            if TOOLS_DIR not in [Path(p) for p in sys.path]:
+                sys.path.insert(0, str(TOOLS_DIR))
+            import agenda  # type: ignore[import]
+
+            parts.append(
+                "\n"
+                + agenda.format_desk_status(
+                    agenda.desk_status(ROOT / "projects", today)
+                )
+            )
+        except Exception as exc:  # never let status-gather break the brief
+            parts.append(f"\n## Desk status (agents) — unavailable ({exc})")
+
     # --- Inbox listing -------------------------------------------------------
     inbox_dir = ROOT / "raw" / "inbox"
     if inbox_dir.is_dir():

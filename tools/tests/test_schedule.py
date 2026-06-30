@@ -36,7 +36,10 @@ def check(name: str, condition: bool, detail: str = "") -> None:
 def fresh_ledger() -> dict:
     return {
         "jobs": {},
-        "accounts": {a: {"limited_until": None, "last_error": None, "backoff": 0} for a in dispatch.ACCOUNTS},
+        "accounts": {
+            a: {"limited_until": None, "last_error": None, "backoff": 0}
+            for a in dispatch.ACCOUNTS
+        },
     }
 
 
@@ -45,19 +48,37 @@ def main() -> int:
 
     print("classify_failure:")
     check("rc 0 -> ok", dispatch.classify_failure(0, "all good") == "ok")
-    check("quota text -> quota", dispatch.classify_failure(1, "Premium request quota exceeded") == "quota")
-    check("429 -> ratelimit", dispatch.classify_failure(1, "HTTP 429 Too Many Requests") == "ratelimit")
-    check("other -> transient", dispatch.classify_failure(1, "connection reset") == "transient")
+    check(
+        "quota text -> quota",
+        dispatch.classify_failure(1, "Premium request quota exceeded") == "quota",
+    )
+    check(
+        "429 -> ratelimit",
+        dispatch.classify_failure(1, "HTTP 429 Too Many Requests") == "ratelimit",
+    )
+    check(
+        "other -> transient",
+        dispatch.classify_failure(1, "connection reset") == "transient",
+    )
 
     print("backend availability / cooldown:")
     led = fresh_ledger()
-    check("backend available when healthy", dispatch.backend_available(led, now) is True)
+    check(
+        "backend available when healthy", dispatch.backend_available(led, now) is True
+    )
     dispatch.mark_limited(led, dispatch.ACCOUNTS[0], "ratelimit", now)
-    check("limited_until set after ratelimit",
-          led["accounts"][dispatch.ACCOUNTS[0]]["limited_until"] is not None)
-    check("backend unavailable while limited", dispatch.backend_available(led, now) is False)
+    check(
+        "limited_until set after ratelimit",
+        led["accounts"][dispatch.ACCOUNTS[0]]["limited_until"] is not None,
+    )
+    check(
+        "backend unavailable while limited",
+        dispatch.backend_available(led, now) is False,
+    )
     dispatch.mark_limited(led, dispatch.ACCOUNTS[0], "quota", now)
-    check("still unavailable after quota", dispatch.backend_available(led, now) is False)
+    check(
+        "still unavailable after quota", dispatch.backend_available(led, now) is False
+    )
 
     print("cooldown semantics:")
     led2 = fresh_ledger()
@@ -75,8 +96,10 @@ def main() -> int:
     led3 = fresh_ledger()
     past = now - timedelta(hours=1)
     led3["accounts"][dispatch.ACCOUNTS[0]]["limited_until"] = dispatch.iso(past)
-    check("expired limit -> backend available again",
-          dispatch.backend_available(led3, now) is True)
+    check(
+        "expired limit -> backend available again",
+        dispatch.backend_available(led3, now) is True,
+    )
 
     print("clear_account on success:")
     led4 = fresh_ledger()
@@ -89,7 +112,10 @@ def main() -> int:
     steps = {s.name: s for s in dispatch.build_steps()}
     led5 = fresh_ledger()
     lint = steps["lint"]
-    check("daily step due when never run (in window)", dispatch.step_due(lint, led5, now) is True)
+    check(
+        "daily step due when never run (in window)",
+        dispatch.step_due(lint, led5, now) is True,
+    )
     led5["jobs"]["lint"] = {"last_ok": dispatch.iso(now)}
     check("daily step not due same day", dispatch.step_due(lint, led5, now) is False)
     tomorrow = now + timedelta(days=1)
@@ -98,8 +124,14 @@ def main() -> int:
     morning = now.replace(hour=9)
     night_only = now.replace(hour=3)
     brief = steps["cos-brief"]
-    check("cos-brief due in morning window", dispatch.step_due(brief, fresh_ledger(), morning) is True)
-    check("cos-brief not due at 03:00", dispatch.step_due(brief, fresh_ledger(), night_only) is False)
+    check(
+        "cos-brief due in morning window",
+        dispatch.step_due(brief, fresh_ledger(), morning) is True,
+    )
+    check(
+        "cos-brief not due at 03:00",
+        dispatch.step_due(brief, fresh_ledger(), night_only) is False,
+    )
 
     weekly = steps["contradict"]
     led6 = fresh_ledger()
@@ -108,40 +140,82 @@ def main() -> int:
     check("weekly not due 2 days later", dispatch.step_due(weekly, led6, now) is False)
     led6["jobs"]["contradict"] = {"last_ok": dispatch.iso(now - timedelta(days=9))}
     weekday = now + timedelta(days=3)  # a Wednesday, age >= 8 -> catch up
-    check("weekly catches up when overdue >8d", dispatch.step_due(weekly, led6, weekday) is True)
+    check(
+        "weekly catches up when overdue >8d",
+        dispatch.step_due(weekly, led6, weekday) is True,
+    )
 
     print("ingest target selection:")
-    check("slugify matches source-text convention",
-          dispatch._slugify("Cryptology and Error Correction") == "cryptology-and-error-correction")
+    check(
+        "slugify matches source-text convention",
+        dispatch._slugify("Cryptology and Error Correction")
+        == "cryptology-and-error-correction",
+    )
     # The bug: a wiki/sources page already cites the PDF -> never re-ingest it,
     # even when no literal-stem extracted text exists.
-    check("PDF with a wiki source page is skipped",
-          dispatch._select_ingest_pdfs(["Cryptology and Error Correction.pdf"], set(), {"Cryptology and Error Correction.pdf"}) == [])
+    check(
+        "PDF with a wiki source page is skipped",
+        dispatch._select_ingest_pdfs(
+            ["Cryptology and Error Correction.pdf"],
+            set(),
+            {"Cryptology and Error Correction.pdf"},
+        )
+        == [],
+    )
     # Extracted text under the slugified name also counts as processed.
-    check("slugified extracted text skips PDF",
-          dispatch._select_ingest_pdfs(["Cryptology and Error Correction.pdf"], {"cryptology-and-error-correction"}, set()) == [])
+    check(
+        "slugified extracted text skips PDF",
+        dispatch._select_ingest_pdfs(
+            ["Cryptology and Error Correction.pdf"],
+            {"cryptology-and-error-correction"},
+            set(),
+        )
+        == [],
+    )
     # ...as does extracted text under the literal stem (preprocess's naming).
-    check("literal-stem extracted text skips PDF",
-          dispatch._select_ingest_pdfs(["Foo Bar.pdf"], {"Foo Bar"}, set()) == [])
+    check(
+        "literal-stem extracted text skips PDF",
+        dispatch._select_ingest_pdfs(["Foo Bar.pdf"], {"Foo Bar"}, set()) == [],
+    )
     # A genuinely new PDF (no page, no text) is still selected.
-    check("new PDF is selected",
-          dispatch._select_ingest_pdfs(["Brand New.pdf"], set(), set()) == ["Brand New.pdf"])
+    check(
+        "new PDF is selected",
+        dispatch._select_ingest_pdfs(["Brand New.pdf"], set(), set())
+        == ["Brand New.pdf"],
+    )
 
     print("scheduler status summary:")
     nowt = datetime(2026, 6, 20, 7, 0).astimezone()
-    meta = [("lint", "daily"), ("enhance", "daily"), ("cos-brief", "daily"), ("contradict", "weekly")]
+    meta = [
+        ("lint", "daily"),
+        ("enhance", "daily"),
+        ("cos-brief", "daily"),
+        ("contradict", "weekly"),
+    ]
     healthy = {n: {"last_ok": dispatch.iso(nowt), "last_result": "ok"} for n, _ in meta}
-    check("all-healthy verdict", "all scheduled jobs healthy" in dispatch.format_schedule_status(healthy, {}, meta, nowt))
+    check(
+        "all-healthy verdict",
+        "all scheduled jobs healthy"
+        in dispatch.format_schedule_status(healthy, {}, meta, nowt),
+    )
     failed = dict(healthy)
-    failed["cos-brief"] = {"last_ok": dispatch.iso(nowt - timedelta(days=4)), "last_result": "transient"}
+    failed["cos-brief"] = {
+        "last_ok": dispatch.iso(nowt - timedelta(days=4)),
+        "last_result": "transient",
+    }
     s_fail = dispatch.format_schedule_status(failed, {}, meta, nowt)
     check("failing job named in verdict", "cos-brief" in s_fail and "failing" in s_fail)
     never = {n: {} for n, _ in meta}  # never run -> stale, not failing
     s_stale = dispatch.format_schedule_status(never, {}, meta, nowt)
-    check("never-run jobs read as stale", "stale" in s_stale and "failing" not in s_stale)
+    check(
+        "never-run jobs read as stale", "stale" in s_stale and "failing" not in s_stale
+    )
     accts = {"claude-plan": {"limited_until": dispatch.iso(nowt + timedelta(hours=2))}}
     s_lim = dispatch.format_schedule_status(healthy, accts, meta, nowt)
-    check("backend cooldown surfaced", "Backend limited" in s_lim and "claude-plan" in s_lim)
+    check(
+        "backend cooldown surfaced",
+        "Backend limited" in s_lim and "claude-plan" in s_lim,
+    )
 
     print("_record failure semantics:")
     led7 = fresh_ledger()
@@ -149,22 +223,133 @@ def main() -> int:
     ok_ts = led7["jobs"]["enhance"]["last_ok"]
     dispatch._record(led7, "enhance", now + timedelta(hours=3), "transient")
     check("failure preserves last_ok", led7["jobs"]["enhance"]["last_ok"] == ok_ts)
-    check("failure sets last_result", led7["jobs"]["enhance"]["last_result"] == "transient")
+    check(
+        "failure sets last_result",
+        led7["jobs"]["enhance"]["last_result"] == "transient",
+    )
     check("attempt timestamp recorded", "last_attempt" in led7["jobs"]["enhance"])
 
     print("report retention:")
-    names = ([f"scheduled-cos-brief-2026-06-{d:02d}.md" for d in range(1, 21)]
-             + ["scheduled-contradict-2026-06-07.md", "scheduled-contradict-2026-06-14.md",
-                "schedule-status.md", "lint-report.md", ".gitkeep"])
+    names = [f"scheduled-cos-brief-2026-06-{d:02d}.md" for d in range(1, 21)] + [
+        "scheduled-contradict-2026-06-07.md",
+        "scheduled-contradict-2026-06-14.md",
+        "schedule-status.md",
+        "lint-report.md",
+        ".gitkeep",
+    ]
     prune = dispatch._reports_to_prune(names, 14)
-    check("prunes oldest cos-briefs beyond 14/type", sum("cos-brief" in n for n in prune) == 6)
-    check("deletes oldest, keeps newest",
-          "scheduled-cos-brief-2026-06-01.md" in prune
-          and "scheduled-cos-brief-2026-06-20.md" not in prune)
-    check("keeps a type that is under the limit", not any("contradict" in n for n in prune))
-    check("never touches schedule-status / non-scheduled files",
-          not any(n in prune for n in ("schedule-status.md", "lint-report.md", ".gitkeep")))
-    check("retention 0 prunes all matching", len(dispatch._reports_to_prune(names, 0)) == 22)
+    check(
+        "prunes oldest cos-briefs beyond 14/type",
+        sum("cos-brief" in n for n in prune) == 6,
+    )
+    check(
+        "deletes oldest, keeps newest",
+        "scheduled-cos-brief-2026-06-01.md" in prune
+        and "scheduled-cos-brief-2026-06-20.md" not in prune,
+    )
+    check(
+        "keeps a type that is under the limit",
+        not any("contradict" in n for n in prune),
+    )
+    check(
+        "never touches schedule-status / non-scheduled files",
+        not any(
+            n in prune for n in ("schedule-status.md", "lint-report.md", ".gitkeep")
+        ),
+    )
+    check(
+        "retention 0 prunes all matching",
+        len(dispatch._reports_to_prune(names, 0)) == 22,
+    )
+
+    print("cos proposal parsing (CoS→AGENDA seam):")
+    brief = (
+        "## Chief of Staff Brief — 2026-06-29 (Monday)\n"
+        "### Today's focus\n- do the thing\n\n"
+        "## Proposals\n"
+        "proposal:: vision | Triage the 3 failed CSV imports | time-sensitive\n"
+        "proposal::assistant|Draft reply to supervisor|overdue commitment\n"
+        "proposal:: thesis | only two fields\n"  # one pipe -> malformed -> skipped
+        "garbage line, not a proposal\n"
+        "proposal:: | | \n"  # empty target/task/why -> skipped
+    )
+    props = dispatch.parse_cos_proposals(brief)
+    check("parses only the 2 well-formed proposals", len(props) == 2)
+    check(
+        "first proposal target+task",
+        props[0]["target"] == "vision" and props[0]["task"].startswith("Triage"),
+    )
+    check(
+        "pipes without surrounding spaces still parse",
+        props[1]["target"] == "assistant"
+        and props[1]["task"] == "Draft reply to supervisor",
+    )
+    check(
+        "malformed one-pipe line skipped",
+        all("only two fields" not in p["task"] for p in props),
+    )
+    check(
+        "brief with no block => []", dispatch.parse_cos_proposals("no block here") == []
+    )
+    check(
+        "format_work_item: from-tag + why",
+        dispatch.format_work_item("cos", {"task": "Do X", "why": "because"})
+        == "[from:cos] Do X — because",
+    )
+    check(
+        "format_work_item: empty why omitted, source preserved",
+        dispatch.format_work_item("fleet-health", {"task": "Do Y", "why": ""})
+        == "[from:fleet-health] Do Y",
+    )
+
+    print("handoff parsing:")
+    handoff_text = (
+        "## Project run: fleet-health — 2026-06-29\n"
+        "Handoffs: 2\n"
+        "handoff:: vision | Bump the lodash dep flagged in the sweep | projects/fleet-health/notes/sweep-x.md\n"
+        "handoff::watchman|Patch the exposed port|notes/y.md\n"
+        "proposal:: vision | this is a proposal not a handoff | x\n"
+    )
+    hos = dispatch.parse_handoffs(handoff_text)
+    check("parses only handoff:: lines (2)", len(hos) == 2)
+    check("ignores proposal:: lines", all("proposal" not in h["task"] for h in hos))
+    check(
+        "handoff target+task parsed",
+        hos[0]["target"] == "vision" and hos[0]["task"].startswith("Bump"),
+    )
+
+    print("routing guard (anti-loop / cap):")
+    g = dispatch.RoutingGuard(cap=2)
+    check(
+        "self-handoff blocked",
+        dispatch.RoutingGuard().allow("vision", "vision")[0] is False,
+    )
+    ok1, _ = g.allow("cos", "vision")
+    check("first edge allowed", ok1 is True)
+    g.record("cos", "vision")
+    check(
+        "reciprocal edge blocked (cycle)",
+        g.allow("vision", "cos")[0] is False,
+    )
+    g.record("cos", "watchman")  # now routed == 2 == cap
+    check("per-tick cap enforced", g.allow("cos", "thesis")[0] is False)
+
+    print("cos proposal routing destination:")
+    check(
+        "real project slug resolves to its AGENDA",
+        str(dispatch.resolve_proposal_dest("fleet-health") or "").endswith(
+            "projects/fleet-health/AGENDA.md"
+        ),
+    )
+    check(
+        "unknown slug => None (left advisory)",
+        dispatch.resolve_proposal_dest("definitely-not-a-project-zzz") is None,
+    )
+    check("empty target => None", dispatch.resolve_proposal_dest("") is None)
+    check(
+        "retired assistant project => None",
+        dispatch.resolve_proposal_dest("assistant") is None,
+    )
 
     print(f"\n{PASSED} passed, {FAILED} failed")
     return 1 if FAILED else 0

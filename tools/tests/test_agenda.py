@@ -266,6 +266,133 @@ def main() -> int:
         # scaffold_all is idempotent.
         check("scaffold_all idempotent", agenda.scaffold_all(root, today) == [])
 
+    print("inbox grooming + append (CoS proposals seam):")
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "q").mkdir()
+        ag = root / "q" / "AGENDA.md"
+        agenda.scaffold(ag, "q", today)
+        # enable it but leave it with no Tasks and a pristine (comment-only) Inbox
+        ag.write_text(
+            ag.read_text(encoding="utf-8").replace("enabled: false", "enabled: true"),
+            encoding="utf-8",
+        )
+        check(
+            "pristine inbox is not groomable",
+            agenda.inbox_has_groomable_content(ag.read_text(encoding="utf-8")) is False,
+        )
+        check(
+            "enabled + empty inbox + no tasks => not due",
+            agenda.project_is_due(ag, today) is False,
+        )
+        n = agenda.append_inbox_items(
+            ag,
+            [
+                "[cos] draft reply to supervisor — overdue",
+                "[cos] (→ vision) triage failed imports",
+            ],
+            today,
+        )
+        check("appended both inbox items", n == 2)
+        body = ag.read_text(encoding="utf-8")
+        check("inbox now groomable", agenda.inbox_has_groomable_content(body) is True)
+        check(
+            "enabled + inbox content => due", agenda.project_is_due(ag, today) is True
+        )
+        check(
+            "items landed under ## Inbox",
+            "- [cos] draft reply to supervisor — overdue" in body,
+        )
+        check(
+            "other sections preserved",
+            "## Tasks" in body and "## Clarifications" in body and "## Run log" in body,
+        )
+        n2 = agenda.append_inbox_items(
+            ag,
+            ["[cos] draft reply to supervisor — overdue", "[cos] a brand new item"],
+            today,
+        )
+        check("dedupe skips existing, appends only the new one", n2 == 1)
+        check(
+            "no duplicated inbox line",
+            ag.read_text(encoding="utf-8").count(
+                "- [cos] draft reply to supervisor — overdue"
+            )
+            == 1,
+        )
+        ag.write_text(
+            ag.read_text(encoding="utf-8").replace("enabled: true", "enabled: false"),
+            encoding="utf-8",
+        )
+        check(
+            "disabled + inbox content => not due",
+            agenda.project_is_due(ag, today) is False,
+        )
+
+    print("desk status (CoS brief agents view):")
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+
+        def _mk(slug, enabled):
+            (root / slug).mkdir()
+            p = root / slug / "AGENDA.md"
+            agenda.scaffold(p, slug, today)
+            if enabled:
+                p.write_text(
+                    p.read_text(encoding="utf-8").replace(
+                        "enabled: false", "enabled: true"
+                    ),
+                    encoding="utf-8",
+                )
+            return p
+
+        pa = _mk("alpha", True)  # enabled: a due task + a routed handoff in its inbox
+        pa.write_text(
+            pa.read_text(encoding="utf-8").replace(
+                "## Tasks\n",
+                "## Tasks\n\n### [T1] go\n- status:: clear\n- schedule:: nightly\n- next_due:: 2026-06-28\n- acceptance:: do.\n\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        agenda.append_inbox_items(pa, ["[from:cos] handle this — why"], today)
+        pb = _mk("beta", True)  # enabled: a blocked task
+        pb.write_text(
+            pb.read_text(encoding="utf-8").replace(
+                "## Tasks\n",
+                "## Tasks\n\n### [T1] x\n- status:: blocked\n- schedule:: once\n- blocked_reason:: host\n\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        _mk("gamma", False)  # dormant
+
+        st = agenda.desk_status(root, today)
+        check("three desks", len(st) == 3)
+        check(
+            "active desks sorted before dormant",
+            [s["slug"] for s in st] == ["alpha", "beta", "gamma"],
+        )
+        a = next(s for s in st if s["slug"] == "alpha")
+        check("alpha due counted", a["due"] == 1)
+        check(
+            "alpha routed handoff detected",
+            a["inbox_routed"] == 1 and a["routed_sources"] == ["cos"],
+        )
+        check(
+            "beta blocked counted",
+            next(s for s in st if s["slug"] == "beta")["blocked"] == 1,
+        )
+        check(
+            "gamma dormant",
+            next(s for s in st if s["slug"] == "gamma")["enabled"] is False,
+        )
+        rendered = agenda.format_desk_status(st)
+        check("renders active line", "**alpha** (active)" in rendered)
+        check("renders routed source", "routed ← cos" in rendered)
+        check("renders blocked", "1 blocked" in rendered)
+        check("renders dormant tail", "dormant (1): gamma" in rendered)
+
     print(f"\n{PASSED} passed, {FAILED} failed")
     return 1 if FAILED else 0
 

@@ -87,15 +87,55 @@ else
   [[ -n "$WRITE_PATH" ]] && WS_MOUNTS+=(-v "$PROJECT_ROOT/$WRITE_PATH:$CONTAINER_WS/$WRITE_PATH")
 fi
 
-# Personal-data symlink targets (so in-vault symlinks resolve). School + Code/*
-# are RO and always mounted. The financial scans ("The Mad King") are the most
-# sensitive surface (audit BR1: exposed in every profile incl. headless wiki runs),
-# so they are OPT-IN — set BRAIN_MOUNT_FINANCE=1 only for the session that needs
-# them. Off by default = minimal default data exposure.
-FINANCE_MOUNT=()
-if [[ -n "${BRAIN_MOUNT_FINANCE:-}" ]]; then
-  FINANCE_MOUNT=(-v "$HOME/Documents/Personal/Scans/Finance/The Mad King:$HOME/Documents/Personal/Scans/Finance/The Mad King:ro")
-fi
+# Source/personal symlink targets — derived PER RUN, not statically mounted.
+# A vault symlink to a path OUTSIDE the vault (projects/vision/Vision -> ~/Code/Vision,
+# projects/dep/DEP -> ~/Documents/School/DEP, …) dangles in-container unless its target is
+# bind-mounted RO at the same absolute path. Instead of statically mounting all of School +
+# every Code repo into EVERY run (audit BR1: needless PII/source exposure), mount ONLY the
+# symlink targets the current run's scope can reach, and ONLY if the target is under an
+# allowlisted root (fail-closed: anything else is skipped + warned, so a stray symlink can't
+# pull in ~/.ssh). A scan project that symlinks only ~/Code/* therefore gets NO School/finance
+# mount — PII is structurally absent from that run. Finance scans stay OPT-IN (audit BR1):
+# their root is allowlisted only when BRAIN_MOUNT_FINANCE is set.
+ALLOW_ROOTS=("$HOME/Code/Vision" "$HOME/Code/Watchman" "$HOME/Code/Napoleon-relay" "$HOME/Code/devcontainer-egress" "$HOME/Code/git-agent" "$HOME/Documents/School")
+[[ -n "${BRAIN_MOUNT_FINANCE:-}" ]] && ALLOW_ROOTS+=("$HOME/Documents/Personal/Scans/Finance")
+# Which vault subtrees to scan for outbound symlinks, by run scope:
+#   project                -> just this project's deps (projects/<slug>)
+#   author|raw             -> raw/ (ingest's symlinked sources, if any)
+#   master|reader|projects -> projects/ + raw/ (everything projects rely on; interactive)
+case "$PROFILE" in
+  project)    SCAN_DIRS=("$PROJECT_ROOT/$WRITE_PATH") ;;
+  author|raw) SCAN_DIRS=("$PROJECT_ROOT/raw") ;;
+  *)          SCAN_DIRS=("$PROJECT_ROOT/projects" "$PROJECT_ROOT/raw") ;;
+esac
+_cands=()
+for _scan in ${SCAN_DIRS[@]+"${SCAN_DIRS[@]}"}; do
+  [[ -d "$_scan" ]] || continue
+  while IFS= read -r _lnk; do
+    _tgt="$(readlink "$_lnk")"
+    if [[ "$_tgt" != /* ]]; then
+      _base="$(cd "$(dirname "$_lnk")" 2>/dev/null && pwd -P)" || _base=""
+      [[ -n "$_base" ]] && _tgt="$_base/$_tgt" || _tgt=""
+    fi
+    _tgt="${_tgt%/}"
+    [[ -n "$_tgt" && -e "$_tgt" ]] || continue                              # empty/broken link
+    case "$_tgt" in "$PROJECT_ROOT"|"$PROJECT_ROOT"/*) continue ;; esac     # intra-vault: already mounted
+    _ok=0; for _r in "${ALLOW_ROOTS[@]}"; do [[ "$_tgt" == "$_r" || "$_tgt" == "$_r"/* ]] && { _ok=1; break; }; done
+    [[ "$_ok" == 1 ]] || { echo "agent: skip un-allowlisted symlink target: $_tgt (from ${_lnk#"$PROJECT_ROOT"/})" >&2; continue; }
+    _cands+=("$_tgt")
+  done < <(find "$_scan" -maxdepth 5 -type l 2>/dev/null)
+done
+# Reduce to a minimal, deduped set: drop any target that is itself nested under another.
+EXTRA_MOUNTS=()
+_accepted=()
+for _t in ${_cands[@]+"${_cands[@]}"}; do
+  _dup=0; for _a in ${_accepted[@]+"${_accepted[@]}"}; do [[ "$_t" == "$_a" ]] && { _dup=1; break; }; done
+  [[ "$_dup" == 1 ]] && continue
+  _nested=0; for _o in "${_cands[@]}"; do [[ "$_t" == "$_o"/* ]] && { _nested=1; break; }; done
+  [[ "$_nested" == 1 ]] && continue
+  _accepted+=("$_t")
+  EXTRA_MOUNTS+=(-v "$_t:$_t:ro")
+done
 
 if [[ -n "${BRAIN_DRYRUN:-}" ]]; then
   echo "profile      : $PROFILE  (label: $PROFILE_LABEL)"
@@ -103,6 +143,7 @@ if [[ -n "${BRAIN_DRYRUN:-}" ]]; then
   echo "container    : $NAME"
   echo "volume key   : $BRAIN_VOL_KEY"
   echo "ws mounts    : ${WS_MOUNTS[*]}"
+  echo "extra mounts : ${EXTRA_MOUNTS[*]-}"
   echo "command      : $*"
   exit 0
 fi
@@ -159,10 +200,7 @@ else
     -v "$HOME/.claude/hooks/managed-settings.json:/etc/claude-code/managed-settings.json:ro" \
     -v "$HOME/.claude/projects/-Users-computer-Library-Mobile-Documents-iCloud-md-obsidian-Documents-Brain/memory:/home/dev/.claude-memory-seed:ro" \
     -v "$HOME/.cache/qmd:/home/dev/.qmd-seed:ro" \
-    -v "$HOME/Documents/School:$HOME/Documents/School:ro" \
-    -v "$HOME/Code/Vision:$HOME/Code/Vision:ro" \
-    -v "$HOME/Code/Watchman:$HOME/Code/Watchman:ro" \
-    ${FINANCE_MOUNT[@]+"${FINANCE_MOUNT[@]}"} \
+    ${EXTRA_MOUNTS[@]+"${EXTRA_MOUNTS[@]}"} \
     "$IMAGE" >/dev/null
 fi
 CID="$NAME"

@@ -47,6 +47,10 @@ downloads.claude.ai
 # npm (installs qmd / safe-chain at runtime)
 registry.npmjs.org
 
+# OSV vulnerability database API (fleet-health scan project, task T1: lockfile →
+# advisory lookups only, query-only, no package downloads). Added 2026-06-29.
+api.osv.dev
+
 # GitHub container registry (releases / images).
 ghcr.io
 pkg-containers.githubusercontent.com

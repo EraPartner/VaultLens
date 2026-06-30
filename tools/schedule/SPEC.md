@@ -221,7 +221,11 @@ dispatcher (run manually):** links, coverage snapshot, (optional) verify.
 The `project-runner` builder (`_project_runner_targets`) is pure-python: it reads each
 project's `AGENDA.md` via `tools/agenda.py`, skips dormant (`enabled: false`) and
 review-paused projects, and emits one `project-run --project <slug>` arg-vector per
-enabled project with a clear, due task (capped at `MAX_PROJECTS_PER_NIGHT`). The dispatcher
+enabled project that is **due** (capped at `MAX_PROJECTS_PER_NIGHT`). A project is due
+when it is enabled AND has either a clear, due task **or** loose `## Inbox` content
+awaiting grooming (`agenda.project_is_due` / `inbox_has_groomable_content`) — so routed
+CoS proposals and ad-hoc Inbox dumps are picked up the next night even before they have
+been groomed into Tasks. The dispatcher
 clones each project to `~/.brain/project-snapshots/<date>/` before the run (the apply-don't-commit
 undo, since `projects/` is gitignored) and writes one aggregated roll-up. **Egress note:**
 research tasks fetch via in-container `python3` bound by the squid allowlist — a task needing a
@@ -275,6 +279,53 @@ running these, but never auto-fire them.
 - **Retry semantics:** a failed or gated job does **not** advance its ledger
   timestamp, so it retries next tick. A *succeeded* job advances it. Repeated
   failures (e.g. 3 ticks) raise an error notification rather than looping silently.
+
+## Routed work-items → per-project inboxes (CoS→AGENDA seam + inter-role handoff bus)
+
+Added 2026-06-29. Closes the loop between the read-only Chief of Staff (which *advises*)
+and the project-runner (which *acts*) **without adding a second write-capable agent** —
+preserving the orthogonal split: CoS decides what should happen *and which project owns it*,
+the dispatcher wires it, each project's runner does the doing within its own scope.
+
+- **CoS side (read-only, load-bearing invariant):** the `wiki-cos` agent ends its `brief`
+  with an optional machine-readable block — zero to five lines of
+  `proposal:: <target> | <imperative task> | <one-line why>`, where `<target>` is the
+  **exact slug of a real project**. The CoS writes nothing; it only emits text, exactly as
+  it already emits the brief. If an action belongs to no project, the CoS leaves it as advice
+  in the brief and emits no proposal line.
+- **Dispatcher side (the only writer):** after a successful `cos-brief`, `_run_steps`
+  calls `route_cos_proposals(out, …)`, which `parse_cos_proposals()`-es the block,
+  `resolve_proposal_dest()`-resolves each target to `projects/<slug>/AGENDA.md`, and appends
+  the item to *that project's* `## Inbox` via `agenda.append_inbox_items` (dedup-on-text,
+  provenance `[from:cos]`, batched per destination). A target that is not a real project resolves
+  to `None` — the proposal is **logged and left advisory** (it still appears in the brief and
+  the saved report), never force-filed. Best-effort: catches all errors so a routing problem
+  can never abort the morning tick.
+- **Action side (the existing executor):** each receiving project is a normal project, and a
+  non-empty Inbox makes it *due* (see the builder note above), so its own project-runner
+  grooms the routed proposals into Tasks and actions the clear, in-scope ones — the clarity
+  gate guarantees only unambiguous work runs unattended, and the runner is confined to that
+  project's dir, so cross-project routing is safe. Most projects ship `enabled: false`, so a
+  routed proposal simply queues in the right place until the operator enables that project.
+  There is intentionally **no catch-all "assistant" project** — un-attributable items stay
+  advisory in the brief; add a real catch-all project if you ever want them tracked.
+- **Inter-role handoff bus (generalization):** the same routing path carries **any producer
+  agent's** `handoff:: <to-project> | <ask> | <deliverable-ref>` lines, not just CoS proposals.
+  The project-runner is wired as the first producer (`route_handoffs(out, slug, …)` after a
+  successful pass); its agent def documents the `Handoffs:` output block. CoS proposals and
+  handoffs share one core (`_route_work_items`) and one per-tick **`RoutingGuard`**, so
+  anti-loop limits span everything routed in a tick (CoS proposals and project-runner
+  handoffs alike when they share a tick; a step in a separate tick gets its own guard):
+  it blocks self-handoffs, blocks direct reciprocal edges (A→B when
+  B→A was already routed this tick), and caps total routed items per dispatcher run
+  (`MAX_ROUTED_PER_TICK`). Longer cycles are bounded by the cap + `enabled:false` defaults + the
+  daily brief review; precise multi-hop detection (hop propagation) is deferred. Token-frugal by
+  construction: a handoff only *queues* into an inbox picked up by an already-scheduled run — it
+  never triggers an extra ad-hoc agent run. Items carry `[from:<source>]` provenance for audit.
+
+Tested: `parse_cos_proposals` / `parse_handoffs` / `resolve_proposal_dest` / `format_work_item` / `RoutingGuard` in `test_schedule.py`;
+`append_inbox_items` / `inbox_has_groomable_content` / inbox-driven `project_is_due` in
+`test_agenda.py`.
 
 ## Open implementation questions / risks
 

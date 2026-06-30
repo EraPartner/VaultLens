@@ -319,15 +319,25 @@ def due_tasks(tasks: list[Task], today: dt.date) -> list[Task]:
     ]
 
 
+def inbox_has_groomable_content(text: str) -> bool:
+    """True if `## Inbox` holds any non-comment, non-blank line — i.e. loose items
+    the nightly groomer should turn into Tasks. The scaffold's `<!-- ... -->` hint
+    is stripped by `_section_lines`, so a pristine (hint-only) Inbox reads empty."""
+    return any(line.strip() for line in _section_lines(text, "Inbox"))
+
+
 def project_is_due(agenda_path: str | Path, today: dt.date) -> bool:
-    """True iff the AGENDA is enabled AND has at least one clear, due task."""
+    """True iff the AGENDA is enabled AND there is work for tonight: either a clear,
+    due task, or loose Inbox content awaiting grooming (a project can have zero
+    Tasks yet still be due because something was dumped/routed into its Inbox)."""
     try:
-        fm, tasks = parse_agenda(agenda_path)
-    except (OSError, ValueError):
+        text = Path(agenda_path).read_text(encoding="utf-8")
+    except OSError:
         return False
+    fm, tasks = parse_frontmatter(text), parse_tasks(text)
     if not is_enabled(fm):
         return False
-    return bool(due_tasks(tasks, today))
+    return bool(due_tasks(tasks, today)) or inbox_has_groomable_content(text)
 
 
 def due_projects(projects_dir: str | Path, today: dt.date) -> list[str]:
@@ -587,6 +597,158 @@ def lint(path: str | Path) -> list[str]:
         if t.status == "needs-clarification" and not t.questions:
             problems.append(f"{where} needs-clarification task has no questions")
     return problems
+
+
+# --- Inbox append (e.g. Chief-of-Staff proposals → groomable Inbox) ----------
+
+
+def _append_to_section(lines: list[str], section: str, new_lines: list[str]) -> None:
+    """Insert `new_lines` at the end of the `## <section>` body, creating the
+    section at EOF if absent. Mirrors `_append_run_log`'s placement (skip trailing
+    blank lines so items land directly under existing content)."""
+    search = _search_view(lines)
+    sec_start = None
+    for i, line in enumerate(search):
+        m = _SECTION_HEADING.match(line)
+        if m and m.group(1).strip().lower() == section.lower():
+            sec_start = i
+            break
+    if sec_start is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append(f"## {section}")
+        lines.extend(new_lines)
+        return
+    end = len(search)
+    for j in range(sec_start + 1, len(search)):
+        if search[j].startswith("## "):
+            end = j
+            break
+    insert_at = end
+    while insert_at - 1 > sec_start and not lines[insert_at - 1].strip():
+        insert_at -= 1
+    for k, nl in enumerate(new_lines):
+        lines.insert(insert_at + k, nl)
+
+
+def _inbox_signatures(text: str) -> set[str]:
+    """Lowercased existing `## Inbox` bullet texts (sans leading marker), for dedupe."""
+    sigs: set[str] = set()
+    for line in _section_lines(text, "Inbox"):
+        s = line.strip().lstrip("-*").strip()
+        if s:
+            sigs.add(s.lower())
+    return sigs
+
+
+def append_inbox_items(
+    path: str | Path, items: list[str], today: dt.date | None = None
+) -> int:
+    """Append `items` as `- <item>` bullets under `## Inbox`, skipping any whose
+    text already appears there (case-insensitive exact match). Returns the count
+    actually appended. The caller formats provenance into each item string; this
+    writer stays format-agnostic and only ever appends — never executes anything.
+    """
+    p = Path(path)
+    text = p.read_text(encoding="utf-8")
+    existing = _inbox_signatures(text)
+    fresh: list[str] = []
+    for it in items:
+        body = (it or "").strip()
+        if not body or body.lower() in existing:
+            continue
+        existing.add(body.lower())
+        fresh.append(f"- {body}")
+    if not fresh:
+        return 0
+    lines = text.split("\n")
+    _append_to_section(lines, "Inbox", fresh)
+    _stamp_updated(lines, today)
+    _write_lines(p, lines)
+    return len(fresh)
+
+
+# --- Desk status (the CoS brief's "agents" view) -----------------------------
+
+# An inbox bullet routed onto a desk by the dispatcher is tagged `[from:<source>]`
+# (see dispatch.format_work_item) — used to surface cross-desk handoffs in the brief.
+_FROM_RE = re.compile(r"^\s*-?\s*\[from:([^\]]+)\]")
+
+
+def desk_status(projects_dir: str | Path, today: dt.date) -> list[dict]:
+    """Per-project ("desk") status snapshot for the CoS brief — one dict per
+    `projects/*/AGENDA.md`. Pure / read-only. Each dict: slug, enabled, due (clear &
+    due), needs_clarification, blocked, done, inbox_total (groomable lines),
+    inbox_routed (lines tagged `[from:…]`), routed_sources (distinct senders).
+    Sorted active-first, then by slug. Malformed agendas are skipped."""
+    root = Path(projects_dir)
+    out: list[dict] = []
+    if not root.is_dir():
+        return out
+    for agenda_path in sorted(root.glob("*/AGENDA.md")):
+        try:
+            text = agenda_path.read_text(encoding="utf-8")
+            fm, tasks = parse_frontmatter(text), parse_tasks(text)
+        except (OSError, ValueError):
+            continue
+        by: dict[str, int] = {}
+        for t in tasks:
+            by[t.status] = by.get(t.status, 0) + 1
+        inbox = [ln.strip() for ln in _section_lines(text, "Inbox") if ln.strip()]
+        sources: list[str] = []
+        for ln in inbox:
+            m = _FROM_RE.match(ln)
+            if m and m.group(1).strip() not in sources:
+                sources.append(m.group(1).strip())
+        out.append(
+            {
+                "slug": agenda_path.parent.name,
+                "enabled": is_enabled(fm),
+                "due": len(due_tasks(tasks, today)),
+                "needs_clarification": by.get("needs-clarification", 0),
+                "blocked": by.get("blocked", 0),
+                "done": by.get("done", 0),
+                "inbox_total": len(inbox),
+                "inbox_routed": sum(1 for ln in inbox if _FROM_RE.match(ln)),
+                "routed_sources": sources,
+            }
+        )
+    out.sort(key=lambda d: (not d["enabled"], d["slug"]))
+    return out
+
+
+def format_desk_status(statuses: list[dict]) -> str:
+    """Compact markdown for the CoS 'Agents / desks' section. One detail line per
+    active desk (flagging due / needs-clarification / blocked / queued routed
+    handoffs); dormant desks collapse into a single tail line."""
+    if not statuses:
+        return "## Desk status (agents)\n(no project desks found)"
+    lines = ["## Desk status (agents)"]
+    active = [s for s in statuses if s["enabled"]]
+    dormant = [s for s in statuses if not s["enabled"]]
+    if not active:
+        lines.append("- (no active desks)")
+    for s in active:
+        bits: list[str] = []
+        if s["due"]:
+            bits.append(f"{s['due']} due")
+        if s["needs_clarification"]:
+            bits.append(f"{s['needs_clarification']} needs-clarification")
+        if s["blocked"]:
+            bits.append(f"{s['blocked']} blocked")
+        if s["inbox_total"]:
+            tag = ""
+            if s["inbox_routed"]:
+                tag = f", {s['inbox_routed']} routed ← {', '.join(s['routed_sources']) or '?'}"
+            bits.append(f"{s['inbox_total']} inbox{tag}")
+        lines.append(
+            f"- **{s['slug']}** (active): {'; '.join(bits) if bits else 'idle'}"
+        )
+    if dormant:
+        lines.append(
+            f"- dormant ({len(dormant)}): {', '.join(s['slug'] for s in dormant)}"
+        )
+    return "\n".join(lines)
 
 
 # --- Scaffolding -------------------------------------------------------------
