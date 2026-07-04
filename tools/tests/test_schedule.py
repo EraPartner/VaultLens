@@ -11,6 +11,7 @@ system. Run with:
 from __future__ import annotations
 
 import sys
+import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -335,21 +336,37 @@ def main() -> int:
     check("per-tick cap enforced", g.allow("cos", "thesis")[0] is False)
 
     print("cos proposal routing destination:")
-    check(
-        "real project slug resolves to its AGENDA",
-        str(dispatch.resolve_proposal_dest("fleet-health") or "").endswith(
-            "projects/fleet-health/AGENDA.md"
-        ),
-    )
-    check(
-        "unknown slug => None (left advisory)",
-        dispatch.resolve_proposal_dest("definitely-not-a-project-zzz") is None,
-    )
-    check("empty target => None", dispatch.resolve_proposal_dest("") is None)
-    check(
-        "retired assistant project => None",
-        dispatch.resolve_proposal_dest("assistant") is None,
-    )
+    # Self-contained: resolve_proposal_dest takes an explicit projects_dir and its
+    # only side-effect is a `.exists()` check, so build a throwaway `projects/` tree
+    # rather than reaching into the developer's real vault (gitignored, so absent in
+    # CI). The subdir is literally named `projects` to keep the suffix assertion true.
+    with tempfile.TemporaryDirectory() as tmp:
+        projects_dir = Path(tmp) / "projects"
+        (projects_dir / "fleet-health").mkdir(parents=True)
+        (projects_dir / "fleet-health" / "AGENDA.md").write_text(
+            "# fleet-health AGENDA\n", encoding="utf-8"
+        )
+        check(
+            "real project slug resolves to its AGENDA",
+            str(
+                dispatch.resolve_proposal_dest("fleet-health", projects_dir) or ""
+            ).endswith("projects/fleet-health/AGENDA.md"),
+        )
+        check(
+            "unknown slug => None (left advisory)",
+            dispatch.resolve_proposal_dest("definitely-not-a-project-zzz", projects_dir)
+            is None,
+        )
+        check(
+            "empty target => None",
+            dispatch.resolve_proposal_dest("", projects_dir) is None,
+        )
+        # A project not present in the tree (e.g. the retired `assistant`) resolves to
+        # None, so the proposal is left advisory rather than force-filed.
+        check(
+            "retired assistant project => None",
+            dispatch.resolve_proposal_dest("assistant", projects_dir) is None,
+        )
 
     print(f"\n{PASSED} passed, {FAILED} failed")
     return 1 if FAILED else 0
