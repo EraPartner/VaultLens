@@ -30,7 +30,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [python]
+        # The wiki tooling (python) plus the CI workflows themselves (actions —
+        # script injection, unpinned actions, permission misconfig). Both use
+        # build-mode: none, so the single build-mode below covers each job.
+        language: [python, actions]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
 
