@@ -1,0 +1,31 @@
+# CodeQL configuration for VaultLens.
+#
+# This is the SINGLE, project-tailored CodeQL configuration, consumed by the
+# advanced workflow at .github/workflows/codeql.yml. It intentionally replaces
+# GitHub's "default" code-scanning setup — the default setup must be disabled in
+# repository settings (Settings → Code security → Code scanning → switch from
+# "Default" to "Advanced") so that only this advanced configuration runs.
+# Running both at once produces a configuration error on the Analyze check.
+#
+# Only Python is analyzed (see the workflow matrix): the wiki tooling in tools/
+# is Python; the .devcontainer is Shell, which CodeQL has no analyzer for.
+
+name: "VaultLens CodeQL"
+
+# security-extended: broader security coverage than the default suite, without
+# the maintainability/"quality" queries (which generate a lot of style noise on
+# first adoption). Swap to security-and-quality if you also want those findings.
+queries:
+  - uses: security-extended
+
+# Deny-list only (no allow-list) so newly added Python under tools/ is scanned
+# by default. We exclude the test suites (exercised by the CI test job, not
+# shipped) and the vault content dirs (mostly gitignored prose, no code).
+paths-ignore:
+  # Test suites — stdlib unittest, run by the CI "Test (tooling)" job
+  - "tools/tests/**"
+  - "**/test_*.py"
+  # Vault content (also path-ignored at the workflow level)
+  - "wiki/**"
+  - "raw/**"
+  - "projects/**"

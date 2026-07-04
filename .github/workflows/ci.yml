@@ -93,10 +93,17 @@ jobs:
         run: python -m compileall -q tools
 
       - name: Run tooling test suite (stdlib unittest)
+        # Each suite sets up its own sys.path and is run directly (they are not
+        # importable as a package, so `unittest discover` finds nothing). Glob
+        # the directory rather than hard-coding names so new test_*.py files are
+        # picked up automatically instead of silently skipped.
         run: |
-          python tools/tests/test_wiki.py
-          python tools/tests/test_coverage.py
-          python tools/tests/test_schedule.py
+          rc=0
+          for t in tools/tests/test_*.py; do
+            echo "=== $t ==="
+            python "$t" || rc=1
+          done
+          exit "$rc"
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Quality Gate — all checks must pass. Single fan-in before CI Complete.
