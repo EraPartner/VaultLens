@@ -48,15 +48,19 @@ ip6tables -A OUTPUT -o lo -j ACCEPT
 
 # --- IPv4 base allows ---
 iptables -A INPUT  -i lo -j ACCEPT
-# Loopback OUTPUT is fully allowed so processes can reach squid on 127.0.0.1:3128.
-# DNS-exfil note: under Docker the embedded resolver lived on loopback (127.0.0.11),
-# so a blanket loopback accept would have let any process tunnel data out via DNS;
-# that needed an explicit per-resolver DROP here. apple/container's resolver is
-# EXTERNAL instead (the 192.168.64.0/24 gateway, e.g. 192.168.64.1), so the loopback
-# accept exposes no resolver, and a non-proxy DNS query to the external resolver is
-# already dropped by the default-deny + proxy-UID-only OUTPUT lock below (verified:
-# `dmesg | grep egress-deny` shows DST=192.168.64.1 DPT=53 dropped). No special
-# loopback DNS-drop rule is needed; the proxy UID still resolves names for squid.
+# Loopback OUTPUT lets processes reach squid on 127.0.0.1:3128 (and any local
+# service/DB/IPC a project runs on loopback). DNS-exfil hardening: a loopback-
+# resident DNS resolver would otherwise be reachable by ANY UID over loopback and
+# could front a data-exfil channel (Docker parity: the embedded resolver at
+# 127.0.0.11:53). apple/container's resolver is EXTERNAL (the 192.168.64.0/24
+# gateway, e.g. 192.168.64.1), so no loopback resolver exists there — a non-proxy
+# query to it is already dropped by the default-deny + proxy-UID lock below
+# (verified: `dmesg | grep egress-deny` shows DST=192.168.64.1 DPT=53 dropped).
+# To stay fail-closed under Docker too, deny NON-PROXY loopback DNS explicitly;
+# the proxy UID keeps full loopback (so it can still use such a resolver to serve
+# squid), and every other loopback flow is left untouched.
+iptables -A OUTPUT -o lo -m owner ! --uid-owner "$PROXY_USER" -p udp --dport 53 -j DROP
+iptables -A OUTPUT -o lo -m owner ! --uid-owner "$PROXY_USER" -p tcp --dport 53 -j DROP
 iptables -A OUTPUT -o lo -j ACCEPT
 iptables -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 # OUTPUT: accept ESTABLISHED only — NOT RELATED. The proxy UID's blanket ACCEPT
@@ -89,11 +93,15 @@ iptables -A EGRESS_DENY -j DROP
 iptables -A OUTPUT -j EGRESS_DENY
 
 # --- Verify the lock took, then drop the sentinel ---
-# Three independent invariants must ALL hold (script runs without `set -e`, so a
-# mid-script `iptables -A` failure can't be assumed to have aborted): default
-# policy is DROP, the proxy-UID ACCEPT exists, and the catch-all EGRESS_DENY jump
-# is present (so a ruleset that silently lost the deny/audit rule fails closed).
-if iptables -S OUTPUT 2>/dev/null | grep -q '^-P OUTPUT DROP' \
+# Four independent invariants must ALL hold (script runs without `set -e`, so a
+# mid-script `iptables -A` failure can't be assumed to have aborted): the IPv4
+# AND IPv6 OUTPUT policies are DROP, the proxy-UID ACCEPT exists, and the
+# catch-all EGRESS_DENY jump is present (so a ruleset that silently lost the
+# deny/audit rule fails closed). The IPv6 check matters because the design leans
+# on `ip6tables -P OUTPUT DROP` as the IPv6 backstop (see squid.conf): if that
+# policy-set silently failed above, the sentinel must NOT claim "verified".
+if iptables  -S OUTPUT 2>/dev/null | grep -q '^-P OUTPUT DROP' \
+   && ip6tables -S OUTPUT 2>/dev/null | grep -q '^-P OUTPUT DROP' \
    && iptables -C OUTPUT -m owner --uid-owner "$PROXY_USER" -j ACCEPT 2>/dev/null \
    && iptables -C OUTPUT -j EGRESS_DENY 2>/dev/null; then
   : > "$SENTINEL" 2>/dev/null || true

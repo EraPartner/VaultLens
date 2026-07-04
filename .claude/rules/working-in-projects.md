@@ -52,4 +52,4 @@ what the runner flagged), this is the flow — you do not need them to invoke an
    hand-edit `status`/`next_due`/the `questions` block or the `## Clarifications` entry.
 4. `python3 tools/wiki.py project agenda resolve <slug> <id>` — flips it to `clear`, sets `next_due`,
    removes the questions + clarification entry, logs it. The next nightly run then executes it.
-The `/project-clarify` skill is just a shortcut for this same flow; the operator never has to name it.
+The `/wiki-project-clarify` skill is just a shortcut for this same flow; the operator never has to name it.

@@ -91,7 +91,7 @@ Structure (single file, distinct from `TODO.md` so it never pollutes the Obsidia
   fields): `status::` (`clear`/`needs-clarification`/`blocked`/`done`/`paused`), `schedule::`
   (`once`/`nightly`/`weekly:Mon`/`every:3d`/`weekdays:Mon,Wed,Fri`), `last_run::`, `next_due::`,
   `acceptance::`, `output::`, plus `questions::`/`blocked_reason::` when relevant.
-- **`## Clarifications`** — open questions surfaced for `/project-clarify`.
+- **`## Clarifications`** — open questions surfaced for `/wiki-project-clarify`.
 - **`## Run log`** — append-only audit trail.
 
 The runner edits the working tree but **never commits**; the dispatcher snapshots
@@ -113,5 +113,5 @@ python3 tools/wiki.py project agenda ack <slug>          # "I reviewed the edits
 
 State transitions are mechanical — `complete <slug> <id>` (advance after execution),
 `resolve <slug> <id>` (clarification → clear), `new-id <slug>` — and are called by the runner /
-the `/project-clarify` skill, not hand-edited. After ≥2 nights of unreviewed edits a project is
+the `/wiki-project-clarify` skill, not hand-edited. After ≥2 nights of unreviewed edits a project is
 paused until `ack`.

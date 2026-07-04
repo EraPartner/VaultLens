@@ -15,7 +15,7 @@ Process raw source material and create/update wiki pages following the LLM Wiki 
 
 ## Pre-approved shell commands
 
-Your shell is the wiki's **read-only helper set** plus the **file-management set** (`touch`/`mkdir`/`mv`/`cp`/`sed`/`awk`) for files in your writable scope — the full lists are `READ_ONLY_SHELL_COMMANDS` / `WRITE_SHELL_COMMANDS` in `tools/agents/wiki-agent.py`. No `curl`, `git`, or deletion. How this is enforced depends on the launch path: a **headless** `brain-wiki` run pins it as a hard `--allowedTools` allowlist and the container mount confines writes to `wiki/` (raw/ and projects/ stay read-only); an **interactive** subagent run can't command-scope Bash through `tools:` frontmatter (a `Bash` grant there is unrestricted), so it leans on the operator's write-confirmation prompts, the global bash guard, and that same container mount.
+Read-only helper set plus file-management (`touch`/`mkdir`/`mv`/`cp`/`sed`/`awk`) within your writable scope (`wiki/`) — never `curl`, `git`, or delete. Enforcement mechanics: see CLAUDE.md § Tool permissions.
 
 ## Scope
 

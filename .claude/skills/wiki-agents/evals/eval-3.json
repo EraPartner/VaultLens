@@ -1,0 +1,11 @@
+{
+  "skills": ["wiki-agents"],
+  "query": "The wiki-connect agent just surfaced a really interesting bridge between two of my research areas. How do I make sure that insight doesn't just disappear?",
+  "files": [],
+  "expected_behavior": [
+    "Correctly states wiki-connect is a read-only thinking agent that never writes, so the insight must be persisted by something else",
+    "Recommends the operator hand it to wiki-enhancer to draft a durable wiki/syntheses/ page, matching wiki-connect's own documented handoff",
+    "Does not suggest wiki-connect can save its own output, or that the insight is automatically preserved anywhere",
+    "Correctly frames this as the general pattern for all four thinking agents (challenge/connect/emerge/discover): they reason and emit text only, durable output is filed via the operator's recommended handoff"
+  ]
+}

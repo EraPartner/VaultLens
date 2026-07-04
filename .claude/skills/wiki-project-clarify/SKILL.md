@@ -1,6 +1,6 @@
 ---
-name: project-clarify
-description: Resolve the open questions the nightly project-runner could not decide alone. Use when the user runs /project-clarify, asks to clear project clarifications, wants to answer the runner's questions, or after a morning roll-up reports clarifications opened. Interviews the user one task at a time, then flips each resolved task back to clear so the next nightly run executes it.
+name: wiki-project-clarify
+description: Resolve the open questions the nightly project-runner could not decide alone. Use when the user runs /wiki-project-clarify, asks to clear project clarifications, wants to answer the runner's questions, or after a morning roll-up reports clarifications opened. Interviews the user one task at a time, then flips each resolved task back to clear so the next nightly run executes it.
 ---
 
 # Project clarifier
@@ -16,7 +16,7 @@ open question (unattended); you conduct the interview (attended).
 
 ## When to use
 
-The operator runs `/project-clarify` (optionally `/project-clarify <slug>` to scope to one
+The operator runs `/wiki-project-clarify` (optionally `/wiki-project-clarify <slug>` to scope to one
 project), asks to "resolve clarifications / answer the runner's questions", or a morning
 project-runner roll-up reported `Clarifications opened`.
 

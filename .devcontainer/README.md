@@ -175,16 +175,34 @@ for a one-shot readiness check (egress lock, toolchain, qmd, auth).
 Projects under `projects/` symlink to source dirs that live **outside** the vault
 (e.g. `projects/example-course/Example Course -> ~/Documents/coursework/Example Course`). Those
 symlinks store absolute host paths, so they dangle in the container unless the
-target exists at the **same** path. Each unique target ancestor is therefore
-bind-mounted **read-only at its identical absolute path** (the four rows above),
-which makes the existing symlinks resolve transparently — no symlink rewriting.
-Egress stays locked, so mounted source can be read for wiki-building but not
-exfiltrated; read-only means the agents can't alter your real coursework/source.
+target exists at the **same** path. `bin/agent` resolves this **per run, not
+statically**: it scans only the vault subtrees the run's scope can reach for
+outbound symlinks, accepts a target only if it sits under an allowlisted root
+(`ALLOW_ROOTS` — `~/Code/{Vision,Watchman,…}`, `~/Documents/School`; Finance is
+opt-in via `BRAIN_MOUNT_FINANCE`), and bind-mounts each accepted target
+**read-only at its identical absolute path**. A stray symlink to anything else
+(e.g. `~/.ssh`) is skipped and warned — fail-closed. Egress stays locked, so
+mounted source can be read for wiki-building but not exfiltrated; read-only means
+the agents can't alter your real coursework/source.
 
-**Adding a project with a new symlink target:** if its target isn't already
-under one of the mounted ancestors, add a matching
-read-only `-v <target>:<target>:ro` mount in `bin/agent`
-and rebuild. List current targets with:
+**Scan scope is least-privilege per run** (the rows above show the *interactive*
+master/reader maximum, not what every run gets):
+
+- `project` (project-runner) scans only `projects/<slug>` → just that one
+  project's deps (e.g. `projects/dep` mounts only `~/Documents/School/DEP`).
+- `author`/`raw` (enhance, ingest) scan only `raw/`.
+- `master`/`reader`/`projects` (interactive, CoS) scan `projects/` + `raw/`.
+- `BRAIN_SCAN_SCOPE` overrides the profile default (`none` mounts no external
+  targets at all). The read-only thinking agents `contradict`/`emerge`/`discover`
+  set `none` in `brain-wiki` — they reason over `wiki/` only, so the nightly
+  scheduler runs them with zero coursework/source dirs mounted. It can only
+  narrow the scan; the write surface is still the profile's.
+
+**Adding a project with a new symlink target:** mounting is automatic once the
+target is under an allowlisted root. For a target outside `~/Code` /
+`~/Documents/School`, add its root to `ALLOW_ROOTS` in `bin/agent` (or set
+`BRAIN_MOUNT_FINANCE` for the Finance scans). Preview what a run would mount with
+`BRAIN_DRYRUN=1`; list current symlink targets with
 `find projects -maxdepth 3 -type l -exec readlink {} \; | sort -u`.
 
 The vault is bind-mounted at `/workspaces/Brain`, so wiki edits appear on the

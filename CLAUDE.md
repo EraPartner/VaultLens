@@ -114,7 +114,7 @@ automatically via directory walking).
 agent, which grooms loose tasks into a clear structured form, executes the ones that are 100% clear
 and due (writing only inside `projects/<slug>/`, applied-not-committed with a pre-run snapshot for
 undo), and files clarifications for anything ambiguous. Resolve those interactively with
-`/project-clarify`. See `## Scheduled agents` and the runbook below.
+`/wiki-project-clarify`. See `## Scheduled agents` and the runbook below.
 
 **Runbook:** scaffolded structure, the `project.md` page schema, `project new/link/show` usage,
 keeping `project.md` current, the TODO.md format/aggregators, and the `AGENDA.md` schema +
@@ -149,9 +149,12 @@ up the project's `CLAUDE.md`, which loads `project.md` plus this root schema.
 For complex wiki tasks use the custom agents in `.claude/agents/` (`*.md`): `wiki-ingest`,
 `wiki-enhancer`, `wiki-source-verifier`, `wiki-quality-reviewer`, `wiki-contradiction-detector`,
 `wiki-search`, plus the read-only thinking agents `wiki-challenge` / `wiki-connect` / `wiki-emerge` /
-`wiki-idea-discovery`. They are native Claude Code subagents (invoke by name in a session); headless
-and batch runs go through `tools/agents/wiki-agent.py` (host: `brain-wiki`), which adds the enhance
-loops, CoS live-context gathering, PDF pre-extraction, and auto-logging.
+`wiki-idea-discovery` — and two more with their own operating modes described elsewhere in this file:
+`wiki-cos` (Chief of Staff — see `## Canonical operations`) and `wiki-project-runner` (nightly
+autonomous task execution — see `## Scheduled agents`). They are native Claude Code subagents (invoke
+by name in a session); headless and batch runs go through `tools/agents/wiki-agent.py`
+(host: `brain-wiki`), which adds the enhance loops, CoS live-context gathering, PDF pre-extraction,
+and auto-logging.
 
 **Runbook:** the what-agent-for-what table, reads/writes + handoffs, thinking-agent flags,
 `wiki-agent.py` invocations, and model/effort options live in

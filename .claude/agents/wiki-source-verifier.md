@@ -1,7 +1,7 @@
 ---
 name: wiki-source-verifier
 description: >-
-  Verify wiki claims against original raw source material. Checks accuracy, completeness, and context preservation. Read-only — does not modify files.
+  Cross-check a wiki page's claims against its original raw source material to verify accuracy, completeness, and context preservation. Read-only — does not modify files.
 tools: Read, Glob, Grep
 ---
 

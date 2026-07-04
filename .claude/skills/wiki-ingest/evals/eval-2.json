@@ -1,0 +1,12 @@
+{
+  "skills": ["wiki-ingest"],
+  "query": "Ingest this: it's a full textbook (Sedgewick's Algorithms, 4th edition), not a single paper.",
+  "files": ["raw/sources/algorithms-4th-edition.pdf"],
+  "expected_behavior": [
+    "Recognizes source_type: book and switches to the book-specific extraction approach rather than the default single-thesis paper flow",
+    "Produces a structure map (chapter/section outline) as the skeleton of the source page",
+    "Extracts core definitions, key methods/algorithms, and important principles as separate concept pages rather than one monolithic page",
+    "Explicitly does NOT attempt to summarize every chapter — instead surfaces the ~10-20 most central ideas per the skill's stated depth rule",
+    "Captures a prerequisite chain via requires: links between concept pages where the book implies one topic depends on another"
+  ]
+}

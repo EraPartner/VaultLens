@@ -1,0 +1,11 @@
+{
+  "skills": ["wiki-project-clarify"],
+  "query": "Great, that clarification is resolved. Will it run tonight?",
+  "files": [],
+  "expected_behavior": [
+    "Correctly states the task will run on the next eligible nightly tick ONLY if the project is opted in (enabled: true in AGENDA.md frontmatter)",
+    "If the project's enabled status is unknown, checks or asks rather than assuming it will run",
+    "If the project is still dormant, explicitly states that python3 tools/wiki.py project agenda enable <slug> is needed first",
+    "Does not claim the resolved task runs immediately or on the current invocation"
+  ]
+}

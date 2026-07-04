@@ -1,0 +1,11 @@
+{
+  "skills": ["wiki-agents"],
+  "query": "I'm not sure if the wiki page on 'AES-GCM' is accurate to what my source PDF actually says, and separately I think it might contradict the newer page on 'ChaCha20-Poly1305' regarding performance claims. Which agent(s) do I need?",
+  "files": [],
+  "expected_behavior": [
+    "Recommends wiki-source-verifier for the source-fidelity question (comparing the AES-GCM page against its original raw source)",
+    "Recommends wiki-contradiction-detector separately for the cross-page conflict question, not the same agent for both",
+    "Does not conflate wiki-source-verifier (single page vs. its source) with wiki-contradiction-detector (multiple wiki pages vs. each other) — correctly explains the distinction",
+    "Notes both are read-only and recommends the correct follow-up agent (wiki-enhancer) if either surfaces something that needs fixing, since neither verifier writes"
+  ]
+}

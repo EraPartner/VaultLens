@@ -155,3 +155,56 @@ sandbox_warn_stale_allowlist() {
   fi
   rm -f "$tmp"
 }
+
+# --- Lock host-executed git paths READ-ONLY (.git + relocated hooks) ----------
+# Usage: sandbox_git_ro_mounts <host_repo_root> <container_workspace_path>
+# Populates the global GIT_RO_MOUNTS array with `-v …:ro` flags the caller splices
+# into its `container run`. Declare-safe expand at the call site:
+#   sandbox_git_ro_mounts "$PROJECT_ROOT" /workspaces/Foo
+#   ... ${GIT_RO_MOUNTS[@]+"${GIT_RO_MOUNTS[@]}"} ...
+#
+# WHY: git hooks run on the HOST. The documented workflow is commit/push on your
+# Mac (the box carries no push credential and mounts .git RO), so any hook script
+# an in-container agent can write into the RW workspace would later execute on the
+# host, as you, with Keychain + ssh-agent + gh token in reach — a VM→host escape
+# that bypasses the hypervisor and fires on a routine `git commit`. This closes it:
+#
+#   1) .git RO           — blocks history rewrite AND planting a .git/hooks/* script.
+#   2) core.hooksPath RO — `core.hooksPath` RELOCATES hooks OUTSIDE .git (Vision,
+#      Watchman, Brain and this repo all set it to `.githooks`), so the RO .git
+#      mount does NOT cover them; they inherit the writable workspace. Lock the
+#      effective hooks dir too. An absolute hooksPath (outside the workspace) or one
+#      already under .git needs no extra mount. If it is SET but the dir is ABSENT,
+#      an agent could create it in the RW workspace and plant a hook — overlay an
+#      empty RO dir so that path can't be written. (Cost, verified against
+#      apple/container: mounting a nonexistent subpath of the RW workspace makes the
+#      runtime create the mountpoint, leaving a spurious EMPTY `<hooksPath>/` in the
+#      host workspace — cosmetic, and only in this misconfigured edge case; real
+#      hooks dirs mount cleanly.) Relative values resolve against the repo root
+#      (where git runs the hooks from); `..` is rejected.
+#
+# Generalizes git-agent's empty-hooks overlay for the RW-workspace launchers.
+# bash-3.2: indexed array, no `local -n`; `git` may be absent (falls back to .git).
+sandbox_git_ro_mounts() {
+  local repo="$1" ws="$2" hp abs src empty
+  GIT_RO_MOUNTS=()
+  [[ -n "$repo" && -e "$repo/.git" ]] || return 0
+  GIT_RO_MOUNTS+=(-v "$repo/.git:$ws/.git:ro")
+
+  hp="$(git -C "$repo" config core.hooksPath 2>/dev/null || true)"
+  [[ -n "$hp" ]] || return 0
+  case "$hp" in
+    /*)          return 0 ;;  # absolute → outside the workspace mount, not ours
+    .git|.git/*) return 0 ;;  # already under the RO .git mount above
+    *..*)        return 0 ;;  # reject path traversal (defense in depth)
+  esac
+  abs="$repo/$hp"
+  if [[ -d "$abs" ]]; then
+    src="$abs"                # real versioned hooks: RO blocks host-side tampering
+  else
+    empty="$HOME/.claude-sandbox/empty-hooks"  # absent dir: block creating one
+    mkdir -p "$empty" 2>/dev/null || return 0
+    src="$empty"
+  fi
+  GIT_RO_MOUNTS+=(-v "$src:$ws/${hp}:ro")
+}

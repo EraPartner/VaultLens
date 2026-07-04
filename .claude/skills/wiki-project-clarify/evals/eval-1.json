@@ -1,0 +1,11 @@
+{
+  "skills": ["wiki-project-clarify"],
+  "query": "/wiki-project-clarify — the morning roll-up said the thesis project has 3 clarifications open.",
+  "files": [],
+  "expected_behavior": [
+    "Gathers pending clarifications via python3 tools/wiki.py project agenda clarifications --json, filtered to the thesis slug",
+    "Interviews the operator ONE task at a time, not by dumping all 3 tasks' questions in a single wall of text",
+    "Batches a single task's own questions together rather than asking them one at a time across multiple turns",
+    "Uses AskUserQuestion when a task's open questions have a small set of concrete options, and plain text otherwise"
+  ]
+}

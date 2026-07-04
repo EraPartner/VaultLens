@@ -1,7 +1,7 @@
 ---
 name: wiki-quality-reviewer
 description: >-
-  Review wiki pages for content quality, claim accuracy, structural integrity, and cross-reference validity. Read-only analysis — does not modify files.
+  Source-blind review of a single wiki page's intrinsic quality — internal consistency, falsifiability, structural integrity, and cross-reference validity — judged from the page alone, without checking it against the original source material. Read-only analysis — does not modify files.
 tools: Read, Glob, Grep
 ---
 

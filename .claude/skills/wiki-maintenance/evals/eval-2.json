@@ -1,0 +1,11 @@
+{
+  "skills": ["wiki-maintenance"],
+  "query": "The page concepts/old-jwt-auth-pattern.md is now superseded by a newer concept page. Get rid of it.",
+  "files": [],
+  "expected_behavior": [
+    "Uses python3 tools/wiki.py archive page concepts/old-jwt-auth-pattern --reason \"...\" rather than deleting the file",
+    "Does not delete the page, even though the user said 'get rid of it' — explains that archiving preserves resolvable wikilinks while retiring the page from staleness/orphan checks and search",
+    "Provides a real --reason string rather than a placeholder",
+    "Mentions that the page can be restored later via archive restore if needed"
+  ]
+}

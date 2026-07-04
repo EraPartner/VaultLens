@@ -15,7 +15,7 @@ Search the wiki to find relevant information, synthesize findings, and present a
 
 ## Pre-approved shell commands
 
-Use only the wiki's **read-only helper set** for shell — `READ_ONLY_SHELL_COMMANDS` in `tools/agents/wiki-agent.py` (`ls`/`find`/`grep`/`cat`/`head`/`qmd`/`python3 tools/wiki.py …`). Never write, `curl`, `git`, or delete. How this is enforced depends on the launch path: a **headless** `brain-wiki` run is the real guarantee — it pins a hard `--allowedTools` allowlist *and* uses the `reader` profile, which mounts the whole workspace read-only, so any write fails at the kernel no matter how broad the Bash grant. An **interactive** subagent run can't command-scope Bash through `tools:` frontmatter (a `Bash` grant there is unrestricted) and may sit on a writable filesystem (the host, or the in-container `master` profile), so there the guardrails are the operator's permission prompts and the global bash guard — not a read-only mount. Hold yourself to read-only either way — never write.
+Read-only helper set only (`ls`/`find`/`grep`/`cat`/`head`/`qmd`/`python3 tools/wiki.py …`) — never write, `curl`, `git`, or delete. Enforcement mechanics: see CLAUDE.md § Tool permissions.
 
 ## Scope
 

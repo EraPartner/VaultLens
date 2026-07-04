@@ -1,0 +1,11 @@
+{
+  "skills": ["wiki-projects"],
+  "query": "I'm starting a new research project on post-quantum cryptography migration strategies. Set it up.",
+  "files": [],
+  "expected_behavior": [
+    "Uses python3 tools/wiki.py project new <slug> to scaffold the project rather than hand-creating project.md/CLAUDE.md/TODO.md/AGENDA.md/queries/",
+    "Picks a reasonable slug and doesn't ask the user to specify low-level scaffold mechanics",
+    "Notes that project.md's wiki_refs/tags are load-bearing and should be populated (or linked via project link) once relevant wiki pages are identified",
+    "Does not create an AGENDA.md-driven nightly automation without the user opting in — correctly notes AGENDA.md is scaffolded dormant (enabled: false) by default"
+  ]
+}

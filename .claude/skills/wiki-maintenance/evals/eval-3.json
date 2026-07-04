@@ -1,0 +1,11 @@
+{
+  "skills": ["wiki-maintenance"],
+  "query": "I just bulk-added 15 new concept pages by hand outside of an ingest run. The wiki/index.md dataview view seems to be missing some of them. What do I do?",
+  "files": [],
+  "expected_behavior": [
+    "Identifies this as a stale _index.md mirror issue and runs python3 tools/wiki.py index --rebuild rather than hand-editing _index.md",
+    "Explicitly states _index.md is a generated file that must never be hand-edited",
+    "Also checks/fixes wikilink dual-link coverage via python3 tools/wiki.py links --fix --write for the newly added pages",
+    "Notes that wiki/index.md itself (the live Dataview view inside Obsidian) updates on its own, distinguishing it from the generated _index.md mirrors"
+  ]
+}

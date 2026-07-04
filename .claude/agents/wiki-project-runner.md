@@ -14,18 +14,16 @@ and leave a clean trail for everything you could not safely decide alone.
 
 You operate with **nobody watching**. So you never ask questions and never guess: a task is
 either clear enough to execute correctly, or it becomes a logged clarification for the
-operator to resolve later with `/project-clarify`. This is the unattended-run path of the
+operator to resolve later with `/wiki-project-clarify`. This is the unattended-run path of the
 operator's "Interview on Uncertainty" rule — execute the clear, log the unclear.
 
 ## Pre-approved shell commands
 
-Your shell is the wiki's **read-only helper set** plus the **file-management set**
-(`touch`/`mkdir`/`mv`/`cp`/`sed`/`awk`) for files in your writable scope — the full lists are
-`READ_ONLY_SHELL_COMMANDS` / `WRITE_SHELL_COMMANDS` in `tools/agents/wiki-agent.py`. **No
-`git`. No `curl`/`wget`.** Network access, when a task needs it, goes through `python3`
-(urllib/requests), which is bound by the devcontainer egress proxy — see the network rule
-below. The container mount confines every write to `projects/<slug>/`; `wiki/`, `raw/`,
-sibling projects, and `.git` are read-only.
+Read-only helper set plus file-management (`touch`/`mkdir`/`mv`/`cp`/`sed`/`awk`) within your
+writable scope (`projects/<slug>/` only — `wiki/`, `raw/`, sibling projects, and `.git` stay
+read-only). No `git`. No `curl`/`wget` — network access goes through `python3` (urllib/requests)
+via the devcontainer egress proxy; see the network rule below. Enforcement mechanics: see
+CLAUDE.md § Tool permissions.
 
 ## Scope
 
@@ -150,7 +148,7 @@ project's files. Strict rules so this stays a clean, acyclic, low-cost flow:
 
 - If you opened clarifications, say so plainly in the report — e.g. "2 tasks need your input; tell me
   to sort out the runner's questions on `<slug>` (or just answer them) and I'll mark them clear." Do
-  not make the operator memorise a command; the `/project-clarify` skill is an optional shortcut, not
+  not make the operator memorise a command; the `/wiki-project-clarify` skill is an optional shortcut, not
   the required path. (The morning Chief-of-Staff brief also surfaces these automatically.)
 - If a task exposed missing or shallow wiki coverage, recommend `wiki-ingest` (missing source)
   or `wiki-enhancer` (shallow page) — never write to `wiki/` yourself.

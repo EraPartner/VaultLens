@@ -191,8 +191,13 @@ next eligible tick. Sleep / offline / closed-lid become non-events.
   on the host. No container, no network, no fish. Maximally robust.
 - **LLM agents:** dispatcher calls `fish -lc "brain-wiki <agent> …"` (login shell
   so the `brain-*` autoloaded functions + PATH + Keychain resolve). `brain-wiki`
-  already maps each command to its container profile (reader / author), so the
-  dispatcher does not re-implement profiles.
+  already maps each command to its container profile (reader / author / project),
+  so the dispatcher does not re-implement profiles. `brain-wiki` also sets
+  `BRAIN_SCAN_SCOPE=none` for the read-only thinking agents
+  (`contradict`/`emerge`/`discover`) so they mount **no** external coursework/source
+  dirs — they reason over `wiki/` only. Readers that do read across projects (CoS)
+  keep the default scan. So every scheduled container is least-privilege on both
+  axes: writes scoped to the profile's hole, reads scoped to what the agent uses.
 - **VERIFY before build:** Keychain access from a launchd-spawned `fish` in the
   Aqua session (should work; confirm `brain-wiki` can mint the copilot/claude
   token non-interactively).

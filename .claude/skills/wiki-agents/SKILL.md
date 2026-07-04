@@ -58,7 +58,7 @@ invocation per opted-in (`enabled: true`) project with a due `AGENDA.md` task. I
 executes clear+due tasks inside `projects/<slug>/` (applied-not-committed), files clarifications for
 ambiguous ones, and prints a roll-up block. Run it by hand only to test:
 `brain-wiki project-run --project <slug>` (needs the `project` sandbox profile, so launch via
-`brain-wiki`, not bare `wiki-agent.py`). Resolve its clarifications with the `/project-clarify` skill;
+`brain-wiki`, not bare `wiki-agent.py`). Resolve its clarifications with the `/wiki-project-clarify` skill;
 manage agendas with `wiki.py project agenda …` (see `.claude/skills/wiki-projects/SKILL.md`).
 
 **Models:** `sonnet` (default) / `haiku` / `opus` via `--model`. **Effort:** `low` / `medium` /

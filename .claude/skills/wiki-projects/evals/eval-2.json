@@ -1,0 +1,10 @@
+{
+  "skills": ["wiki-projects"],
+  "query": "Add concepts/lattice-based-cryptography and concepts/nist-pqc-standardization as references for the post-quantum-crypto project.",
+  "files": [],
+  "expected_behavior": [
+    "Uses python3 tools/wiki.py project link <slug> concepts/<page> for each page rather than hand-editing the project.md frontmatter",
+    "Explicitly states that wiki_refs should never be hand-edited because project link preserves YAML formatting and bumps updated automatically",
+    "Confirms both pages actually exist in the wiki before linking, rather than linking to pages that don't exist yet"
+  ]
+}

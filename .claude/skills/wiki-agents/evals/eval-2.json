@@ -1,0 +1,11 @@
+{
+  "skills": ["wiki-agents"],
+  "query": "Run the project-runner for the 'thesis' project tonight to see what it would do.",
+  "files": [],
+  "expected_behavior": [
+    "Routes the invocation through brain-wiki project-run --project thesis, not a bare python3 tools/agents/wiki-agent.py project-run call",
+    "Explains that wiki-agent.py refuses to run on the host and needs the project sandbox profile, which only brain-wiki provides",
+    "Notes that project-runner is a writer (applied-not-committed inside projects/thesis/) and is normally scheduler-driven, so running it by hand is for testing",
+    "Does not describe project-runner as read-only or as something that touches wiki/ or raw/"
+  ]
+}

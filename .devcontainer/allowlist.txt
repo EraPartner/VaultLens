@@ -20,11 +20,17 @@ api.anthropic.com
 console.anthropic.com
 
 # GitHub — git over HTTPS (push/fetch), the REST/GraphQL API (gh), codeload and
-# the raw/content CDN. Needed by every container (git/gh and package installs).
+# the raw/release-asset content hosts. Needed by every container (git/gh and
+# package installs). NOT a bare `.githubusercontent.com` wildcard: that apex
+# matches every content subdomain (gist./camo./avatars./…) and is the widest
+# name on the floor, so scope it to the two subdomains actually used. A project
+# that needs another (e.g. gist.githubusercontent.com) adds it to its own
+# allowlist.extra.txt rather than reopening the wildcard for all six containers.
 github.com
 api.github.com
 codeload.github.com
-.githubusercontent.com
+raw.githubusercontent.com
+objects.githubusercontent.com
 
 # ==== Brain project-specific extras ====
 # Brain project-specific egress extras (merged onto base-allowlist.txt by

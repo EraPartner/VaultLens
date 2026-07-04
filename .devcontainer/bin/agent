@@ -2,13 +2,13 @@
 # apple/container launcher: route an agent command into the Brain sandbox.
 # Docker-free successor to the former Docker Compose launcher.
 # Capability profiles enforced by per-profile MOUNT flags instead of compose files:
-#   master   -> workspace READ-WRITE
+#   master   -> workspace READ-WRITE (except tools/ RO — host executes it)
 #   reader   -> workspace READ-ONLY, no hole
 #   author   -> RO + RW hole wiki/
 #   raw      -> RO + RW hole raw/
 #   projects -> RO + RW hole projects/
 #   project  -> RO + RW hole projects/<X>/
-# .git + .devcontainer stay RO in every profile. Per-profile isolation = a distinct
+# .git + .devcontainer (+ tools/, host-executed) stay RO in every profile. Per-profile isolation = a distinct
 # container NAME and its own home volumes (both keyed by BRAIN_VOL_KEY).
 #
 # apple/container deltas: `--init` = compose init:true; `--tmpfs` bare path only;
@@ -82,6 +82,15 @@ SVC_USER=dev
 WS_MOUNTS=()
 if [[ "$PROFILE" == "master" ]]; then
   WS_MOUNTS+=(-v "$PROJECT_ROOT:$CONTAINER_WS")
+  # tools/ is code the HOST executes: the git hooks (pre-commit/pre-push) and the
+  # launchd scheduler run tools/*.py straight from the working tree, unsandboxed,
+  # as the user. master mounts the vault RW, so without this a prompt-injected
+  # master session could rewrite e.g. tools/schedule/dispatch.py (fired by a
+  # launchd timer, no human commit needed) and escape the VM to host code-exec.
+  # Overlay tools/ RO here — same container→host defense as the RO .git/.githooks
+  # mounts below. Scoped profiles already mount the whole workspace RO, so they
+  # need no extra rule. Edit tools/ from the host (or a dedicated writable profile).
+  [[ -d "$PROJECT_ROOT/tools" ]] && WS_MOUNTS+=(-v "$PROJECT_ROOT/tools:$CONTAINER_WS/tools:ro")
 else
   WS_MOUNTS+=(-v "$PROJECT_ROOT:$CONTAINER_WS:ro")
   [[ -n "$WRITE_PATH" ]] && WS_MOUNTS+=(-v "$PROJECT_ROOT/$WRITE_PATH:$CONTAINER_WS/$WRITE_PATH")
@@ -103,10 +112,25 @@ ALLOW_ROOTS=("$HOME/Code/Vision" "$HOME/Code/Watchman" "$HOME/Code/Napoleon-rela
 #   project                -> just this project's deps (projects/<slug>)
 #   author|raw             -> raw/ (ingest's symlinked sources, if any)
 #   master|reader|projects -> projects/ + raw/ (everything projects rely on; interactive)
-case "$PROFILE" in
-  project)    SCAN_DIRS=("$PROJECT_ROOT/$WRITE_PATH") ;;
-  author|raw) SCAN_DIRS=("$PROJECT_ROOT/raw") ;;
-  *)          SCAN_DIRS=("$PROJECT_ROOT/projects" "$PROJECT_ROOT/raw") ;;
+# BRAIN_SCAN_SCOPE overrides the profile default so an agent that never follows
+# outbound symlinks gets a narrower (or empty) scan than its profile would imply.
+# This is how the read-only thinking agents (contradict/emerge/discover) reason over
+# wiki/ only and get NO ~/Documents/School + ~/Code bind-mounts, instead of inheriting
+# the broad reader default. Tokens: none | raw | projects | projects+raw (else profile
+# default). It can only NARROW intent vs the profile; the write surface is still the
+# profile's, so this never grants extra access.
+case "${BRAIN_SCAN_SCOPE:-}" in
+  none)          SCAN_DIRS=() ;;
+  raw)           SCAN_DIRS=("$PROJECT_ROOT/raw") ;;
+  projects)      SCAN_DIRS=("$PROJECT_ROOT/projects") ;;
+  projects+raw)  SCAN_DIRS=("$PROJECT_ROOT/projects" "$PROJECT_ROOT/raw") ;;
+  "")
+    case "$PROFILE" in
+      project)    SCAN_DIRS=("$PROJECT_ROOT/$WRITE_PATH") ;;
+      author|raw) SCAN_DIRS=("$PROJECT_ROOT/raw") ;;
+      *)          SCAN_DIRS=("$PROJECT_ROOT/projects" "$PROJECT_ROOT/raw") ;;
+    esac ;;
+  *) echo "agent: unknown BRAIN_SCAN_SCOPE='$BRAIN_SCAN_SCOPE' (none raw projects projects+raw)." >&2; exit 1 ;;
 esac
 _cands=()
 for _scan in ${SCAN_DIRS[@]+"${SCAN_DIRS[@]}"}; do
@@ -140,6 +164,7 @@ done
 if [[ -n "${BRAIN_DRYRUN:-}" ]]; then
   echo "profile      : $PROFILE  (label: $PROFILE_LABEL)"
   echo "writable hole: ${WRITE_PATH:-<none — read-only>}"
+  echo "scan scope   : ${BRAIN_SCAN_SCOPE:-<profile default>}"
   echo "container    : $NAME"
   echo "volume key   : $BRAIN_VOL_KEY"
   echo "ws mounts    : ${WS_MOUNTS[*]}"
@@ -154,6 +179,10 @@ LIB="$DC/launcher-common.sh"
 # shellcheck source=/dev/null
 source "$LIB"
 sandbox_stage_claude_config brain
+# Lock host-executed git paths (.git + relocated core.hooksPath, e.g. .githooks)
+# :ro over the RW workspace — an in-container agent must not plant a hook the HOST
+# git runs on commit/push. Populates GIT_RO_MOUNTS; see launcher-common.sh.
+sandbox_git_ro_mounts "$PROJECT_ROOT" "$CONTAINER_WS"
 
 # --- 3) Build (cached) -------------------------------------------------------
 container build -t "$IMAGE" "$DC" >/dev/null
@@ -189,7 +218,7 @@ else
     -e NO_PROXY=localhost,127.0.0.1,::1 \
     -e no_proxy=localhost,127.0.0.1,::1 \
     "${WS_MOUNTS[@]}" \
-    -v "$PROJECT_ROOT/.git:$CONTAINER_WS/.git:ro" \
+    ${GIT_RO_MOUNTS[@]+"${GIT_RO_MOUNTS[@]}"} \
     -v "$DC:$CONTAINER_WS/.devcontainer:ro" \
     -v "brain-claude-$BRAIN_VOL_KEY:/home/dev/.claude" \
     -v "brain-local-$BRAIN_VOL_KEY:/home/dev/.local" \

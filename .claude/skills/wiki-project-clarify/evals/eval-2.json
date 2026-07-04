@@ -1,0 +1,11 @@
+{
+  "skills": ["wiki-project-clarify"],
+  "query": "For task [T4] on the fleet-health project, the answer is: check it every Monday, and output to projects/fleet-health/reports/.",
+  "files": [],
+  "expected_behavior": [
+    "Edits the task's acceptance:: line into a single objective, self-verifiable statement reflecting the answer, and sets schedule:: to weekly:Mon",
+    "Sets output:: to the given path",
+    "Does NOT hand-edit status::, next_due::, the questions:: block, or the ## Clarifications entry directly",
+    "Calls python3 tools/wiki.py project agenda resolve fleet-health T4 as the mechanism that flips status to clear and removes the questions/clarification entry, rather than editing those fields by hand"
+  ]
+}

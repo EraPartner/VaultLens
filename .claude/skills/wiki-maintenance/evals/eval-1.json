@@ -1,0 +1,11 @@
+{
+  "skills": ["wiki-maintenance"],
+  "query": "Run a health check on the wiki and tell me what needs fixing first.",
+  "files": [],
+  "expected_behavior": [
+    "Runs python3 tools/wiki.py lint (and considers lint --strict for orphan pages) rather than manually grepping for issues",
+    "Distinguishes errors from warnings using lint --json rather than treating every flagged item as equally urgent",
+    "Recommends fixing highest-priority issues first rather than dumping the raw lint output unprioritized",
+    "Correctly notes that semantic (non-programmatic) checks like factual accuracy or cross-page contradictions require the quality/contradict/verify agents, not the lint command, and are out of this skill's own scope"
+  ]
+}

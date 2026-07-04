@@ -1,0 +1,11 @@
+{
+  "skills": ["wiki-ingest"],
+  "query": "After ingesting the last source, what should happen next, and who should I hand this off to if I think there might be overlap with existing wiki content on the same topic?",
+  "files": [],
+  "expected_behavior": [
+    "Recommends wiki-contradiction-detector as a follow-up when the newly ingested source covers a topic the wiki already discusses",
+    "Recommends a wiki-enhancer --coverage follow-up for dense sources that were only partially extracted in this pass",
+    "Does not claim wiki-ingest itself is responsible for cross-checking conflicts against existing pages — correctly states that's out of its scope",
+    "Correctly distinguishes its own scope (first-pass extraction from a source the wiki has never seen) from wiki-enhancer's scope (improving an already-ingested source)"
+  ]
+}

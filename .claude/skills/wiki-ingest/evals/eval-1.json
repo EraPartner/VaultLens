@@ -1,0 +1,13 @@
+{
+  "skills": ["wiki-ingest"],
+  "query": "Ingest raw/inbox/attention-is-all-you-need.pdf into the wiki.",
+  "files": ["raw/inbox/attention-is-all-you-need.pdf"],
+  "expected_behavior": [
+    "Reads the pre-extracted raw/sources-text/<stem>.md sibling rather than attempting to Read the .pdf directly",
+    "Creates a wiki/sources/src-*.md page using the wiki/_templates/source.md template with source_id, source_type, origin, ingested_on frontmatter",
+    "Writes a summary that is one falsifiable sentence, <=220 chars",
+    "Extracts claims that are falsifiable, specific, complete, and traceable to the source rather than vague generalities",
+    "Ends the source page's ## Sources section citing the raw material with the exact required shape (Source text: [[raw/sources-text/<stem>]], optionally Source PDF: [[raw/sources/<stem>.pdf]])",
+    "Does not attempt to mv the source PDF itself, since only the launcher promotes raw/inbox/ files to raw/sources/"
+  ]
+}

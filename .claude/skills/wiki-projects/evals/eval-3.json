@@ -1,0 +1,11 @@
+{
+  "skills": ["wiki-projects"],
+  "query": "Remind me to email my advisor about the thesis defense date next Tuesday.",
+  "files": [],
+  "expected_behavior": [
+    "Puts this in the project's TODO.md (the Obsidian Tasks plugin list, using the emoji date format) rather than AGENDA.md",
+    "Explicitly distinguishes TODO.md (operator's personal Obsidian Tasks list) from AGENDA.md (autonomous nightly-runner task state) and states this task belongs in TODO.md because it's a human action item, not something an unattended agent should execute",
+    "Uses the correct Obsidian Tasks emoji format for a due date (📅 YYYY-MM-DD) matching next Tuesday's actual date",
+    "Does not create or modify an AGENDA.md entry for this request"
+  ]
+}
