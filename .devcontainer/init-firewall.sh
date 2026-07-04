@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # CANONICAL egress firewall — proxy-only model. Shared, identical across all
 # devcontainers. DO NOT edit per-project copies: edit THIS file in
-# Projects/devcontainer-egress/ and run ./sync.sh, then rebuild.
+# Projects/LockBox/ and run ./sync.sh, then rebuild.
 #
 # Baked into each image at /usr/local/sbin/egress-firewall; invoked by the root
 # entrypoint on every start. Egress is locked to the squid proxy's UID only;

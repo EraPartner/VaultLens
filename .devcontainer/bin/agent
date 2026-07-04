@@ -106,7 +106,7 @@ fi
 # pull in ~/.ssh). A scan project that symlinks only ~/Code/* therefore gets NO School/finance
 # mount — PII is structurally absent from that run. Finance scans stay OPT-IN (audit BR1):
 # their root is allowlisted only when BRAIN_MOUNT_FINANCE is set.
-ALLOW_ROOTS=("$HOME/Code/Vision" "$HOME/Code/Watchman" "$HOME/Code/Napoleon-relay" "$HOME/Code/devcontainer-egress" "$HOME/Code/git-agent" "$HOME/Documents/coursework")
+ALLOW_ROOTS=("$HOME/Code/Vision" "$HOME/Code/Watchman" "$HOME/Code/Napoleon-relay" "$HOME/Code/LockBox" "$HOME/Code/git-agent" "$HOME/Documents/coursework")
 [[ -n "${BRAIN_MOUNT_FINANCE:-}" ]] && ALLOW_ROOTS+=("$HOME/Documents/finance-source")
 # Which vault subtrees to scan for outbound symlinks, by run scope:
 #   project                -> just this project's deps (projects/<slug>)
@@ -115,7 +115,7 @@ ALLOW_ROOTS=("$HOME/Code/Vision" "$HOME/Code/Watchman" "$HOME/Code/Napoleon-rela
 # BRAIN_SCAN_SCOPE overrides the profile default so an agent that never follows
 # outbound symlinks gets a narrower (or empty) scan than its profile would imply.
 # This is how the read-only thinking agents (contradict/emerge/discover) reason over
-# wiki/ only and get NO ~/Documents/School + ~/Code bind-mounts, instead of inheriting
+# wiki/ only and get NO ~/Documents/coursework + ~/Code bind-mounts, instead of inheriting
 # the broad reader default. Tokens: none | raw | projects | projects+raw (else profile
 # default). It can only NARROW intent vs the profile; the write surface is still the
 # profile's, so this never grants extra access.
@@ -175,7 +175,7 @@ fi
 
 # --- 2) Stage a sanitized ~/.claude -------------------------------------------
 LIB="$DC/launcher-common.sh"
-[[ -f "$LIB" ]] || { echo "agent: missing $LIB (run devcontainer-egress/sync.sh)." >&2; exit 1; }
+[[ -f "$LIB" ]] || { echo "agent: missing $LIB (run LockBox/sync.sh)." >&2; exit 1; }
 # shellcheck source=/dev/null
 source "$LIB"
 sandbox_stage_claude_config brain

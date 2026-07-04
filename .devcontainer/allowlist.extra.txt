@@ -1,5 +1,5 @@
 # Brain project-specific egress extras (merged onto base-allowlist.txt by
-# devcontainer-egress/sync.sh into the baked allowlist.txt).
+# LockBox/sync.sh into the baked allowlist.txt).
 #
 # NOT here on purpose:
 #   - ollama.com / registry.ollama.ai — the host-Ollama hole was removed in the

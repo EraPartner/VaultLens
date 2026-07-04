@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shared host-side helpers for the sandbox launchers (Vision bin/claude,
 # Watchman bin/claude, Brain bin/agent, git-agent bin/git-agent, sandbox
-# bin/dev). Vendored into each .devcontainer/ by devcontainer-egress/sync.sh and
+# bin/dev). Vendored into each .devcontainer/ by LockBox/sync.sh and
 # sourced by the launcher as "$(dirname "$0")/../launcher-common.sh".
 #
 # WHY: stage_claude_config(), the Keychain credential block, and the
