@@ -98,10 +98,10 @@ the project's context plus the root schema (`## Working inside a project`).
 ### Scaffold a project
 
 ```bash
-python3 tools/wiki.py project new my-thesis                              # create a project
-python3 tools/wiki.py project link my-thesis concepts/trusted-execution  # link wiki pages into it
+python3 tools/wiki.py project new my-project                              # create a project
+python3 tools/wiki.py project link my-project concepts/trusted-execution  # link wiki pages into it
 python3 tools/wiki.py project list                                       # list all projects
-python3 tools/wiki.py project show my-thesis                             # inspect structure
+python3 tools/wiki.py project show my-project                             # inspect structure
 ```
 
 ### Work inside a project
@@ -129,7 +129,7 @@ wiki_refs:
 ...
 
 ## Layout
-projects/my-thesis/
+projects/my-project/
   project.md     ← metadata, description, layout, rules, wiki refs
   CLAUDE.md      ← AI entrypoint: @project.md + operating principles (auto-generated)
   TODO.md        ← per-project todo; embedded into projects/TODO.md (auto-generated)

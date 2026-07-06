@@ -270,7 +270,7 @@ def main() -> int:
         "## Proposals\n"
         "proposal:: vision | Triage the 3 failed CSV imports | time-sensitive\n"
         "proposal::assistant|Draft reply to supervisor|overdue commitment\n"
-        "proposal:: thesis | only two fields\n"  # one pipe -> malformed -> skipped
+        "proposal:: alpha | only two fields\n"  # one pipe -> malformed -> skipped
         "garbage line, not a proposal\n"
         "proposal:: | | \n"  # empty target/task/why -> skipped
     )
@@ -333,7 +333,7 @@ def main() -> int:
         g.allow("vision", "cos")[0] is False,
     )
     g.record("cos", "watchman")  # now routed == 2 == cap
-    check("per-tick cap enforced", g.allow("cos", "thesis")[0] is False)
+    check("per-tick cap enforced", g.allow("cos", "alpha")[0] is False)
 
     print("cos proposal routing destination:")
     # Self-contained: resolve_proposal_dest takes an explicit projects_dir and its

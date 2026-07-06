@@ -300,7 +300,7 @@ def _ingested_pdf_names() -> set[str]:
         # [[raw/sources/Foo.pdf]], markdown [..](raw/sources/Foo.pdf), and the
         # angle-bracket [..](<../../raw/sources/Foo.pdf>). The class excludes the
         # three close delimiters (] ) >) and newline but ALLOWS spaces, so
-        # space-bearing names like "The Mad King.pdf" still match.
+        # space-bearing names like "Example Project.pdf" still match.
         pat = re.compile(r"raw/sources/([^\]|>)\n]+\.pdf)", re.IGNORECASE)
         for page in srcdir.glob("*.md"):
             try:

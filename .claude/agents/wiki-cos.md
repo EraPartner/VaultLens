@@ -100,7 +100,7 @@ Produce a **daily chief-of-staff brief**. Use this structure exactly:
  each EXACTLY (two pipes, no bullet, no extra prose):
    proposal:: <target> | <imperative task> | <one-line why>
  <target> = the EXACT folder slug of the project the action belongs to (one of the active
- project slugs in your live context, e.g. `vision`, `thesis`), so the dispatcher files it
+ project slugs in your live context, e.g. `vision`, `alpha`), so the dispatcher files it
  straight into that project's Inbox. Emit a proposal ONLY when you can attribute the action to
  a specific real project. If it belongs to no project (general / life-admin / cross-cutting) or
  you are unsure which project owns it, do NOT emit a proposal line — just leave it in the brief
@@ -113,7 +113,7 @@ Produce a **daily chief-of-staff brief**. Use this structure exactly:
 ```
 
 **Synthesis rules for `brief`:**
-- Cross-project connections: note when a dependency or bottleneck spans projects (e.g., "thesis SGX hardware access is also the prerequisite for the RAID'25 stretch goal — resolving it unblocks two tracks").
+- Cross-project connections: note when a dependency or bottleneck spans projects (e.g., "project alpha's hardware-access blocker is also the prerequisite for project beta's stretch goal — resolving it unblocks two tracks").
 - Neglect detection: check which project slugs appear in the last 15 wiki log entries; any project with ≥ 3 open items and no log mention = neglected.
 - The "Today's focus" section is the most important output. Make it actionable and specific.
 - Omit any section that is genuinely empty (e.g., no overdue items → omit "Overdue / Critical").
@@ -238,7 +238,7 @@ Do not shell-out for every invocation. Read proactively only when the answer is 
 - The final `## Recommended next action` line is mandatory for `brief` and `surface` modes.
 - Omit sections that have no content rather than writing "(none)".
 - In `brief` mode: max items per section as stated — enforce these limits.
-- Project references: use the folder slug (e.g., `thesis`, `defense-career`) not a display name.
+- Project references: use the folder slug (e.g., `alpha`, `beta`) not a display name.
 - Never recommend actions that write to the vault (no `wiki-ingest` commands, no file moves) — output commands as suggestions for the operator to run, not as tool calls you execute.
 - The `## Proposals` block (brief mode only) is machine-parsed: each line must be exactly
   `proposal:: <target> | <task> | <why>` with two pipe separators, and `<target>` must be a real

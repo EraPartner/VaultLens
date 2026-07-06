@@ -56,7 +56,7 @@ then the vault path:
 | `brain-cos [--mode brief\|status\|surface\|inbox] [--project slug]` | Chief of Staff brief / status / commitments / inbox triage (reader profile) |
 | `brain-wiki <agent> [args]` | `python3 tools/agents/wiki-agent.py <agent> …` (agent = quality/verify/ingest/contradict/search/enhance/cos/challenge/connect/emerge/discover) |
 | `brain-wiki <subcommand> [args]` | `python3 tools/wiki.py <subcommand> …` (coverage, preprocess, search, log, …) |
-| `brain-claude [args]` | `claude …` (opens in the subdir you ran it from, e.g. `projects/ict-recht`) |
+| `brain-claude [args]` | `claude …` (opens in the subdir you ran it from, e.g. `projects/example-course`) |
 | `brain-shell [cmd]` | a bash shell, or an arbitrary in-container command |
 | `brain-claude-sync pull\|push\|status` | sync `~/.claude` between host and container |
 
@@ -64,7 +64,7 @@ Examples:
 
 ```fish
 brain-cos                                        # daily chief-of-staff brief
-brain-cos --mode status --project thesis         # thesis status report
+brain-cos --mode status --project alpha         # alpha status report
 brain-cos --mode surface                         # surface all commitments
 brain-cos --mode inbox                           # triage raw/inbox/ items
 brain-wiki enhance --strategy coverage           # wiki agent runner
@@ -76,7 +76,7 @@ brain-shell .devcontainer/bin/doctor             # readiness check
 
 **Working directory.** `brain-claude`/`brain-shell`
 open in the in-container path matching your host `PWD`, so running `brain-claude`
-from `projects/ict-recht` lands in `/workspaces/Brain/projects/ict-recht` and
+from `projects/example-course` lands in `/workspaces/Brain/projects/example-course` and
 picks up that project's `CLAUDE.md` / `project.md`. `brain-wiki` and
 `brain-cos` always run at the workspace root (they set `BRAIN_NO_CHDIR=1`).
 
@@ -166,14 +166,14 @@ for a one-shot readiness check (egress lock, toolchain, qmd, auth).
 | `~/.claude-sandbox/stage/brain` (host) | `/home/dev/.claude-stage` | **RO** sanitized stage (no secrets) |
 | `~/.cache/qmd` (host) | `/home/dev/.qmd-seed` | **RO** live source: index snapshotted on start, models symlinked |
 | `~/.claude/projects/-…-Brain/memory` (host) | `/home/dev/.claude-memory-seed` | **RO** seed of host project memory; `post-start` mirrors it into the `.claude` volume, and the launcher pushes container edits back **only for interactive sessions** (see the project-memory note below) |
-| `~/Documents/School` (host) | same path | **RO** project source for symlinked coursework |
+| `~/Documents/coursework` (host) | same path | **RO** project source for symlinked coursework |
 | `~/Code/{Vision,Watchman}` (host) | same path | **RO** project source |
-| `~/Documents/Personal/Scans/Finance/The Mad King` | same path | **RO** project source |
+| `~/Documents/finance-source/Example Project` | same path | **RO** project source |
 
 ### Project source mounts (symlinks)
 
 Projects under `projects/` symlink to source dirs that live **outside** the vault
-(e.g. `projects/ict-recht/ICT Recht -> ~/Documents/School/ICT Recht`). Those
+(e.g. `projects/example-course/Example Course -> ~/Documents/coursework/Example Course`). Those
 symlinks store absolute host paths, so they dangle in the container unless the
 target exists at the **same** path. Each unique target ancestor is therefore
 bind-mounted **read-only at its identical absolute path** (the four rows above),
@@ -264,9 +264,9 @@ rewrite history, push, or sign/authenticate as you over SSH.
 | `git push` / `gh pr` | ❌ | no credential in the container; `git push` errors with "could not read Username" |
 | commit signing (ssh-agent) | ❌ (n/a) | no ssh-agent forwarded — commits happen on the host |
 
-The one exception is `projects/thesis`, which is its own nested repo: a
-`project:thesis` agent's RW hole covers `projects/thesis/.git`, so it **can**
-commit to the thesis repo. **Make changes inside, commit & push from the host.**
+The one exception is `projects/alpha`, which is its own nested repo: a
+`project:alpha` agent's RW hole covers `projects/alpha/.git`, so it **can**
+commit to the alpha repo. **Make changes inside, commit & push from the host.**
 
 ## Known limitations
 

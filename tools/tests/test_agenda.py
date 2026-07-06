@@ -62,7 +62,7 @@ tags: [agenda, project-runner]
 - last_run:: 2026-06-22
 - next_due:: 2026-06-22
 - acceptance:: results/table.md regenerated from newest csv.
-- output:: projects/thesis/results/table.md
+- output:: projects/alpha/results/table.md
 - notes:: deterministic
 
 ### [T2] Survey recent papers
@@ -71,7 +71,7 @@ tags: [agenda, project-runner]
 - last_run:: —
 - next_due:: 2026-06-29
 - acceptance:: (pending) a dated summary under research/.
-- output:: projects/thesis/research/survey.md
+- output:: projects/alpha/research/survey.md
 - questions::
     - What counts as "recent"?
     - Is arxiv.org acceptable?
@@ -82,7 +82,7 @@ tags: [agenda, project-runner]
 - last_run:: —
 - next_due:: 2026-06-28
 - acceptance:: tidy notes/.
-- output:: projects/thesis/notes/
+- output:: projects/alpha/notes/
 
 ## Clarifications
 

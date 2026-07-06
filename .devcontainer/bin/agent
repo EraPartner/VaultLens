@@ -89,7 +89,7 @@ fi
 
 # Source/personal symlink targets — derived PER RUN, not statically mounted.
 # A vault symlink to a path OUTSIDE the vault (projects/vision/Vision -> ~/Code/Vision,
-# projects/dep/DEP -> ~/Documents/School/DEP, …) dangles in-container unless its target is
+# projects/example-course-2/Example Course 2 -> ~/Documents/coursework/Example Course 2, …) dangles in-container unless its target is
 # bind-mounted RO at the same absolute path. Instead of statically mounting all of School +
 # every Code repo into EVERY run (audit BR1: needless PII/source exposure), mount ONLY the
 # symlink targets the current run's scope can reach, and ONLY if the target is under an
@@ -97,8 +97,8 @@ fi
 # pull in ~/.ssh). A scan project that symlinks only ~/Code/* therefore gets NO School/finance
 # mount — PII is structurally absent from that run. Finance scans stay OPT-IN (audit BR1):
 # their root is allowlisted only when BRAIN_MOUNT_FINANCE is set.
-ALLOW_ROOTS=("$HOME/Code/Vision" "$HOME/Code/Watchman" "$HOME/Code/Napoleon-relay" "$HOME/Code/devcontainer-egress" "$HOME/Code/git-agent" "$HOME/Documents/School")
-[[ -n "${BRAIN_MOUNT_FINANCE:-}" ]] && ALLOW_ROOTS+=("$HOME/Documents/Personal/Scans/Finance")
+ALLOW_ROOTS=("$HOME/Code/Vision" "$HOME/Code/Watchman" "$HOME/Code/Napoleon-relay" "$HOME/Code/devcontainer-egress" "$HOME/Code/git-agent" "$HOME/Documents/coursework")
+[[ -n "${BRAIN_MOUNT_FINANCE:-}" ]] && ALLOW_ROOTS+=("$HOME/Documents/finance-source")
 # Which vault subtrees to scan for outbound symlinks, by run scope:
 #   project                -> just this project's deps (projects/<slug>)
 #   author|raw             -> raw/ (ingest's symlinked sources, if any)
