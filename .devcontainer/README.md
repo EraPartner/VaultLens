@@ -168,7 +168,7 @@ for a one-shot readiness check (egress lock, toolchain, qmd, auth).
 | `~/.claude/projects/-…-Brain/memory` (host) | `/home/dev/.claude-memory-seed` | **RO** seed of host project memory; `post-start` mirrors it into the `.claude` volume, and the launcher pushes container edits back **only for interactive sessions** (see the project-memory note below) |
 | `~/Documents/coursework` (host) | same path | **RO** project source for symlinked coursework |
 | `~/Code/{Vision,Watchman}` (host) | same path | **RO** project source |
-| `~/Documents/finance-source/Example Project` | same path | **RO** project source |
+| `optin:` roots (e.g. financial/medical scans) | same path | **RO**, mounted only with `BRAIN_MOUNT_OPTIN=1` |
 
 ### Project source mounts (symlinks)
 
@@ -178,8 +178,9 @@ symlinks store absolute host paths, so they dangle in the container unless the
 target exists at the **same** path. `bin/agent` resolves this **per run, not
 statically**: it scans only the vault subtrees the run's scope can reach for
 outbound symlinks, accepts a target only if it sits under an allowlisted root
-(`ALLOW_ROOTS` — `~/Code/{Vision,Watchman,…}`, `~/Documents/coursework`; Finance is
-opt-in via `BRAIN_MOUNT_FINANCE`), and bind-mounts each accepted target
+(the roots live in the gitignored `.devcontainer/mount-roots.local` — kept out of
+git because they are personal host paths; roots tagged `optin:` mount only when
+`BRAIN_MOUNT_OPTIN=1`), and bind-mounts each accepted target
 **read-only at its identical absolute path**. A stray symlink to anything else
 (e.g. `~/.ssh`) is skipped and warned — fail-closed. Egress stays locked, so
 mounted source can be read for wiki-building but not exfiltrated; read-only means
@@ -199,9 +200,10 @@ master/reader maximum, not what every run gets):
   narrow the scan; the write surface is still the profile's.
 
 **Adding a project with a new symlink target:** mounting is automatic once the
-target is under an allowlisted root. For a target outside `~/Code` /
-`~/Documents/coursework`, add its root to `ALLOW_ROOTS` in `bin/agent` (or set
-`BRAIN_MOUNT_FINANCE` for the Finance scans). Preview what a run would mount with
+target is under an allowlisted root. For a target under a new root, add that root
+to `.devcontainer/mount-roots.local` (one path per line; prefix it with `optin:`
+and set `BRAIN_MOUNT_OPTIN=1` to keep a sensitive root out of default runs).
+Preview what a run would mount with
 `BRAIN_DRYRUN=1`; list current symlink targets with
 `find projects -maxdepth 3 -type l -exec readlink {} \; | sort -u`.
 

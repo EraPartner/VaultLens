@@ -1,0 +1,23 @@
+# .devcontainer/mount-roots.local.example — TEMPLATE.
+# Copy to  .devcontainer/mount-roots.local  and edit with your real paths.
+# mount-roots.local is gitignored and MUST NOT be committed (it holds personal host paths).
+#
+# bin/agent mounts a vault symlink's out-of-vault target into the sandbox ONLY if the target
+# sits under one of the roots listed here (fail-closed — anything else is skipped + warned).
+# List the host directories your vault symlinks point at, one root per line.
+#   - a leading  ~  or  $HOME  is expanded
+#   - blank lines and #-comment lines are ignored
+#
+# Two tiers:
+#   <path>          default  — allowlisted on every run
+#   optin:<path>    sensitive — allowlisted only when BRAIN_MOUNT_OPTIN=1, so financial/medical
+#                   scans and the like stay out of headless and unrelated runs by default.
+
+# Code repos symlinked into projects as dependencies:
+$HOME/Code/example-repo
+
+# Coursework / source material referenced read-only by a project:
+$HOME/Documents/example-source
+
+# A sensitive root (PII) — mounted only with BRAIN_MOUNT_OPTIN=1:
+optin:$HOME/Documents/sensitive-scans

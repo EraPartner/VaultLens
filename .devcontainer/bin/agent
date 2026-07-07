@@ -98,16 +98,41 @@ fi
 
 # Source/personal symlink targets — derived PER RUN, not statically mounted.
 # A vault symlink to a path OUTSIDE the vault (projects/vision/Vision -> ~/Code/Vision,
-# projects/example-course-2/Example Course 2 -> ~/Documents/coursework/Example Course 2, …) dangles in-container unless its target is
-# bind-mounted RO at the same absolute path. Instead of statically mounting all of School +
-# every Code repo into EVERY run (audit BR1: needless PII/source exposure), mount ONLY the
-# symlink targets the current run's scope can reach, and ONLY if the target is under an
-# allowlisted root (fail-closed: anything else is skipped + warned, so a stray symlink can't
-# pull in ~/.ssh). A scan project that symlinks only ~/Code/* therefore gets NO School/finance
-# mount — PII is structurally absent from that run. Finance scans stay OPT-IN (audit BR1):
-# their root is allowlisted only when BRAIN_MOUNT_FINANCE is set.
-ALLOW_ROOTS=("$HOME/Code/Vision" "$HOME/Code/Watchman" "$HOME/Code/Napoleon-relay" "$HOME/Code/LockBox" "$HOME/Code/git-agent" "$HOME/Documents/coursework")
-[[ -n "${BRAIN_MOUNT_FINANCE:-}" ]] && ALLOW_ROOTS+=("$HOME/Documents/finance-source")
+# projects/example-course/Example Course -> ~/Documents/example-source/Example Course, …)
+# dangles in-container unless its target is bind-mounted RO at the same absolute path. Instead
+# of statically mounting every external root into EVERY run (audit BR1: needless PII/source
+# exposure), mount ONLY the symlink targets the current run's scope can reach, and ONLY if the
+# target sits under an allowlisted root (fail-closed: anything else is skipped + warned, so a
+# stray symlink can't pull in ~/.ssh).
+#
+# The allowlisted roots are PERSONAL host paths, so they are NOT committed: they live in a
+# gitignored, operator-only file next to this script, mount-roots.local (copy the committed
+# mount-roots.local.example to start). Two tiers, one root per line:
+#   <path>          default  — allowlisted on every run
+#   optin:<path>    sensitive — allowlisted only when BRAIN_MOUNT_OPTIN=1, so financial/medical
+#                   scans and the like stay out of headless and unrelated runs by default.
+# A leading ~ or $HOME is expanded; blank lines and #-comment lines are ignored. If the file is
+# absent, no external roots are allowlisted: the vault and intra-vault links still work, but
+# out-of-vault symlink targets are skipped (safe default for a fresh clone).
+ALLOW_ROOTS=()
+_roots_file="$DC/mount-roots.local"
+if [[ -f "$_roots_file" ]]; then
+  while IFS= read -r _line || [[ -n "$_line" ]]; do
+    _line="${_line#"${_line%%[![:space:]]*}"}"          # trim leading whitespace
+    [[ -z "$_line" || "$_line" == '#'* ]] && continue    # skip blank / comment lines
+    _optin=0
+    if [[ "$_line" == optin:* ]]; then
+      _optin=1; _line="${_line#optin:}"
+      _line="${_line#"${_line%%[![:space:]]*}"}"         # trim whitespace after the optin: tag
+    fi
+    _line="${_line%"${_line##*[![:space:]]}"}"           # trim trailing whitespace
+    _line="${_line/#\~/$HOME}"; _line="${_line/#\$HOME/$HOME}"   # expand a leading ~ or $HOME
+    _line="${_line%/}"                                    # normalize: drop a trailing slash
+    [[ -z "$_line" ]] && continue
+    [[ "$_optin" == 1 && -z "${BRAIN_MOUNT_OPTIN:-}" ]] && continue   # opt-in root, flag not set
+    ALLOW_ROOTS+=("$_line")
+  done < "$_roots_file"
+fi
 # Which vault subtrees to scan for outbound symlinks, by run scope:
 #   project                -> just this project's deps (projects/<slug>)
 #   author|raw             -> raw/ (ingest's symlinked sources, if any)
@@ -144,7 +169,7 @@ for _scan in ${SCAN_DIRS[@]+"${SCAN_DIRS[@]}"}; do
     _tgt="${_tgt%/}"
     [[ -n "$_tgt" && -e "$_tgt" ]] || continue                              # empty/broken link
     case "$_tgt" in "$PROJECT_ROOT"|"$PROJECT_ROOT"/*) continue ;; esac     # intra-vault: already mounted
-    _ok=0; for _r in "${ALLOW_ROOTS[@]}"; do [[ "$_tgt" == "$_r" || "$_tgt" == "$_r"/* ]] && { _ok=1; break; }; done
+    _ok=0; for _r in ${ALLOW_ROOTS[@]+"${ALLOW_ROOTS[@]}"}; do [[ "$_tgt" == "$_r" || "$_tgt" == "$_r"/* ]] && { _ok=1; break; }; done
     [[ "$_ok" == 1 ]] || { echo "agent: skip un-allowlisted symlink target: $_tgt (from ${_lnk#"$PROJECT_ROOT"/})" >&2; continue; }
     _cands+=("$_tgt")
   done < <(find "$_scan" -maxdepth 5 -type l 2>/dev/null)
@@ -165,6 +190,7 @@ if [[ -n "${BRAIN_DRYRUN:-}" ]]; then
   echo "profile      : $PROFILE  (label: $PROFILE_LABEL)"
   echo "writable hole: ${WRITE_PATH:-<none — read-only>}"
   echo "scan scope   : ${BRAIN_SCAN_SCOPE:-<profile default>}"
+  if [[ ${#ALLOW_ROOTS[@]} -gt 0 ]]; then echo "allow roots  : ${ALLOW_ROOTS[*]}"; else echo "allow roots  : <none — configure .devcontainer/mount-roots.local>"; fi
   echo "container    : $NAME"
   echo "volume key   : $BRAIN_VOL_KEY"
   echo "ws mounts    : ${WS_MOUNTS[*]}"

@@ -16,6 +16,11 @@ wiki-log-*.json
 .devcontainer/* [0-9].*
 .devcontainer/* [0-9]
 
+# Operator-only sandbox mount roots: real host paths bin/agent may bind-mount into
+# the sandbox. Personal, so it never leaves this machine; the committed
+# mount-roots.local.example documents the format. (The .example is NOT ignored.)
+.devcontainer/mount-roots.local
+
 # Claude config: track CLAUDE.md, .claude/agents/, .claude/skills/, .claude/settings.json;
 # only machine-local state stays ignored.
 .claude/settings.local.json
