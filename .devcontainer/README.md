@@ -178,7 +178,7 @@ symlinks store absolute host paths, so they dangle in the container unless the
 target exists at the **same** path. `bin/agent` resolves this **per run, not
 statically**: it scans only the vault subtrees the run's scope can reach for
 outbound symlinks, accepts a target only if it sits under an allowlisted root
-(`ALLOW_ROOTS` — `~/Code/{Vision,Watchman,…}`, `~/Documents/School`; Finance is
+(`ALLOW_ROOTS` — `~/Code/{Vision,Watchman,…}`, `~/Documents/coursework`; Finance is
 opt-in via `BRAIN_MOUNT_FINANCE`), and bind-mounts each accepted target
 **read-only at its identical absolute path**. A stray symlink to anything else
 (e.g. `~/.ssh`) is skipped and warned — fail-closed. Egress stays locked, so
@@ -189,7 +189,7 @@ the agents can't alter your real coursework/source.
 master/reader maximum, not what every run gets):
 
 - `project` (project-runner) scans only `projects/<slug>` → just that one
-  project's deps (e.g. `projects/dep` mounts only `~/Documents/School/DEP`).
+  project's deps (e.g. `projects/example-course` mounts only `~/Documents/coursework/Example Course`).
 - `author`/`raw` (enhance, ingest) scan only `raw/`.
 - `master`/`reader`/`projects` (interactive, CoS) scan `projects/` + `raw/`.
 - `BRAIN_SCAN_SCOPE` overrides the profile default (`none` mounts no external
@@ -200,7 +200,7 @@ master/reader maximum, not what every run gets):
 
 **Adding a project with a new symlink target:** mounting is automatic once the
 target is under an allowlisted root. For a target outside `~/Code` /
-`~/Documents/School`, add its root to `ALLOW_ROOTS` in `bin/agent` (or set
+`~/Documents/coursework`, add its root to `ALLOW_ROOTS` in `bin/agent` (or set
 `BRAIN_MOUNT_FINANCE` for the Finance scans). Preview what a run would mount with
 `BRAIN_DRYRUN=1`; list current symlink targets with
 `find projects -maxdepth 3 -type l -exec readlink {} \; | sort -u`.
