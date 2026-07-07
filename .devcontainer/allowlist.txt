@@ -19,18 +19,19 @@
 api.anthropic.com
 console.anthropic.com
 
-# GitHub — git over HTTPS (push/fetch), the REST/GraphQL API (gh), codeload and
-# the raw/release-asset content hosts. Needed by every container (git/gh and
-# package installs). NOT a bare `.githubusercontent.com` wildcard: that apex
-# matches every content subdomain (gist./camo./avatars./…) and is the widest
-# name on the floor, so scope it to the two subdomains actually used. A project
-# that needs another (e.g. gist.githubusercontent.com) adds it to its own
-# allowlist.extra.txt rather than reopening the wildcard for all six containers.
+# GitHub — the MINIMAL floor every container needs: git over HTTPS (github.com +
+# codeload.github.com for push/fetch) and the REST/GraphQL API (api.github.com for
+# gh). Deliberately NOT the raw/release-asset content hosts: raw.githubusercontent
+# .com and objects.githubusercontent.com are multi-tenant (ANY public repo / release
+# asset), so on the shared floor a compromised in-container agent could pull
+# attacker-controlled content through the egress lock. They are NOT required by git
+# push/fetch — only by ad-hoc `curl` / `gh release download` — so a project that
+# needs them adds them to its OWN allowlist.extra.txt (the generic `sandbox` does).
+# Likewise NOT a bare `.githubusercontent.com` wildcard (that apex matches gist./
+# camo./avatars./…): scope to exact hosts, per project.
 github.com
 api.github.com
 codeload.github.com
-raw.githubusercontent.com
-objects.githubusercontent.com
 
 # ==== Brain project-specific extras ====
 # Brain project-specific egress extras (merged onto base-allowlist.txt by

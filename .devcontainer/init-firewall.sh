@@ -44,6 +44,14 @@ ip6tables -X 2>/dev/null || true
 
 # --- IPv6: loopback only ---
 ip6tables -A INPUT  -i lo -j ACCEPT
+# DNS-exfil hardening parity with the IPv4 loopback rules below: if the base image
+# ever ran a resolver bound to ::1:53 (systemd-resolved / dnsmasq can), a non-proxy
+# UID could otherwise reach it over loopback as an exfil channel. Drop non-proxy
+# loopback DNS before the blanket loopback ACCEPT, exactly as IPv4 does. Reachability
+# is near-nil today (Docker's embedded resolver is IPv4 127.0.0.11; apple/container's
+# is external), but this keeps IPv6 loopback fail-closed too.
+ip6tables -A OUTPUT -o lo -m owner ! --uid-owner "$PROXY_USER" -p udp --dport 53 -j DROP
+ip6tables -A OUTPUT -o lo -m owner ! --uid-owner "$PROXY_USER" -p tcp --dport 53 -j DROP
 ip6tables -A OUTPUT -o lo -j ACCEPT
 
 # --- IPv4 base allows ---
@@ -69,6 +77,14 @@ iptables -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 # protocol helper could open a RELATED data channel that skips the UID lock.
 iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED -j ACCEPT
 
+# Defense-in-depth: block the cloud metadata endpoint at L3, AHEAD of the proxy-UID
+# ACCEPT below (which would otherwise let the `proxy` UID reach it). squid already
+# denies it (squid.conf `http_access deny metadata`), so this is belt-and-suspenders
+# — it survives a squid ACL removal/reorder and refuses an SSRF/DNS-rebinding read of
+# 169.254.169.254 even then. The IP is never allowlisted, so nothing legitimate drops.
+iptables  -A OUTPUT -d 169.254.169.254/32 -j DROP
+ip6tables -A OUTPUT -d fd00:ec2::254/128  -j DROP
+
 # Only the proxy UID may originate outbound traffic; everything else uses the
 # proxy over loopback.
 iptables -A OUTPUT -m owner --uid-owner "$PROXY_USER" -j ACCEPT
@@ -77,7 +93,22 @@ iptables -A OUTPUT -m owner --uid-owner "$PROXY_USER" -j ACCEPT
 if [[ -r "$INBOUND_FILE" ]]; then
   # `|| [[ -n "$port" ]]` so a final line with no trailing newline is not dropped.
   while read -r port || [[ -n "$port" ]]; do
-    [[ "$port" =~ ^[0-9]+$ ]] && iptables -A INPUT -p tcp --dport "$port" -j ACCEPT
+    # Skip blank lines; validate the rest as a TCP port in 1..65535. Without the
+    # range check a value like `0` or `99999` passes `^[0-9]+$`, iptables --dport
+    # errors, and (no `set -e`) the port is silently never opened — the published
+    # service is unreachable with no diagnostic. `10#` forces base-10 so a leading
+    # zero (e.g. `08`) is not misread as octal.
+    [[ -z "${port//[[:space:]]/}" ]] && continue
+    if [[ "$port" =~ ^[0-9]+$ ]]; then
+      p=$((10#$port))
+      if (( p >= 1 && p <= 65535 )); then
+        iptables -A INPUT -p tcp --dport "$p" -j ACCEPT
+      else
+        echo "[firewall] WARN: ignoring out-of-range inbound port '$port' (must be 1..65535)." >&2
+      fi
+    else
+      echo "[firewall] WARN: ignoring non-numeric inbound port '$port'." >&2
+    fi
   done < "$INBOUND_FILE"
 fi
 
@@ -93,19 +124,34 @@ iptables -A EGRESS_DENY -j DROP
 iptables -A OUTPUT -j EGRESS_DENY
 
 # --- Verify the lock took, then drop the sentinel ---
-# Four independent invariants must ALL hold (script runs without `set -e`, so a
-# mid-script `iptables -A` failure can't be assumed to have aborted): the IPv4
-# AND IPv6 OUTPUT policies are DROP, the proxy-UID ACCEPT exists, and the
-# catch-all EGRESS_DENY jump is present (so a ruleset that silently lost the
-# deny/audit rule fails closed). The IPv6 check matters because the design leans
-# on `ip6tables -P OUTPUT DROP` as the IPv6 backstop (see squid.conf): if that
-# policy-set silently failed above, the sentinel must NOT claim "verified".
+# Independent invariants that must ALL hold (script runs without `set -e`, so a
+# mid-script `iptables -A` failure can't be assumed to have aborted):
+#   - IPv4 AND IPv6 OUTPUT policies are DROP (the IPv6 check matters because the
+#     design leans on `ip6tables -P OUTPUT DROP` as the IPv6 backstop, see squid.conf);
+#   - the two NON-PROXY loopback-DNS DROP rules are present (so if either failed to
+#     insert, the loopback resolver is NOT silently reopened as an exfil channel
+#     while we still claim "verified" — the Docker-parity concern above);
+#   - the proxy-UID ACCEPT exists;
+#   - the catch-all EGRESS_DENY jump is present (a ruleset that silently lost the
+#     deny/audit rule fails closed).
+# The `-C` checks pass the byte-identical rule spec used with `-A` above, so they
+# match iff that exact rule is installed. (Fail-closed: any mismatch skips the
+# sentinel, so the entrypoint's wait-for-sentinel stalls loudly rather than leaking.)
 if iptables  -S OUTPUT 2>/dev/null | grep -q '^-P OUTPUT DROP' \
    && ip6tables -S OUTPUT 2>/dev/null | grep -q '^-P OUTPUT DROP' \
+   && iptables -C OUTPUT -o lo -m owner ! --uid-owner "$PROXY_USER" -p udp --dport 53 -j DROP 2>/dev/null \
+   && iptables -C OUTPUT -o lo -m owner ! --uid-owner "$PROXY_USER" -p tcp --dport 53 -j DROP 2>/dev/null \
    && iptables -C OUTPUT -m owner --uid-owner "$PROXY_USER" -j ACCEPT 2>/dev/null \
    && iptables -C OUTPUT -j EGRESS_DENY 2>/dev/null; then
-  : > "$SENTINEL" 2>/dev/null || true
-  echo "[firewall] Egress locked to proxy UID '$PROXY_USER' (IPv4 + IPv6 default-deny, verified)."
+  if : > "$SENTINEL" 2>/dev/null; then
+    echo "[firewall] Egress locked to proxy UID '$PROXY_USER' (IPv4 + IPv6 default-deny, verified)."
+  else
+    # The lock is up, but the entrypoint waits on this sentinel — a missing sentinel
+    # would stall it with misleading "success" logs. Treat the write failure as fatal.
+    echo "[firewall] ERROR: egress lock verified but sentinel write to $SENTINEL FAILED" >&2
+    echo "[firewall]   (is /run writable?) — failing closed so the stall is diagnosable." >&2
+    exit 1
+  fi
 else
   rm -f "$SENTINEL" 2>/dev/null || true
   echo "[firewall] ERROR: egress-lock verification FAILED — egress stays default-DROP (fail-closed)." >&2

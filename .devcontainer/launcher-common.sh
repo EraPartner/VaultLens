@@ -31,9 +31,17 @@ sandbox_stage_claude_config() {
       [[ -e "$src/$item" ]] && cp -a "$src/$item" "$dst/dot-claude/" 2>/dev/null || true
     done
     find "$dst/dot-claude/statusline" "$dst/dot-claude/plugins" -name .git -type d -prune -exec rm -rf {} + 2>/dev/null || true
+    # Rewrite host plugin paths to the container path. Escape the interpolated
+    # values for BRE + the `#` sed delimiter first: a host $HOME/$src containing a
+    # sed metacharacter (or a literal `#`) would otherwise produce a malformed
+    # `s###` expression, so the substitution silently fails and the container's
+    # installed_plugins.json keeps host paths.
+    local hpat spat
+    hpat="$(printf '%s' "$HOME/.claude" | sed 's/[][\.*^$#/]/\\&/g')"
+    spat="$(printf '%s' "$src"          | sed 's/[][\.*^$#/]/\\&/g')"
     for jf in known_marketplaces.json installed_plugins.json; do
       f="$dst/dot-claude/plugins/$jf"
-      [[ -f "$f" ]] && sed -i '' -e "s#$HOME/.claude#/home/dev/.claude#g" -e "s#$src#/home/dev/.claude#g" "$f" 2>/dev/null || true
+      [[ -f "$f" ]] && sed -i '' -e "s#$hpat#/home/dev/.claude#g" -e "s#$spat#/home/dev/.claude#g" "$f" 2>/dev/null || true
     done
     find "$dst/dot-claude" -name '.DS_Store' -delete 2>/dev/null || true
     if [[ -f "$dst/dot-claude/settings.json" ]] && command -v jq >/dev/null 2>&1; then
@@ -189,6 +197,18 @@ sandbox_git_ro_mounts() {
   local repo="$1" ws="$2" hp abs src empty
   GIT_RO_MOUNTS=()
   [[ -n "$repo" && -e "$repo/.git" ]] || return 0
+  # `.git` must be a DIRECTORY. When it is a FILE — a linked worktree or a
+  # submodule — the real git dir (with the hooks an in-container agent must not be
+  # able to plant) lives OUTSIDE $repo, so an RO mount of the pointer file would
+  # NOT protect it: a worktree/submodule conversion would silently reopen the very
+  # host-hook escape this function exists to close. Refuse rather than mount
+  # something ineffective (fail-closed). All current fleet repos use a `.git` dir.
+  if [[ ! -d "$repo/.git" ]]; then
+    echo "launcher: refusing to mount '$repo' — its .git is a FILE (linked worktree or" >&2
+    echo "  submodule); the real git dir with host-executed hooks is outside the workspace" >&2
+    echo "  and can't be safely locked read-only here. Use a standard (non-worktree) clone." >&2
+    return 1
+  fi
   GIT_RO_MOUNTS+=(-v "$repo/.git:$ws/.git:ro")
 
   hp="$(git -C "$repo" config core.hooksPath 2>/dev/null || true)"
