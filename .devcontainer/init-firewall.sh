@@ -157,3 +157,7 @@ else
   echo "[firewall] ERROR: egress-lock verification FAILED — egress stays default-DROP (fail-closed)." >&2
   exit 1
 fi
+
+# ─── vendored by LockBox v0.1.0 · canonical sha256:973ff626493cdd3a6887f2baab2e74812dbefeece1969c4eb55f106faeadf921 ───
+# Generated from the canonical source by LockBox/sync.sh — DO NOT EDIT HERE.
+# Edit LockBox/init-firewall.sh and re-run ./sync.sh.

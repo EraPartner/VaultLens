@@ -228,3 +228,7 @@ sandbox_git_ro_mounts() {
   fi
   GIT_RO_MOUNTS+=(-v "$src:$ws/${hp}:ro")
 }
+
+# ─── vendored by LockBox v0.1.0 · canonical sha256:4f6a69b23c560153781fbb3c01d07f28de976f91ffdabd286fa33663e6438b7c ───
+# Generated from the canonical source by LockBox/sync.sh — DO NOT EDIT HERE.
+# Edit LockBox/launcher-common.sh and re-run ./sync.sh.
