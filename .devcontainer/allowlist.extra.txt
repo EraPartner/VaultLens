@@ -1,4 +1,4 @@
-# Brain project-specific egress extras (merged onto base-allowlist.txt by
+# VaultLens project-specific egress extras (merged onto base-allowlist.txt by
 # LockBox/sync.sh into the baked allowlist.txt).
 #
 # NOT here on purpose:

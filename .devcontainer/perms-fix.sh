@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# /usr/local/sbin/brain-perms-fix
+# /usr/local/sbin/vaultlens-perms-fix
 #
 # Image-baked helper that performs ONLY the specific ownership / permission
 # repairs the devcontainer needs at start time. It is invoked by the root
@@ -22,9 +22,7 @@ fix_dir_owner() {
 
 # Named-volume mountpoints come up as root:root on first mount, regardless of
 # the image-side directory perms. Repair to dev ownership so dev can write.
-fix_dir_owner /home/dev/.claude   dev
-fix_dir_owner /home/dev/.config   dev
-fix_dir_owner /home/dev/.cache    dev
-fix_dir_owner /home/dev/.local    dev
+fix_dir_owner /home/dev/.claude  dev
+fix_dir_owner /home/dev/.config  dev
 
 exit 0

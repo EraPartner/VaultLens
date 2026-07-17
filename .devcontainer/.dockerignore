@@ -1,16 +1,15 @@
 # Build context is .devcontainer/. Only these are COPY'd into the image:
 #   init-firewall.sh, perms-fix.sh, entrypoint.sh, squid.conf, allowlist.txt
+#   bin/verify-pins
 # Everything below is used on the host or at runtime (bind-mounted), not in the
 # build — keep it out of the daemon build context.
-# NOTE: list host-only bin/ files EXPLICITLY (not `bin/` + `!bin/verify-pins`).
+#
+# NOTE: list host-only bin/ files EXPLICITLY rather than `bin/` + `!bin/verify-pins`.
 # apple/container's build-context differ mis-orders re-included paths and aborts
-# with `changes out of order`. Explicit excludes avoid it; identical under Docker.
+# with `changes out of order: "bin/verify-pins" "allowlist.txt"`. Explicit excludes
+# (no negation) avoid the bug and work identically under Docker.
 README.md
-bin/agent
 bin/claude
 bin/doctor
 launcher-common.sh
-features/
-devcontainer.json
-devcontainer-lock.json
 .dockerignore

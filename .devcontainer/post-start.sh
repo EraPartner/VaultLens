@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Runs every time the container starts, as the `dev` user, AFTER the root
 # ENTRYPOINT has already done perms repair + started the egress proxy + applied
-# the firewall. This hook only refreshes the Claude config from the host stage,
-# wires up qmd, and verifies the egress lock. No sudo (no-new-privileges).
+# the firewall. This hook only refreshes the Claude config from the host stage
+# and verifies the egress lock. No sudo (no-new-privileges).
 
 set -euo pipefail
 
@@ -26,58 +26,27 @@ if [[ -f "$STAGE/claude.json" && -f /home/dev/.claude.json ]]; then
   fi
 fi
 
-# Prune host-origin background-task state that isn't meaningful in the container
-# (the ~/.claude volume persists and rsync --update never deletes, so a stale
-# volume could still hold these from an older seed).
+# Prune only the host-origin state the user did NOT opt into, on every start.
+# The ~/.claude *volume* persists across rebuilds and rsync --update never
+# deletes, so a stale volume could still hold these from an older seed; removing
+# them converges any volume to the intended set. plugins/, hooks, mcpServers,
+# statusline/ are intentionally KEPT (the user enabled them — see README
+# SECURITY NOTE). Background-task state stays out (not enabled, just noise).
 for p in scheduled-tasks tasks jobs daemon; do
   rm -rf "/home/dev/.claude/$p" 2>/dev/null || true
 done
 
 # --- Project memory: seed from the host (RO) into the writable volume ----------
-# The host copy is bind-mounted RO at ~/.claude-memory-seed (by bin/agent).
-# Mirror it into the real per-project memory path so Claude reads current host
-# memory. --delete makes the volume an exact mirror of host on every start, which
-# also wipes anything a headless wiki-agent run might have written (those never get
-# pushed back to the host); only an interactive operator session's NEW edits,
-# layered on this clean seed, are synced back to the host by bin/agent on exit.
+# The host copy is bind-mounted RO at ~/.claude-memory-seed. Mirror it (--delete)
+# into the real per-project memory path on every start so Claude reads CURRENT host
+# memory and anything a prior headless / prompt-injected run wrote is wiped. Only an
+# interactive operator session's NEW edits (layered on this clean seed) are pushed
+# back to the host by bin/claude on exit. Matches Brain's pattern. (F10/F27)
 MEM_SEED=/home/dev/.claude-memory-seed
-MEM_DIR=/home/dev/.claude/projects/-workspaces-Brain/memory
+MEM_DIR=/home/dev/.claude/projects/-workspaces-VaultLens/memory
 if [[ -d "$MEM_SEED" ]]; then
   mkdir -p "$MEM_DIR"
   rsync -a --delete --ignore-errors "$MEM_SEED/" "$MEM_DIR/" 2>/dev/null || true
-fi
-
-# --- qmd: refresh the index snapshot + live-link the models (Option B) --------
-# The host ~/.cache/qmd is bind-mounted READ-ONLY at ~/.qmd-seed; the host is the
-# sole embedder/writer. We never embed in the container (no GPU). Instead:
-#   - models: symlink to the live read-only seed (immutable GGUFs, no copy, and a
-#     host `qmd pull` shows up immediately).
-#   - index:  qmd opens the DB read-write (WAL + llm_cache writes even on search),
-#     so it can't run off the RO seed directly. Snapshot-copy it into the
-#     writable cache volume when the host's is newer — a few-second file copy, NOT
-#     a re-embed. A host re-embed thus propagates on the next container start.
-# The snapshot keeps the host's collection paths (absolute host paths), and that
-# is fine: qmd search and `get` serve document bodies from the DB `content` table
-# keyed by content hash, not from the filesystem (verified working with host
-# paths). So we do NOT re-point collections (`qmd collection add` refuses an
-# existing name anyway) and do NOT run `qmd update` — indexing/embedding is
-# host-only.
-SEED=/home/dev/.qmd-seed
-QMD_CACHE=/home/dev/.cache/qmd
-if [[ -f "$SEED/index.sqlite" ]]; then
-  mkdir -p "$QMD_CACHE"
-  # Live-link the model cache to the RO seed (replace any stale real dir).
-  [[ -e "$QMD_CACHE/models" && ! -L "$QMD_CACHE/models" ]] && rm -rf "$QMD_CACHE/models"
-  ln -sfn "$SEED/models" "$QMD_CACHE/models"
-  # Snapshot the index when the host copy is newer (or we have none yet).
-  if [[ ! -f "$QMD_CACHE/index.sqlite" || "$SEED/index.sqlite" -nt "$QMD_CACHE/index.sqlite" ]]; then
-    echo "[post-start] Refreshing qmd index snapshot from host (no re-embed)..."
-    cp -f "$SEED/index.sqlite" "$QMD_CACHE/index.sqlite" 2>/dev/null || true
-    # Carry the WAL so uncheckpointed host writes aren't lost; drop the stale
-    # -shm so SQLite rebuilds it on first open.
-    cp -f "$SEED/index.sqlite-wal" "$QMD_CACHE/index.sqlite-wal" 2>/dev/null || rm -f "$QMD_CACHE/index.sqlite-wal"
-    rm -f "$QMD_CACHE/index.sqlite-shm"
-  fi
 fi
 
 # Refuse to proceed if the egress firewall didn't verify. The entrypoint writes
@@ -94,4 +63,4 @@ EOF
   exit 1
 fi
 
-echo "[post-start] Ready. Run agents with brain-cos / brain-wiki / brain-claude."
+echo "[post-start] Ready. Work on the tooling: python3 tools/wiki.py … · ruff check tools/ · qmd."

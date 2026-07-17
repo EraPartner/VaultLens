@@ -1,23 +1,15 @@
 #!/usr/bin/env bash
 # Launch-integrity check. Verifies the agent's executables still match the
-# SHA-256 fingerprints pinned at image build (/usr/local/share/brain/binary-pins.txt).
+# SHA-256 fingerprints pinned at image build (/usr/local/share/vaultlens/binary-pins.txt).
 # Fail-closed: nonzero exit on any drift, path change, or missing manifest.
-#
-# SCOPE — read this before trusting it as a tamper defense. It reliably DETECTS
-# UNINTENDED UPSTREAM TOOL UPGRADES / DRIFT at launch. It is a genuine anti-tamper
-# control only for the ROOT-owned binaries (node/git/python3, from the tarballs +
-# apt). The two npm CLIs (claude/qmd) live in a dev-writable
-# prefix (NPM_CONFIG_PREFIX is chown'd dev so runtime `npm i -g`/safe-chain can
-# write it), so an attacker who already has dev-level code execution could overwrite
-# one in place AFTER this one-shot check and run the tampered binary next spawn —
-# do NOT treat the npm-CLI lines as a hard anti-tamper guarantee. To harden: install
-# those CLIs to a root-owned prefix and give safe-chain its own dev-writable prefix.
+# bin/claude runs this before opening `claude`, so a tampered/replaced
+# node/npm/claude/gh/git aborts the session instead of running silently.
 #
 # A non-zero exit after a *legitimate* tool upgrade is expected — rebuild the
 # image so the pins regenerate.
 set -uo pipefail
 
-PINFILE="${BRAIN_PINFILE:-/usr/local/share/brain/binary-pins.txt}"
+PINFILE="${VAULTLENS_PINFILE:-/usr/local/share/vaultlens/binary-pins.txt}"
 quiet=0
 [[ "${1:-}" == "--quiet" ]] && quiet=1
 say() { (( quiet )) || echo "$@"; }

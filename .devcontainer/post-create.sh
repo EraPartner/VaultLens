@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # Runs once when the devcontainer is first created, as the `dev` user.
-# Installs the agent tooling, seeds qmd's cache from the host, and prepares
-# git for headless runs.
+# Installs JS deps, seeds the Claude config, and prepares git for signed commits.
 #
 # NOTE: all privileged setup (perms repair, egress proxy, firewall) happens in
-# the root ENTRYPOINT (/usr/local/sbin/brain-entrypoint) BEFORE this runs. The
-# container has no-new-privileges, so there is no sudo here.
+# the root ENTRYPOINT (/usr/local/sbin/vaultlens-entrypoint) BEFORE this runs.
+# The container has no-new-privileges, so there is no sudo here.
 
 set -euo pipefail
-cd /workspaces/Brain
+cd /workspaces/VaultLens
 
 # Wait for the egress proxy (started by the root entrypoint) before any network
 # install — postCreate can race the entrypoint's proxy startup, and with egress
@@ -19,10 +18,12 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 
-# --- Supply-chain protection: Aikido safe-chain ------------------------------
-# `safe-chain setup` writes shell wrappers; BASH_ENV (set by bin/agent at
-# `container run`) sources them into every bash session so npm/pip installs the
-# agents run mid-session are screened against malware-list.aikido.dev before running.
+# Supply-chain protection: install Aikido safe-chain so package installs are
+# screened against its malware list (malware-list.aikido.dev, allowlisted in
+# squid). `safe-chain setup` writes shell wrappers; BASH_ENV (set at container run)
+# sources them into every bash session so npm/bun/pip installs Claude runs
+# mid-session are screened. The project's own pinned deps below are installed
+# plain (already vetted via the lockfile) to avoid first-boot fragility.
 echo "[post-create] Installing safe-chain (supply-chain protection)..."
 sc_ok=0
 for attempt in 1 2 3; do
@@ -34,44 +35,39 @@ for attempt in 1 2 3; do
 done
 if (( sc_ok )); then
   safe-chain setup >/dev/null 2>&1 || true
-  echo "[post-create] safe-chain installed (screens npm/pip in later sessions)."
+  echo "[post-create] safe-chain installed (screens npm/bun/pip in later sessions)."
 else
   echo "[post-create] ⚠ WARN: safe-chain install FAILED after retries — package installs are NOT" >&2
   echo "[post-create]   supply-chain screened. \`.devcontainer/bin/doctor\` will flag this." >&2
 fi
 
-# --- Agent CLIs: installed at BUILD time by the Dockerfile -------------------
-# claude and qmd are baked into the image by the Dockerfile (npm install during
-# the build phase, which has free network + a toolchain). They are NOT installed
-# here: post-create runs after egress is locked, where qmd's native modules
-# (better-sqlite3 / tree-sitter / node-llama-cpp) can't fetch node headers
-# or compile. Verify they're present.
-for c in qmd; do
-  command -v "$c" >/dev/null 2>&1 \
-    || echo "[post-create] ⚠ WARN: '$c' missing — rebuild the image so the Dockerfile bakes it. See \`.devcontainer/bin/doctor\`." >&2
-done
+# No JS dependency install: VaultLens is Python tooling (tools/*.py) with no root
+# package.json / lockfile, so there is nothing to `npm ci`. The toolchain it needs
+# is baked into the image — python3, ruff (its linter), qmd (its search engine, an
+# MCP server per .mcp.json), poppler-utils/qpdf (wiki.py PDF ingest), and node for
+# .claude/hooks/guard.mjs. safe-chain above still screens ad-hoc npm/pip installs.
 
-# --- qmd: index + models are wired up by post-start (runs on every start) -----
-# Option B (search-only, embed-on-host): the index is snapshot-copied from the
-# host's live cache and the models are symlinked read-only to it. That logic
-# lives in post-start.sh so a host re-embed propagates on the next start, not
-# just at first create. Nothing qmd-related is seeded here.
-
-# --- git: minimal ~/.gitconfig — read-only git only --------------------------
-# Just marks /workspaces/Brain a safe.directory so read-only git ops
-# (log/diff/status) work despite the bind mount's non-dev ownership. No identity,
-# signing, or push config: commits & pushes happen on the HOST, and the
+# Minimal ~/.gitconfig: just mark the bind-mounted workspace safe so read-only
+# git ops (log/diff/status) work despite the mount's non-dev ownership. No
+# identity/signing/push config — commits & pushes happen on the HOST, and the
 # in-container .git is read-only.
 if [[ ! -f /home/dev/.gitconfig || ! -s /home/dev/.gitconfig ]]; then
   cat > /home/dev/.gitconfig <<'EOF'
 [safe]
-    directory = /workspaces/Brain
+    directory = /workspaces/VaultLens
 EOF
 fi
 
-# --- Seed ~/.claude from the SANITIZED stage the host wrapper produced --------
-# The host wrapper strips secrets (.credentials.json) before staging into
-# ~/.claude-sandbox/stage/brain (bind RO at /home/dev/.claude-stage).
+# Seed the container's ~/.claude + ~/.claude.json from the SANITIZED staging
+# dir the host wrapper produced at /home/dev/.claude-stage (bind RO):
+#   /home/dev/.claude-stage/dot-claude/   sanitized copy of host ~/.claude
+#   /home/dev/.claude-stage/claude.json   sanitized copy of host ~/.claude.json
+# The host staging (launcher-common.sh) copies only a curated item allowlist (so
+# .credentials.json never enters), strips .hooks from settings.json and
+# .oauthAccount/.projects/.installMethod from .claude.json. NOTE: mcpServers and
+# enabledPlugins ARE propagated by design (user-enabled servers/plugins — see the
+# post-start KEEP note); the PreToolUse guard reaches the box out-of-band via the
+# root-owned managed-settings.json bind, not through this staged config.
 STAGE=/home/dev/.claude-stage
 if [[ ! -f /home/dev/.claude/settings.json && -d "$STAGE/dot-claude" ]]; then
   echo "[post-create] Seeding ~/.claude from sanitized stage..."
@@ -85,10 +81,7 @@ if [[ ! -f /home/dev/.claude.json && -f "$STAGE/claude.json" ]]; then
   chmod 0600 /home/dev/.claude.json
 fi
 
-# gh is unauthenticated by design: no GitHub credential enters the container
-# (commits/pushes happen on the HOST, the in-container .git is read-only).
 
 echo "[post-create] Done."
-echo "[post-create] Run the agents with, e.g.:"
-echo "[post-create]   python3 tools/agents/wiki-agent.py enhance --strategy coverage"
-echo "[post-create]   claude --dangerously-skip-permissions"
+echo "[post-create] Tooling:  python3 tools/wiki.py lint  ·  ruff check tools/  ·  qmd search '<q>'"
+echo "[post-create] Start Claude with:  claude --dangerously-skip-permissions"

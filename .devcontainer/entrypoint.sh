@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# /usr/local/sbin/brain-entrypoint
+# /usr/local/sbin/vaultlens-entrypoint
 #
 # Runs as root (the image's default user) on every container start, BEFORE any
 # dev session. Does all privileged setup here so dev sessions have no path to
@@ -19,7 +19,7 @@ set -uo pipefail
 log() { echo "[entrypoint] $*"; }
 
 # 1) Repair ownership of named-volume mountpoints.
-/usr/local/sbin/brain-perms-fix || log "WARN: perms-fix returned non-zero."
+/usr/local/sbin/vaultlens-perms-fix || log "WARN: perms-fix returned non-zero."
 
 # Network pre-flight: if the container lost its external interface (host
 # sleep/resume, DD update/reaper), there's no eth0/route and the proxy can't
@@ -33,15 +33,13 @@ if (( ! has_iface )) || [[ -z "$default_route" ]]; then
 [entrypoint] ⚠  No external network interface / default route.
 [entrypoint]    The proxy won't resolve upstreams until this is fixed.
 [entrypoint]    Restart the container:  container stop $HOSTNAME; <launcher>
-[entrypoint]    Then restart the container.
 EOF
 fi
 
 # 2) LOCK EGRESS FIRST. Default-deny + proxy-UID-only, applied before the proxy
-#    (or anything else) can talk to the network. The
-#    owner-match rule references the `proxy` user, which exists from image
-#    build, so this is valid even before squid starts. fail-closed: see
-#    init-firewall.sh.
+#    (or anything else) can talk to the network. The owner-match rule references
+#    the `proxy` user, which exists from image build, so this is valid even
+#    before squid starts. fail-closed: see init-firewall.sh.
 /usr/local/sbin/egress-firewall || log "WARN: firewall apply returned non-zero (egress stays default-DROP)."
 
 # 3) Ensure the squid TLS-bump cert + cert DB exist, then start squid (it
@@ -50,7 +48,7 @@ if [[ ! -f /etc/squid/certs/bump.pem ]]; then
   log "Generating squid bump cert..."
   mkdir -p /etc/squid/certs
   openssl req -new -newkey rsa:2048 -days 3650 -nodes -x509 \
-    -subj "/CN=brain-egress-proxy" \
+    -subj "/CN=vaultlens-egress-proxy" \
     -keyout /etc/squid/certs/bump.key -out /etc/squid/certs/bump.crt >/dev/null 2>&1
   cat /etc/squid/certs/bump.key /etc/squid/certs/bump.crt > /etc/squid/certs/bump.pem
   chmod 600 /etc/squid/certs/bump.key /etc/squid/certs/bump.pem
@@ -74,9 +72,9 @@ for _ in $(seq 1 20); do
   sleep 1
 done
 
-# Graceful shutdown on `container stop` (SIGTERM): close squid cleanly so the next
-# start doesn't inherit a half-open state. (The launcher's `container run --init`
-# runs an init that reaps zombies and forwards SIGTERM here.)
+# Graceful shutdown on `container stop` (SIGTERM): close squid cleanly so the
+# next start doesn't inherit a half-open state. (The launcher's `container run
+# --init` runs an init that reaps zombies and forwards this signal here.)
 shutdown() { log "shutting down..."; squid -k shutdown 2>/dev/null || true; exit 0; }
 trap shutdown TERM INT
 

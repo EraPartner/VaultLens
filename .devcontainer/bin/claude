@@ -1,9 +1,175 @@
 #!/usr/bin/env bash
-# Thin shim: `claude` inside the Brain devcontainer.
+# apple/container launcher: route `claude` into the VaultLens sandbox.
 #
-# Kept as a separate entry (a) so the host fish walk-up logic, which looks for
-# .devcontainer/bin/claude to locate the project root, keeps working, and (b) so
-# a bare `claude` invocation routes into the container. All the real work
-# (staging, container build/run, credential forwarding) lives in `agent`.
+# Native `container build/run/exec` flow — Docker-free successor to the Compose
+# launcher. Same hardened image, egress
+# lock, mounts, lifecycle, credential forwarding. See PHASE-0/Napoleon learnings.
+#
+#   1. Stage a SANITIZED ~/.claude into ~/.claude-sandbox/stage/vaultlens.
+#   2. container build (cached) + idempotent run (reuse running / start stopped).
+#   3. Replay lifecycle as `dev`: post-create once (sentinel), post-start always.
+#   4. Forward the Claude OAuth token from the macOS Keychain at exec time.
+#   5. Auto config-sync on exit (VAULTLENS_AUTOSYNC=0 to disable; VAULTLENS_REBUILD=1
+#      to force image/container refresh).
+#
+# apple/container deltas: `--init` = compose init:true; `--tmpfs` bare path only
+# (no noexec/size — VM boundary covers it); no `--security-opt` (setuid stripped
+# in image); ~/.claude is a NATIVE named volume (root perms-fix can chown it).
 set -euo pipefail
-exec "$(dirname "$0")/agent" claude "$@"
+
+find_project_root() {
+  local d="$PWD"
+  while [[ "$d" != "/" ]]; do
+    [[ -f "$d/.devcontainer/Dockerfile" ]] && { echo "$d"; return 0; }
+    d="$(dirname "$d")"
+  done
+  return 1
+}
+if [[ -n "${VAULTLENS_PROJECT_ROOT:-}" && -d "${VAULTLENS_PROJECT_ROOT}/.devcontainer" ]]; then
+  PROJECT_ROOT="$VAULTLENS_PROJECT_ROOT"
+else
+  PROJECT_ROOT="$(cd "$(dirname "$0")/../.." 2>/dev/null && pwd -P || true)"
+  [[ -d "$PROJECT_ROOT/.devcontainer" ]] || PROJECT_ROOT="$(find_project_root || true)"
+fi
+[[ -z "$PROJECT_ROOT" || ! -d "$PROJECT_ROOT/.devcontainer" ]] && {
+  echo "claude (vaultlens): cannot locate the VaultLens project root." >&2; exit 1; }
+PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd -P)"
+DC="$PROJECT_ROOT/.devcontainer"
+
+command -v container >/dev/null 2>&1 || { echo "claude (vaultlens): apple/container not installed." >&2; exit 1; }
+container system status >/dev/null 2>&1 || { echo "claude (vaultlens): container system not started — run: container system start" >&2; exit 1; }
+
+NAME=vaultlens-dev
+IMAGE=vaultlens-dev:latest
+SVC_USER=dev
+
+# --- 1) Stage a sanitized ~/.claude for the read-only bind mount -------------
+LIB="$DC/launcher-common.sh"
+[[ -f "$LIB" ]] || { echo "claude (vaultlens): missing $LIB (run LockBox/sync.sh)." >&2; exit 1; }
+# shellcheck source=/dev/null
+source "$LIB"
+sandbox_stage_claude_config vaultlens
+# Lock host-executed git paths (.git + relocated core.hooksPath, e.g. .githooks)
+# :ro over the RW workspace — an in-container agent must not plant a hook the HOST
+# git runs on commit/push. Populates GIT_RO_MOUNTS; see launcher-common.sh.
+sandbox_git_ro_mounts "$PROJECT_ROOT" /workspaces/VaultLens
+
+# --- 2) Build (cached → fast) ------------------------------------------------
+container build -t "$IMAGE" "$DC" >/dev/null
+# Free the ~2GB build-shim RAM now the image is built; it auto-restarts on the next
+# `container build`. Set SANDBOX_KEEP_BUILDER=1 to leave it up (rapid rebuilds).
+[[ -n "${SANDBOX_KEEP_BUILDER:-}" ]] || container builder stop >/dev/null 2>&1 || true
+
+# Ensure the host project-memory dir exists before it is bind-mounted RO below —
+# a fresh project has none yet, and mounting a missing source path fails the run.
+mkdir -p "$HOME/.claude/projects/-Users-computer-Code-VaultLens/memory" 2>/dev/null || true
+
+# --- 3) Idempotent run: reuse running / start stopped / else create ----------
+if [[ "${VAULTLENS_REBUILD:-0}" == 1 ]]; then
+  container rm -f "$NAME" >/dev/null 2>&1 || true
+fi
+if container ls -q 2>/dev/null | grep -qx "$NAME"; then
+  :
+elif container ls -aq 2>/dev/null | grep -qx "$NAME"; then
+  container start "$NAME" >/dev/null
+else
+  container run -d --name "$NAME" \
+    --init \
+    --cap-drop ALL \
+    --cap-add NET_ADMIN --cap-add CHOWN --cap-add DAC_OVERRIDE \
+    --cap-add FOWNER --cap-add SETUID --cap-add SETGID \
+    -m 4g -c 4 \
+    --tmpfs /tmp --tmpfs /var/tmp \
+    -e DEVCONTAINER=true \
+    -e DISABLE_TELEMETRY=1 \
+    -e DISABLE_ERROR_REPORTING=1 \
+    -e BASH_ENV=/home/dev/.safe-chain/scripts/init-posix.sh \
+    -e NODE_USE_ENV_PROXY=1 \
+    -e HTTP_PROXY=http://127.0.0.1:3128 \
+    -e HTTPS_PROXY=http://127.0.0.1:3128 \
+    -e http_proxy=http://127.0.0.1:3128 \
+    -e https_proxy=http://127.0.0.1:3128 \
+    -e NO_PROXY=localhost,127.0.0.1,::1 \
+    -e no_proxy=localhost,127.0.0.1,::1 \
+    -v "$PROJECT_ROOT:/workspaces/VaultLens" \
+    ${GIT_RO_MOUNTS[@]+"${GIT_RO_MOUNTS[@]}"} \
+    -v "$DC:/workspaces/VaultLens/.devcontainer:ro" \
+    -v vaultlens-claude:/home/dev/.claude \
+    -v "$HOME/.claude-sandbox/stage/vaultlens:/home/dev/.claude-stage:ro" \
+    -v "$HOME/.claude/hooks/guard.mjs:/usr/local/share/claude-guard/guard.mjs:ro" \
+    -v "$HOME/.claude/hooks/managed-settings.json:/etc/claude-code/managed-settings.json:ro" \
+    -v "$HOME/.claude/projects/-Users-computer-Code-VaultLens/memory:/home/dev/.claude-memory-seed:ro" \
+    "$IMAGE" >/dev/null
+fi
+CID="$NAME"
+
+# Wait for the egress proxy (entrypoint applies firewall → squid).
+container exec "$NAME" bash -lc 'for i in $(seq 1 30); do (exec 3<>/dev/tcp/127.0.0.1/3128) 2>/dev/null && break; sleep 1; done' || true
+
+# F14: the egress allowlist is baked into the image; on the reuse/start paths the
+# running container can be enforcing a stale baked copy after a sync.sh change.
+sandbox_warn_stale_allowlist "$NAME" "$DC/allowlist.txt" "VAULTLENS_REBUILD=1 $0"
+
+# --- 4) Replay lifecycle as dev (post-create once, post-start every start) ----
+container exec --user "$SVC_USER" "$NAME" bash -lc '
+  set -e
+  cd /workspaces/VaultLens
+  if [[ ! -f /home/dev/.postcreate-done ]]; then
+    bash .devcontainer/post-create.sh && touch /home/dev/.postcreate-done
+  fi
+  bash .devcontainer/post-start.sh'
+
+# --- 5) Forward the Claude OAuth token from the macOS Keychain at exec time ---
+EXEC_ENV=()
+sandbox_forward_llm_creds vaultlens-claude-code-token
+
+# --- 6) Launch-integrity gate (mandatory; fail closed) -----------------------
+# A missing checker is NOT a soft warning: the current Dockerfile always bakes
+# vaultlens-verify-pins, so its absence means a stale pre-pin image is running
+# UNVERIFIED. Hard-abort and tell the operator to rebuild (matches bin/dev).
+if ! container exec --user "$SVC_USER" "$NAME" bash -lc 'command -v vaultlens-verify-pins >/dev/null 2>&1'; then
+  echo "claude (vaultlens): ABORT — vaultlens-verify-pins is not baked into this image (stale pre-pin image)." >&2
+  echo "  The launch-integrity gate is mandatory; rebuild to bake it in: VAULTLENS_REBUILD=1 $0" >&2
+  exit 1
+fi
+if ! container exec --user "$SVC_USER" -e BASH_ENV= "$NAME" vaultlens-verify-pins --quiet; then
+  echo "claude (vaultlens): ABORT — binary fingerprint drift (see above)." >&2
+  echo "  If you intentionally upgraded a tool, rebuild to re-pin: VAULTLENS_REBUILD=1 $0" >&2
+  exit 1
+fi
+
+# --- 7) On-exit hooks: config-sync push (OPT-IN) + power-down ------------------
+# Pushing container config back to the host is a code-exec persistence channel (a
+# prompt-injected agent could push hooks/plugins the host Claude later runs). The
+# push path is sanitized AND this is opt-in: enable per session with VAULTLENS_AUTOSYNC=1.
+# Power-down: stop the VM when your session ends so it stops pinning its 4 GB — a
+# container you start cleans up after itself. Set VAULTLENS_STOP_ON_EXIT=0 to keep it
+# WARM for instant reuse across sessions.
+sandbox_install_autosync_trap vaultlens "$CID" "${VAULTLENS_AUTOSYNC:-0}" "${VAULTLENS_STOP_ON_EXIT:-1}"
+
+# --- 8) Open an interactive claude session -----------------------------------
+# TTY only in a real terminal: interactive claude needs -i -t; piped/`-p` use gets
+# no flags so it doesn't wait on (absent) stdin.
+TTY_FLAGS=()
+[[ -t 0 && -t 1 ]] && TTY_FLAGS=(-i -t)
+set +e
+container exec --user "$SVC_USER" ${TTY_FLAGS[@]+"${TTY_FLAGS[@]}"} ${EXEC_ENV[@]+"${EXEC_ENV[@]}"} "$NAME" claude "$@"
+_rc=$?
+
+# --- 9) Push project memory back to the host (interactive sessions only) ------
+# Host memory is mounted RO and mirrored (--delete) into the container every start
+# (post-start.sh), so a headless / prompt-injected run's memory writes are wiped.
+# Only an interactive operator session's edits — layered on the clean host seed —
+# are pushed back (additive tar, mirroring Brain's bin/agent). (F10/F27)
+if [[ ${#TTY_FLAGS[@]} -gt 0 ]]; then
+  host_mem="$HOME/.claude/projects/-Users-computer-Code-VaultLens/memory"
+  if mkdir -p "$host_mem" 2>/dev/null; then
+    if container exec --user "$SVC_USER" "$NAME" \
+         bash -lc 'd=/home/dev/.claude/projects/-workspaces-VaultLens/memory; [[ -d "$d" ]] && cd "$d" && tar -cf - . 2>/dev/null' 2>/dev/null \
+       | tar -C "$host_mem" -xf - 2>/dev/null; then
+      echo "claude (vaultlens): project memory synced back to the host (interactive session)." >&2
+    fi
+  fi
+fi
+set -e
+exit "$_rc"
