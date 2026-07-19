@@ -111,8 +111,34 @@ RUN printf 'export PATH="/usr/local/share/npm-global/bin:/home/dev/.npm-global/b
 # VaultLens's search engine (registered as an MCP server in .mcp.json); its native
 # modules (better-sqlite3, tree-sitter, node-llama-cpp) compile against the
 # build-essential + cmake installed above. Build network is unrestricted here.
-RUN npm install -g @anthropic-ai/claude-code@2.1.173 @tobilu/qmd \
-  && claude --version && command -v qmd
+# PINNED from LockBox/tool-pins.env — do NOT hand-edit. `./bump-pins.sh --write`
+# in the LockBox repo rewrites these ARGs and tool-pins.env together; `--check`
+# (its pre-commit gate + CI) fails on drift. The npm package is a ~20 KB wrapper;
+# the real binary is a per-arch optional dep that postinstall copies to
+# bin/claude.exe, so we hash the PAYLOAD and restore it if postinstall was blocked
+# (npm >= 12 leaves a 500-byte stub), then re-check PATH. Fail-closed.
+ARG CLAUDE_CODE_VERSION=2.1.207
+ARG CLAUDE_CODE_SHA256_ARM64=8bc14a284065383460f37981d724b8f7aa7ca93c9849d2fe367e08f03383f454
+ARG CLAUDE_CODE_SHA256_AMD64=85e7e988a392d859f90802ca21fb26e89d3c9ab527f5ed0b08df3955e34d5c83
+RUN set -eux; \
+    npm install -g --no-fund --no-audit "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" @tobilu/qmd; \
+    case "$(dpkg --print-architecture)" in arm64) na=linux-arm64; want="${CLAUDE_CODE_SHA256_ARM64}" ;; amd64) na=linux-x64; want="${CLAUDE_CODE_SHA256_AMD64}" ;; *) exit 1 ;; esac; \
+    root="$(npm root -g)/@anthropic-ai/claude-code"; \
+    payload="$root/node_modules/@anthropic-ai/claude-code-${na}/claude"; \
+    test -f "$payload" || exit 1; \
+    got="$(sha256sum "$payload" | awk '{print $1}')"; \
+    echo "claude pin: want=$want got=$got"; \
+    test "$want" = "$got" || echo "FATAL: claude binary != reviewed pin; re-run ./bump-pins.sh --write in LockBox" >&2; \
+    test "$want" = "$got" || exit 1; \
+    stub="$(sha256sum "$root/bin/claude.exe" | awk '{print $1}')"; \
+    test "$stub" = "$want" || cd "$root"; \
+    test "$stub" = "$want" || node install.cjs; \
+    cd /; \
+    claudebin="$(command -v claude)"; \
+    run="$(readlink -f "$claudebin")"; \
+    got2="$(sha256sum "$run" | awk '{print $1}')"; \
+    test "$got2" = "$want" || exit 1; \
+    claude --version; command -v qmd
 
 # Ruff — VaultLens's Python linter (tools/ruff.toml; run in CI). Installed into the
 # root-owned python prefix so `ruff check tools/` resolves on PATH. Not a pinned /
