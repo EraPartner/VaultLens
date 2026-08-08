@@ -34,7 +34,10 @@ overrides) with frontmatter (`type: query`, inherit project `tags`, list cited `
 for trivial one-line Q&A.
 
 **Write boundary** — a project session writes only inside `projects/<slug>/`; never modify `wiki/`
-or `raw/` (recommend `wiki-enhancer` / `wiki-ingest` follow-ups instead).
+or `raw/` (recommend a `wiki-enhancer` / `wiki-ingest` follow-up instead when wiki coverage is
+lacking). Projects may *reference* any wiki page via wikilinks. `lint` validates `wiki_refs`
+against the wiki page set and checks projects for required frontmatter and broken refs; body
+content (Layout, Rules) is free-form.
 
 **AGENDA.md** is the autonomous-runner agenda — agent-managed task state in `key:: value` form.
 Its mechanical transitions (`last_run`/`next_due`/`status: done`, resolving clarifications) go

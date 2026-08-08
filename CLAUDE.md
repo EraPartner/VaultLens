@@ -55,21 +55,13 @@ template. The Chief of Staff launcher injects it automatically into its live con
 - `.claude/agents/` Claude subagent definitions (source of truth for the wiki agents) ·
   `.claude/skills/` operational runbooks (auto-loading skills)
 
-## Required page metadata
+## Page metadata and authoring
 
-All content pages need YAML frontmatter with at least: `title`, `type` (page/source/entity/concept/
-topic/synthesis/comparison/query/project/inventory), `status` (active/superseded/archived/draft), `created`
-(`YYYY-MM-DD`), `updated`, `summary` (one falsifiable sentence). Optional: `domain`
-(personal/research/work/learning), `tags`, `confidence` (high/medium/low — evidential trust),
-`volatility` (hot/warm/cold — refresh cadence; drives staleness thresholds 60/180/365 days).
+Wiki page frontmatter, link/citation format, change-quality rules, archiving, and index/log
+conventions load path-scoped from `.claude/rules/wiki-pages.md` when working under `wiki/`.
 
-- Analytical pages (`concepts/`, `topics/`, `syntheses/`, `comparisons/`) should set `confidence`
-  and `volatility`; `lint` validates the values and flags low-confidence pages for follow-up.
-
-- `wiki/sources/*` also need: `source_id` (e.g. `src-2026-04-11-001`), `source_type`
-  (article/paper/book/pdf/video/podcast/dataset/note/other), `origin`, `ingested_on`.
-- `projects/<slug>/project.md` also need: `wiki_refs` (the `[concepts/foo, topics/bar]` wikilinks the
-  project depends on), plus first-class `tags` and `domain` (used to scope wiki search to the project).
+`projects/<slug>/project.md` needs: `wiki_refs` (the `[concepts/foo, topics/bar]` wikilinks the
+project depends on), plus first-class `tags` and `domain` (used to scope wiki search to the project).
 
 **PDF support:** PDFs are first-class raw sources — place in `raw/sources/` or `raw/inbox/`; the
 model reads them directly and `wiki-ingest` extracts key claims into a source page. For large/complex
@@ -127,17 +119,10 @@ with `project link`, never hand-edit). Its `## Rules` section **overrides the de
 `## Working inside a project` when they conflict**. After any session that establishes new
 information, update the changed `project.md` sections and bump `updated`.
 
-### Boundary rules
-
-- Projects MAY reference any wiki page via wikilinks; `lint` validates `wiki_refs` against the wiki page set.
-- Projects MUST NOT modify `wiki/` or `raw/`; an agent's write surface is restricted to `projects/<slug>/`.
-- If wiki coverage is lacking, recommend a `wiki-enhancer` follow-up rather than editing the wiki.
-- `lint` checks projects for required frontmatter + broken `wiki_refs`; body content (Layout, Rules) is free-form.
-
 ### Working inside a project (instructions for agents)
 
 The project-session rules — wiki search ladder (and its devcontainer inversion), citation
-discipline, durable-Q&A format, write boundary — load path-scoped from
+discipline, durable-Q&A format, write boundary, project/wiki boundary rules — load path-scoped from
 `.claude/rules/working-in-projects.md` when working under `projects/`. Project `## Rules` in
 `project.md` override them on conflict.
 
@@ -205,34 +190,6 @@ operational detail: `tools/schedule/SPEC.md`; install with `tools/schedule/insta
   `.claude/skills/wiki-maintenance/SKILL.md`. Write findings to `wiki/reports/`.
 - **Projects** — scaffold/link/show + `project.md` lifecycle: `.claude/skills/wiki-projects/SKILL.md`.
 
-## Conventions
-
-**Links/citations:** write Obsidian path-based wikilinks `[[path/to/page]]` (the canonical form);
-in a `## Sources` section, concept/topic pages cite the source *page* (`[[sources/...]]`), while a
-**source page** (`wiki/sources/src-*.md`) cites its immutable raw material — `- Source text:
-[[raw/sources-text/<stem>]]` (always present, linked without the `.md`) and, when a PDF exists,
-`- Source PDF: [[raw/sources/<stem>.pdf]]`. (`raw/` wikilinks to real files are validated by `lint`;
-filenames containing `[`/`]` use an angle-bracket markdown link `[Label](<../../raw/...>)` since
-Obsidian wikilinks cannot contain `]`.) Keep external URLs on source
-pages and reference sources indirectly from concept/topic pages. For portability outside Obsidian
-(GitHub, plain-markdown viewers, headless agents) wikilinks carry a **dual-link** markdown mirror —
-`[[concepts/foo]] ([Foo Title](../concepts/foo.md))`. Do **not** hand-write the `([Title](path.md))`
-mirror (relative paths are error-prone); write the bare `[[...]]` and run
-`python3 tools/wiki.py links --fix --write`, which adds mirrors deterministically and idempotently.
-`python3 tools/wiki.py links` reports coverage without writing.
-
-**Change quality:** preserve validated content unless superseded by stronger evidence; mark superseded
-claims `status: superseded` (don't silently delete history); keep summaries concise + falsifiable;
-favor incremental edits across related pages over isolated notes; bump `updated` when editing.
-
-**Archiving:** retire pages with `archive page <ref> --reason "…"` — never delete (archived pages
-keep wikilinks resolving but drop out of staleness/orphan checks and `search`). Full semantics:
-`.claude/skills/wiki-maintenance/SKILL.md`.
-
-**Index/log:** `wiki/index.md` (Dataview) updates itself inside Obsidian. The derived `_index.md`
-mirrors are **generated — never hand-edit**; regenerate via the maintenance skill after
-adding/removing pages. `wiki/log.md` is append-only; headings `## [YYYY-MM-DD] operation | title`.
-
 ## Search
 
 [qmd](https://www.npmjs.com/package/@tobilu/qmd) is the primary engine — hybrid BM25 + vector +
@@ -249,9 +206,6 @@ edits, `defuddle` for URL → clean markdown into `raw/inbox/`, `obsidian-cli` /
 `obsidian-bases` as needed). There is no Obsidian MCP server. `obsidian-cli` and `defuddle` are
 host-only (need the `obs` binary, a running Obsidian app, or network) — inside the egress-locked
 sandbox use `obsidian-markdown` for formatting plus the normal file tools.
-
-Templater auto-applies the matching `wiki/_templates/` template when a file is created in a `wiki/`
-subfolder; Dataview tables update automatically from frontmatter (JS API enabled).
 
 ## Command index
 
