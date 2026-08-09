@@ -3,6 +3,8 @@ name: wiki-emerge
 description: >-
   Surface unnamed patterns from recent vault activity — recurring themes, hidden through-lines, and unstated conclusions the operator has not articulated. Read-only: never writes. Shell is limited to the read-only helper set listed in the body.
 tools: Read, Glob, Grep, Bash
+model: opus
+effort: high
 ---
 
 # Wiki Emerge Agent

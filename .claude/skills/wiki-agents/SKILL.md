@@ -61,9 +61,17 @@ ambiguous ones, and prints a roll-up block. Run it by hand only to test:
 `brain-wiki`, not bare `wiki-agent.py`). Resolve its clarifications with the `/wiki-project-clarify` skill;
 manage agendas with `wiki.py project agenda …` (see `.claude/skills/wiki-projects/SKILL.md`).
 
-**Models:** `sonnet` (default) / `haiku` / `opus` via `--model`. **Effort:** `low` / `medium` /
-`high` (default) / `xhigh` via `--effort` (currently informational — the headless CLI inherits the
-session effort level).
+**Models (headless `wiki-agent.py` only):** `sonnet` (default) / `haiku` / `opus` via `--model`.
+**Effort:** `low` / `medium` / `high` (default) / `xhigh` via `--effort` (currently informational —
+the headless CLI inherits the session effort level).
+
+**Interactive subagent runs ignore those flags** — `wiki-agent.py` strips the frontmatter, so the
+CLI values apply only to headless runs. Invoked by name in a session, each agent uses the `model:`
+and `effort:` in its own `.claude/agents/*.md`: the mechanical read-and-report agents
+(`wiki-search`, `wiki-source-verifier`, `wiki-contradiction-detector`, `wiki-quality-reviewer`,
+`wiki-ingest`) run on `sonnet`; the open-ended reasoning agents and the writers (`wiki-challenge`,
+`wiki-connect`, `wiki-emerge`, `wiki-idea-discovery`, `wiki-cos`, `wiki-enhancer`,
+`wiki-project-runner`) run on `opus`.
 
 **Host vs sandbox:** `wiki-agent.py` refuses to run on the host — invoke wiki agents via
 `brain-wiki <agent> …` and the Chief of Staff via `brain-cos` (other wrappers: `brain-claude`,

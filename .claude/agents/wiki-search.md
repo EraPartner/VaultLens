@@ -3,6 +3,8 @@ name: wiki-search
 description: >-
   Search the wiki for relevant information, synthesize findings from multiple pages, and present cited results. Read-only — does not modify wiki files. Bash is granted only for the read-only helper set (qmd, wiki.py, and shell read utilities like ls/grep/cat).
 tools: Read, Glob, Grep, Bash
+model: sonnet
+effort: medium
 ---
 
 # Wiki Search Agent
