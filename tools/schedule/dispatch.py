@@ -45,17 +45,28 @@ LOCK_FILE = STATE_DIR / "schedule.lock"
 LOG_DIR = STATE_DIR / "logs"
 REPORTS_DIR = ROOT / "wiki" / "reports"
 
-# The LLM backend: the logged-in Claude CLI on the user's Claude-plan
-# subscription. A single backend (was two failover-ed copilot GitHub accounts
-# until 2026-06-02). A usage-limit error puts it on a cooldown (mark_limited) that
-# defers the rest of the LLM batch; backend_available reports whether the cooldown
-# has expired. ACCOUNTS stays a list as the seam for a future second identity.
-ACCOUNTS = ["claude-plan"]
-
-# Backend pinned per SPEC: Claude CLI on the Claude plan, model `sonnet`.
-# (Was copilot/gpt-5.2 until 2026-06-02; copilot accounts are no longer usable.)
-CLI = "claude"
-MODEL = "sonnet"
+# One explicitly selected LLM backend runs a complete batch. Claude remains the
+# default for backward compatibility. Codex intentionally has no pinned default
+# model: the authenticated workspace configuration chooses it unless an operator
+# sets VAULTLENS_LLM_MODEL. Do not silently fall back between providers mid-batch.
+BACKENDS = {
+    "claude": {"model": "sonnet", "health_host": "api.anthropic.com"},
+    "codex": {"model": "", "health_host": "chatgpt.com"},
+}
+CLI = os.environ.get("VAULTLENS_LLM_CLI", "claude").strip().lower()
+if CLI not in BACKENDS:
+    choices = ", ".join(sorted(BACKENDS))
+    raise ValueError(f"VAULTLENS_LLM_CLI must be one of: {choices}")
+MODEL = os.environ.get("VAULTLENS_LLM_MODEL", BACKENDS[CLI]["model"]).strip()
+BACKEND_HEALTH_HOST = os.environ.get(
+    "VAULTLENS_LLM_HEALTH_HOST", BACKENDS[CLI]["health_host"]
+).strip()
+BACKEND_IDENTITY = os.environ.get("VAULTLENS_LLM_IDENTITY", f"{CLI}-plan").strip()
+if not BACKEND_HEALTH_HOST:
+    raise ValueError("VAULTLENS_LLM_HEALTH_HOST must not be empty")
+if not BACKEND_IDENTITY:
+    raise ValueError("VAULTLENS_LLM_IDENTITY must not be empty")
+ACCOUNTS = [BACKEND_IDENTITY]
 
 # Windows are [start_hour, end_hour). Generous so a morning wake still catches a
 # missed 01:30 batch (the ledger makes it run at most once/day either way).
@@ -189,7 +200,7 @@ def classify_failure(returncode: int, text: str) -> str:
 
 
 def backend_available(ledger: dict, now: datetime) -> bool:
-    """True if the Claude backend is not currently in a usage-limit cooldown."""
+    """True if the selected backend is not in a usage-limit cooldown."""
     st = ledger["accounts"].get(ACCOUNTS[0], {})
     lu = st.get("limited_until")
     return not lu or parse(lu) <= now
@@ -245,14 +256,16 @@ def step_due(step: "Step", ledger: dict, now: datetime) -> bool:
 @dataclass
 class Step:
     name: str
-    kind: str  # "host" (wiki.py, offline) | "llm" (brain-wiki claude)
+    kind: str  # "host" (wiki.py, offline) | "llm" (brain-wiki backend)
     period: str  # "daily" | "weekly"
     window: tuple[int, int]
     gates: list[str]  # subset of {"ac","online","container","icloud","battery"}
     builder: Callable[
         [], list[list[str]]
     ]  # -> list of arg-vectors ([] = nothing to do)
-    effort: str = "low"  # NOTE: currently inert — wiki-agent.py EFFORT_MAP maps every level to no claude CLI flag; kept to express intended depth for when the CLI gains a thinking-budget control.
+    effort: str = (
+        "low"  # Claude inherits its setting; Codex maps this to reasoning effort.
+    )
     timeout: int = 1800
     report: bool = False  # capture stdout into wiki/reports/
 
@@ -567,9 +580,8 @@ class Gates:
         return True, ""
 
     def _g_online(self) -> bool:
-        # Every online-gated step is an LLM job on the Claude CLI, so require the
-        # Anthropic endpoint itself: github-up / anthropic-down must not pass.
-        return self._nc("api.anthropic.com", 443)
+        # Require the selected provider endpoint, not merely generic internet.
+        return self._nc(BACKEND_HEALTH_HOST, 443)
 
     def _g_container(self) -> bool:
         if self._container_up():
@@ -668,16 +680,7 @@ def run_host(args: list[str], timeout: int) -> tuple[int, str]:
 def exec_brain_wiki(
     args: list[str], acct: str, effort: str, timeout: int
 ) -> tuple[int, str]:
-    inner_parts = [
-        "brain-wiki",
-        *args,
-        "--cli",
-        CLI,
-        "--model",
-        MODEL,
-        "--effort",
-        effort,
-    ]
+    inner_parts = build_brain_wiki_args(args, effort)
     inner = " ".join(_q(p) for p in inner_parts)
     env = dict(os.environ)
     # Keep the sandbox VM warm for the whole tick. bin/agent powers its container
@@ -685,9 +688,8 @@ def exec_brain_wiki(
     # but one tick runs several steps back-to-back and should reuse a single warm
     # box; cmd_run's end-of-tick teardown stops it once the batch is done.
     env["BRAIN_KEEP_WARM"] = "1"
-    # `acct` is the failover-ledger identity. The Claude CLI authenticates via
-    # its own subscription login, so no per-exec env steering is needed; the
-    # parameter stays for the multi-identity ledger interface.
+    # `acct` is the cooldown-ledger identity. Each CLI authenticates through its
+    # own login, so no secret or per-exec credential steering happens here.
     try:
         p = subprocess.run(
             [FISH, "-lc", inner],
@@ -699,6 +701,21 @@ def exec_brain_wiki(
         return p.returncode, (p.stdout or "") + (p.stderr or "")
     except subprocess.TimeoutExpired:
         return 124, "timeout"
+
+
+def build_brain_wiki_args(args: list[str], effort: str) -> list[str]:
+    """Build the provider-neutral brain-wiki argument vector."""
+    parts = [
+        "brain-wiki",
+        *args,
+        "--cli",
+        CLI,
+        "--effort",
+        effort,
+    ]
+    if MODEL:
+        parts.extend(["--model", MODEL])
+    return parts
 
 
 def _q(s: str) -> str:
@@ -715,7 +732,7 @@ def run_llm(
     now: datetime,
     log: Callable[[str], None],
 ) -> tuple[str, str, str]:
-    """Run one LLM invocation on the single Claude backend.
+    """Run one LLM invocation on the selected backend.
 
     Returns (status, backend, output), status in {ok, transient, deferred}. A
     usage-limit (quota/ratelimit) hit, or a cooldown still in effect from an
@@ -1311,7 +1328,7 @@ def _run_steps(
                     outcome = "deferred"
                     llm_blocked = True
                     log(f"  {step.name} deferred: {who}")
-                    notify("Brain schedule", "Claude usage limited; LLM jobs deferred")
+                    notify("Brain schedule", "LLM backend usage limited; jobs deferred")
                     break  # shared quota -> stop the LLM batch this tick
                 else:  # transient
                     all_ok = False

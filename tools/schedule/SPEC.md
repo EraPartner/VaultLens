@@ -2,7 +2,7 @@
 
 Status: **implemented 2026-06-01.** Files: `dispatch.py` (the dispatcher),
 `com.brain.schedule.plist` (LaunchAgent), `brain-schedule.sudoers` (least-privilege
-power rule), `install.sh` (installer), `../tests/test_schedule.py` (21 tests).
+power rule), `install.sh` (installer), `../tests/test_schedule.py` (dispatcher tests).
 Activate with `tools/schedule/install.sh` + the `sudo pmset repeat wake` and
 sudoers commands it prints. This file remains the design rationale.
 
@@ -20,6 +20,12 @@ sudoers commands it prints. This file remains the design rationale.
 > the nightly batch runs (the ledger shows recent `lint`/`index`/`cos-brief`
 > successes). The "Deactivation / reactivation" section at the bottom remains the
 > procedure if it is ever paused again.
+>
+> **2026-08-15 — provider adapter added; container migration deferred.**
+> The dispatcher now reads `VAULTLENS_LLM_CLI=claude|codex` and optional model,
+> health-host, and identity overrides. Claude remains the installed default.
+> Selecting Codex is configuration-complete but not operational through
+> `brain-wiki` until the LockBox-derived container launcher is migrated.
 
 ## Lid-closed runs (AC-gated keep-awake)
 
@@ -52,39 +58,41 @@ pmset call still needs a password. `sudo -n` is used so a missing rule fails fas
    maintenance (Tier 0) runs offline regardless.
 4. Read-only agents never write their own reports; the **dispatcher** captures
    their stdout and writes the dated report. Keeps the agents read-only.
-5. **Backend (current):** all LLM jobs run on the **Claude CLI pinned to
-   `sonnet`** (`--cli claude --model sonnet`), authenticated by the logged-in
-   `claude` CLI (the Claude plan subscription). The dispatcher pins the model
-   explicitly for determinism. *(Was `--cli copilot --model gpt-5.2` until
-   2026-06-02; copilot accounts are no longer usable.)*
-6. **Single backend identity (current):** `ACCOUNTS = ["claude-plan"]`. There is
-   one Claude subscription auth, so there is no account to fail over to: a Claude
-   usage-limit/rate-limit error marks the identity `limited_until` and **defers
-   the rest of the LLM batch**, caught up on the next eligible window. *(Was two
-   copilot `gh` accounts selected via `BRAIN_GH_ACCOUNT` with switch-on-limit
-   failover.)*
+5. **Backend (current):** one explicit provider runs an entire batch. The
+   dispatcher reads `VAULTLENS_LLM_CLI=claude|codex`; Claude is the backward-
+   compatible default and pins `sonnet`. Codex leaves its model unpinned unless
+   `VAULTLENS_LLM_MODEL` is set. It never falls back across providers mid-batch.
+6. **Single backend identity (current):** the ledger identity defaults to
+   `<cli>-plan` and can be overridden with `VAULTLENS_LLM_IDENTITY`. A usage or
+   rate limit marks that identity `limited_until` and **defers the rest of the
+   LLM batch**, caught up on the next eligible window. There is no automatic
+   cross-provider or cross-account failover.
 7. **Nothing LLM runs per tick.** All LLM work happens in **one nightly batch**;
    the only daily-morning LLM job is the cos brief. The ~30-min tick is purely the
    catch-up gate-checker, never an LLM trigger.
 8. **`enhance` is capped at `--iterations 10` per night** (not `--forever`).
 
-## Backend & model
+## Backend and model
 
-- Invocation: `fish -lc "brain-wiki <agent> --cli claude --model sonnet --effort <low|high>"`.
-  Note the `--effort` flag is a **no-op for the Claude CLI** (`EFFORT_MAP[...]["claude"]`
-  is empty in `wiki-agent.py`); it is still passed for a uniform invocation shape
-  and matters only if the backend ever switches back to copilot.
-- Egress: for headless Claude runs the squid allowlist must include
-  `api.anthropic.com`. Interactive `claude` already works in-container, so it is
-  likely present — **verify before relying on scheduled claude runs.**
-- Auth: the Claude CLI uses its own logged-in session (the Claude plan), not a
-  forwarded token. **Verify `claude -p` works non-interactively from a
-  launchd-spawned `fish` in the GUI session before reactivating** (the same
-  Keychain-reachability open question as the copilot token had).
+- Invocation shape: `fish -lc "brain-wiki <agent> --cli <claude|codex>
+  [--model <model>] --effort <low|medium|high>"`.
+- Configuration: `VAULTLENS_LLM_CLI`, with optional
+  `VAULTLENS_LLM_MODEL`, `VAULTLENS_LLM_HEALTH_HOST`, and
+  `VAULTLENS_LLM_IDENTITY`. `install.sh` copies these into the installed
+  LaunchAgent. Re-run it when changing providers.
+- Defaults: Claude uses `sonnet` and `api.anthropic.com`; Codex leaves model
+  selection to its workspace configuration and uses `chatgpt.com` for the
+  coarse online gate.
+- Auth is owned by the selected CLI's logged-in session. Verify the chosen CLI
+  non-interactively from a launchd-spawned login `fish` before relying on it.
+- Deferred boundary: `brain-wiki` still selects the existing Claude-oriented
+  devcontainer profiles. Do not install with `VAULTLENS_LLM_CLI=codex` until
+  the LockBox-derived container launcher supports Codex.
 
-### Account selection & failover
+### Historical Copilot account selection and failover
 
-`bin/agent` mints the token **at exec time**: `gh auth token --user
+This section records the pre-2026-06-02 design only; it is not current behavior.
+`bin/agent` minted the token **at exec time**: `gh auth token --user
 ${BRAIN_GH_ACCOUNT:-talicaddy}` -> name-only `-e COPILOT_GITHUB_TOKEN` on
 `compose exec` (verified, lines ~178-186/226). Consequence: **switching accounts
 is cheap** — the dispatcher just sets `BRAIN_GH_ACCOUNT` for the next
@@ -103,27 +111,25 @@ qmd reseed.
 - VERIFY at build: copilot honors the per-exec `COPILOT_GITHUB_TOKEN` over any
   cached in-container auth state, so the switch actually takes effect.
 
-## Rate limits & premium-request budget
+## Rate limits and request budget
 
-The scarce resource is the **monthly premium-request quota**, not per-minute
-throttling. Two facts that drive the design:
-- Copilot premium-request allowances are **plan-dependent and change over time** —
-  the dispatcher must not hardcode a number; treat quota as a runtime state.
+The available quota is provider- and plan-dependent, so the dispatcher does not
+hardcode a number. Two facts drive the design:
+- Treat quota as runtime state reported by the selected CLI.
 - **Each agentic run is many model turns** (tool calls), so one `cos brief` or
-  `contradict` can cost 5-20+ premium requests, not one. Budget accordingly.
+  `contradict` can consume many requests, not one. Budget accordingly.
 
-Dispatcher classifies copilot exit/stderr into three failure modes:
+The dispatcher classifies CLI exit output into three failure modes:
 
 | Class | Signal | Behavior |
 |---|---|---|
 | Transient / network | timeout, 5xx | retry next tick (ledger not advanced) |
-| Short rate-limit | 429 / "rate limit" | mark account `limited_until` (backoff 30m -> 1h -> 2h), **switch to other account**, retry job once |
-| **Monthly quota exhausted** | "quota" / "premium request" / "upgrade" | mark account `limited_until` (probe again in ~24h — don't compute exact reset), **switch to other account**, retry job once |
-| **Both accounts limited** | switch found no healthy account | defer the job + rest of the LLM batch; notify |
+| Short rate-limit | 429 / "rate limit" | mark backend identity `limited_until` (backoff 30m -> 1h -> 2h); defer |
+| **Quota exhausted** | "quota" / "premium request" / "upgrade" | mark backend identity `limited_until` (probe again in ~24h; do not compute an exact reset); defer |
+| **Backend limited** | selected identity is cooling down | defer the job and rest of the LLM batch; notify |
 
-The two accounts roughly double the effective monthly budget; with `enhance`
-capped at 10 iterations/night the nightly batch is bounded, so two quotas should
-cover it comfortably.
+There is one configured backend identity. The dispatcher never switches provider
+or credentials automatically.
 
 Budget-shaping (build into the job table):
 - `enhance` capped at **`--iterations 10` per night** (the biggest consumer; no
@@ -148,8 +154,8 @@ The dispatcher ticks every ~30 min only to check gates + the ledger. Actual work
 5. `enhance --iterations 10` (capped) — **last**, the biggest budget consumer;
    soaks up whatever time/quota remains after the digests
 
-All LLM steps: `--cli claude --model sonnet`, deferred if a usage limit is hit
-(single identity, no failover) or if offline. The whole batch runs at most once per night; if a night is missed
+All LLM steps use the configured `--cli` and optional `--model`, and defer if a
+usage limit is hit or if offline. The whole batch runs at most once per night; if a night is missed
 (battery / asleep), the ledger catches it up on the next AC night.
 
 **Daily morning — ~07:00 window, battery OK:**
@@ -198,9 +204,9 @@ next eligible tick. Sleep / offline / closed-lid become non-events.
   dirs — they reason over `wiki/` only. Readers that do read across projects (CoS)
   keep the default scan. So every scheduled container is least-privilege on both
   axes: writes scoped to the profile's hole, reads scoped to what the agent uses.
-- **VERIFY before build:** Keychain access from a launchd-spawned `fish` in the
-  Aqua session (should work; confirm `brain-wiki` can mint the copilot/claude
-  token non-interactively).
+- **VERIFY before build:** selected-CLI session access from a launchd-spawned
+  `fish` in the Aqua session (confirm `brain-wiki` can authenticate
+  non-interactively).
 
 ## Job table (WHICH + WHEN)
 
@@ -246,7 +252,7 @@ running these, but never auto-fire them.
 
 | Gate | Detection | Behavior when failing |
 |---|---|---|
-| online | `nc -z -G 5 api.anthropic.com 443` (or `curl --max-time 5`) | **defer** LLM jobs (ledger not advanced → retried next tick). Tier 0 unaffected. |
+| online | `nc -z -G 5 $VAULTLENS_LLM_HEALTH_HOST 443` (provider default if unset) | **defer** LLM jobs (ledger not advanced → retried next tick). Tier 0 unaffected. |
 | container | `container system status` exits 0 | `container system start` + bounded wait (~60s); else defer LLM jobs. Tier 0 still runs. |
 | icloud | `find <input> -flags +dataless` empty, else `brctl download <path>` | defer until materialized. |
 | AC | `pmset -g batt` shows `AC Power` | heavy jobs (enhance, contradict) defer; light jobs proceed. |
@@ -360,14 +366,14 @@ launchctl bootout gui/$(id -u)/com.brain.schedule   # stop the agent firing
 sudo pmset repeat cancel                             # stop the nightly 01:25 wake
 ```
 
-**To reactivate** (after verifying `claude -p` runs non-interactively from a
-launchd-spawned login `fish` — see "Backend & model"):
+**To reactivate** (after verifying the selected CLI runs non-interactively from
+a launchd-spawned login `fish` — see "Backend and model"):
 
 ```sh
-tools/schedule/install.sh                            # re-copies plist, re-bootstraps, kickstarts one run
+VAULTLENS_LLM_CLI=claude tools/schedule/install.sh  # re-copies plist, re-bootstraps, kickstarts one run
 sudo pmset repeat wakeorpoweron MTWRFSU 01:25:00     # restore the overnight wake
 launchctl list | grep com.brain                      # confirm loaded
-python3 tools/schedule/dispatch.py status            # confirm ledger + "claude-plan healthy"
+python3 tools/schedule/dispatch.py status            # confirm ledger + backend identity health
 ```
 
 `install.sh` is idempotent (it boots out any existing agent first), so it is the

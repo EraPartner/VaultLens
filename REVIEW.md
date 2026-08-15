@@ -1,7 +1,7 @@
 # REVIEW.md — pre-change checklist for VaultLens
 
 Run this before proposing or committing a change: it encodes the review knowledge that otherwise
-lives in the maintainer's head, so review catches issues automatically (see `CLAUDE.md` and
+lives in the maintainer's head, so review catches issues automatically (see `AGENTS.md` and
 `.githooks/README.md` for the why and the escape hatches).
 
 ## Secrets & safety
@@ -34,6 +34,6 @@ lives in the maintainer's head, so review catches issues automatically (see `CLA
 - [ ] Conventional Commit subject (`type(scope): summary`, ≤ 72 chars) — the `commit-msg` hook
       enforces `feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert`.
 - [ ] Commit is signed (Secure Enclave ssh key; `commit.gpgsign` + `tag.gpgsign` are `true`).
-- [ ] Message says what + why; update `CLAUDE.md`, `README.md`, or `.githooks/README.md` if behavior
+- [ ] Message says what + why; update `AGENTS.md`, `README.md`, or `.githooks/README.md` if behavior
       or a documented gate changed.
 - [ ] Hooks are installed (`.githooks/install.sh`); don't land a change by leaning on `--no-verify`.

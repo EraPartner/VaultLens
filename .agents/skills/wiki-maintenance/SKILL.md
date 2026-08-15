@@ -45,5 +45,5 @@ qmd status                                       # index health
 ```
 
 Semantic (thorough) checks run through agents — `quality` / `contradict` / `verify`; see
-`.claude/skills/wiki-agents/SKILL.md`. Write findings to `wiki/reports/`; fix highest-priority
+`.agents/skills/wiki-agents/SKILL.md`. Write findings to `wiki/reports/`; fix highest-priority
 issues first. Archived pages are excluded from staleness/orphan checks and from `search` by default.

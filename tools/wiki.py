@@ -17,7 +17,16 @@ WIKI_DIR = ROOT / "wiki"
 PROJECTS_DIR = ROOT / "projects"
 
 IGNORE_DIRS = {"_templates", ".obsidian"}
-IGNORE_FILES = {"index.md", "_index.md", "log.md"}
+# Navigation/runtime files and nested agent instructions are repository
+# infrastructure, not knowledge pages. Keep them out of lint, indexes, search,
+# coverage, and stats even when they live under wiki/ for scoped discovery.
+IGNORE_FILES = {
+    "index.md",
+    "_index.md",
+    "log.md",
+    "AGENTS.md",
+    "AGENTS.override.md",
+}
 SPECIAL_LINK_TARGETS = {"index", "log", "home", "category", "page-name", "path", "to"}
 
 

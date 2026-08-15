@@ -3,13 +3,14 @@ title: Schema
 type: page
 status: active
 created: 2026-04-11
-updated: 2026-06-29
+updated: 2026-08-15
 summary: Operating conventions and schema for this wiki.
 ---
 
 # Operating Schema
 
-The authoritative schema is at vault root: `../CLAUDE.md`
+The authoritative schema is at vault root: `../AGENTS.md`. `../CLAUDE.md` is a
+compatibility import for Claude Code.
 
 ## Quick Reference
 
@@ -145,7 +146,7 @@ report_type: lint|audit|other
 #### Inventory
 Tracked intentions, filed under `inventory/<kind>/` where kind is one of
 ingest-candidate / question / task / watch / corpus / artifact / item. Managed
-with `python3 tools/wiki.py inventory` (list/new/show). See `../CLAUDE.md` for
+with `python3 tools/wiki.py inventory` (list/new/show). See `../AGENTS.md` for
 the full field set.
 
 ```

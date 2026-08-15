@@ -13,6 +13,15 @@ LABEL="com.brain.schedule"
 SRC="$HERE/$LABEL.plist"
 DEST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
+LLM_CLI="${VAULTLENS_LLM_CLI:-claude}"
+
+case "$LLM_CLI" in
+  claude|codex) ;;
+  *)
+    echo "VAULTLENS_LLM_CLI must be 'claude' or 'codex' (got '$LLM_CLI')" >&2
+    exit 2
+    ;;
+esac
 
 [[ -f "$SRC" ]] || { echo "missing $SRC" >&2; exit 1; }
 
@@ -22,6 +31,25 @@ mkdir -p "$HOME/.brain/logs"
 echo "==> installing $DEST"
 mkdir -p "$HOME/Library/LaunchAgents"
 cp "$SRC" "$DEST"
+/usr/bin/plutil -insert EnvironmentVariables.VAULTLENS_LLM_CLI \
+  -string "$LLM_CLI" "$DEST"
+if [[ -n "${VAULTLENS_LLM_MODEL:-}" ]]; then
+  /usr/bin/plutil -insert EnvironmentVariables.VAULTLENS_LLM_MODEL \
+    -string "$VAULTLENS_LLM_MODEL" "$DEST"
+fi
+if [[ -n "${VAULTLENS_LLM_HEALTH_HOST:-}" ]]; then
+  /usr/bin/plutil -insert EnvironmentVariables.VAULTLENS_LLM_HEALTH_HOST \
+    -string "$VAULTLENS_LLM_HEALTH_HOST" "$DEST"
+fi
+if [[ -n "${VAULTLENS_LLM_IDENTITY:-}" ]]; then
+  /usr/bin/plutil -insert EnvironmentVariables.VAULTLENS_LLM_IDENTITY \
+    -string "$VAULTLENS_LLM_IDENTITY" "$DEST"
+fi
+
+echo "==> scheduled LLM backend: $LLM_CLI"
+if [[ "$LLM_CLI" == "codex" ]]; then
+  echo "warning: Codex scheduling needs the deferred container launcher support" >&2
+fi
 
 echo "==> (re)bootstrapping $LABEL into $DOMAIN"
 launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
@@ -37,6 +65,12 @@ Installed. Useful commands:
   launchctl print $DOMAIN/$LABEL          # full agent state
   python3 "$HERE/dispatch.py" status      # ledger / accounts / wakes
   python3 "$HERE/dispatch.py" run --dry-run
+
+Backend selection is captured when this installer runs:
+  VAULTLENS_LLM_CLI=claude tools/schedule/install.sh
+  VAULTLENS_LLM_CLI=codex tools/schedule/install.sh   # after container launcher support lands
+Optional overrides: VAULTLENS_LLM_MODEL, VAULTLENS_LLM_HEALTH_HOST,
+VAULTLENS_LLM_IDENTITY.
 
 To enable the overnight forced wake (AC-gated in the dispatcher), run with sudo:
   sudo pmset repeat wakeorpoweron MTWRFSU 01:25:00

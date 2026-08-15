@@ -2,7 +2,8 @@
 """Project workspaces that consume the wiki KB (list/new/show/link).
 
 A project lives under `projects/<slug>/` with its own `project.md` (the source of
-truth), the CLAUDE.md agent shim, and a TODO.md that feeds
+truth), provider-neutral AGENTS.md instructions, a CLAUDE.md compatibility shim,
+and a TODO.md that feeds
 the aggregated `projects/TODO.md`. This module scaffolds new projects from
 templates and manages their `wiki_refs`. The `Project` dataclass and
 `list_projects` loader live in `wiki.py` (shared with the linter).
@@ -69,7 +70,7 @@ read this section to understand where things live before answering questions.
 ## Rules
 
 Project-specific rules agents working in this directory MUST follow. These
-override the defaults in the root `CLAUDE.md` (`## Working inside a project`)
+override the defaults in the root `AGENTS.md` (`## Working inside a project`)
 when they conflict. Be specific.
 
 <!-- Examples:
@@ -104,18 +105,15 @@ python3 tools/wiki.py project link {slug} concepts/some-page
 """
 
 
-# Project CLAUDE.md: imports project.md deterministically (it's the per-project
-# source of truth, so don't leave loading it to the agent's discretion). The
-# root vault CLAUDE.md (the wiki operating schema) loads automatically — Claude
-# Code walks ancestor directories — so no explicit pointer is needed.
-CLAUDE_MD_TEMPLATE = """\
-@project.md
-
+# Project AGENTS.md: Codex discovers this file from the directory hierarchy.
+# It explicitly requires reading project.md because AGENTS.md has no import syntax.
+AGENTS_MD_TEMPLATE = """\
 # Project Agent Context
 
-This is a project workspace inside the Brain wiki. The root vault schema
-(`../../CLAUDE.md`) is loaded automatically; `## Rules` in `project.md`
-overrides it where they conflict.
+This is a project workspace inside the VaultLens wiki. Before doing any work, read
+`project.md` in full; it is the project source of truth. The root vault schema
+(`../../AGENTS.md`) and shared project rules (`../AGENTS.md`) also apply.
+`## Rules` in `project.md` overrides them where they conflict.
 
 Write only inside this project directory. Never modify `wiki/` or `raw/`.
 
@@ -129,6 +127,18 @@ Write only inside this project directory. Never modify `wiki/` or `raw/`.
   - a referenced concept page is shallow → recommend `wiki-enhancer`
   - a needed source isn't in the wiki yet → recommend `wiki-ingest` with the candidate path
   - the question turns out to need no project context → suggest `wiki-search` instead
+"""
+
+
+# Claude Code imports the neutral project instructions and project.md. The root
+# CLAUDE.md imports the provider-neutral root AGENTS.md separately.
+CLAUDE_MD_TEMPLATE = """\
+@AGENTS.md
+@project.md
+
+# Claude Code compatibility
+
+`AGENTS.md` is the provider-neutral project instruction source.
 """
 
 
@@ -213,6 +223,7 @@ def _project_new(slug: str) -> int:
         PROJECT_TEMPLATE.format(title=title, slug=cleaned, today=today),
         encoding="utf-8",
     )
+    (project_dir / "AGENTS.md").write_text(AGENTS_MD_TEMPLATE, encoding="utf-8")
     (project_dir / "CLAUDE.md").write_text(CLAUDE_MD_TEMPLATE, encoding="utf-8")
     (project_dir / "TODO.md").write_text(
         TODO_TEMPLATE.format(slug=cleaned), encoding="utf-8"
@@ -222,7 +233,10 @@ def _project_new(slug: str) -> int:
     print(f"Created project '{cleaned}' at {project_dir.relative_to(ROOT)}")
     print("  - project.md")
     print(
-        "  - CLAUDE.md      (AI entrypoint → @project.md + operating principles; root schema auto-loads)"
+        "  - AGENTS.md      (provider-neutral project instructions; read project.md first)"
+    )
+    print(
+        "  - CLAUDE.md      (Claude Code compatibility imports AGENTS.md + project.md)"
     )
     print(
         "  - TODO.md        (per-project todo; embedded into projects/TODO.md, P1 items surface in projects/TODO-widget.md)"
@@ -234,7 +248,7 @@ def _project_new(slug: str) -> int:
         "  - queries/       (default Q&A artifact dir; redefine in ## Rules if you want)"
     )
     print(
-        "  - .claude/settings.local.json (enables the qmd MCP server for project sessions)"
+        "  - .claude/settings.local.json (enables qmd for Claude; Codex uses root .codex/config.toml)"
     )
     print(
         f"\nNext steps:\n"

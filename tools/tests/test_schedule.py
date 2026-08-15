@@ -211,12 +211,31 @@ def main() -> int:
     check(
         "never-run jobs read as stale", "stale" in s_stale and "failing" not in s_stale
     )
-    accts = {"claude-plan": {"limited_until": dispatch.iso(nowt + timedelta(hours=2))}}
+    accts = {
+        dispatch.BACKEND_IDENTITY: {
+            "limited_until": dispatch.iso(nowt + timedelta(hours=2))
+        }
+    }
     s_lim = dispatch.format_schedule_status(healthy, accts, meta, nowt)
     check(
         "backend cooldown surfaced",
-        "Backend limited" in s_lim and "claude-plan" in s_lim,
+        "Backend limited" in s_lim and dispatch.BACKEND_IDENTITY in s_lim,
     )
+
+    print("backend command selection:")
+    original_cli, original_model = dispatch.CLI, dispatch.MODEL
+    try:
+        dispatch.CLI, dispatch.MODEL = "claude", "sonnet"
+        claude_parts = dispatch.build_brain_wiki_args(["search"], "high")
+        check("Claude backend selected", claude_parts[-6:-4] == ["--cli", "claude"])
+        check("Claude model pinned", claude_parts[-2:] == ["--model", "sonnet"])
+
+        dispatch.CLI, dispatch.MODEL = "codex", ""
+        codex_parts = dispatch.build_brain_wiki_args(["search"], "medium")
+        check("Codex backend selected", "codex" in codex_parts)
+        check("Codex default model unpinned", "--model" not in codex_parts)
+    finally:
+        dispatch.CLI, dispatch.MODEL = original_cli, original_model
 
     print("_record failure semantics:")
     led7 = fresh_ledger()

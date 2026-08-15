@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Wiki agent wrapper - invoke the Claude Code CLI with the vault's custom agents.
+"""Invoke VaultLens wiki roles through Claude Code or Codex.
 
-Agent definitions live in .claude/agents/*.md (Claude subagent format). This
-launcher injects the agent body as a headless `claude -p` system prompt and adds
-the orchestration Claude doesn't do natively: enhance loops with strategy
-cycling, the CoS live-context gather, PDF pre-extraction, inbox promotion, and
-auto-logging."""
+Canonical role definitions live in .agents/roles/*.md. This launcher injects
+the role body into a provider-specific headless command and adds orchestration:
+enhance loops, CoS live-context gathering, PDF pre-extraction, inbox promotion,
+and auto-logging.
+"""
 
 import argparse
 import datetime as _dt
@@ -19,7 +19,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-AGENTS_DIR = ROOT / ".claude" / "agents"
+AGENTS_DIR = ROOT / ".agents" / "roles"
 TOOLS_DIR = ROOT / "tools"
 
 
@@ -36,7 +36,7 @@ def _in_container() -> bool:
 def _enforce_container(args) -> int | None:
     """Refuse to invoke the agent CLIs outside the egress-locked sandbox.
 
-    This runner shells out to the claude CLI, which must only run inside the
+    This runner shells out to the selected agent CLI, which must only run inside the
     container. --help and --debug (a dry run that prints the command without
     executing) are still allowed on the host. Set BRAIN_AGENT_ALLOW_HOST=1 to
     override (not recommended).
@@ -105,11 +105,12 @@ AGENT_FILES = {
 
 CLI_OPTIONS = {
     "claude": "claude",
+    "codex": "codex",
 }
 
-# Per-agent runtime permissions, used to build the claude headless
-# --allowedTools / --add-dir flags. The same profiles are mirrored in the
-# `tools:` frontmatter of .claude/agents/*.md for interactive subagent use.
+# Per-agent runtime permissions. Claude maps these to --allowedTools / --add-dir;
+# Codex maps them to its read-only or workspace-write sandbox. Generated native
+# manifests mirror the same capability tier for interactive subagent use.
 #   shell:         grant a curated read-only shell command set.
 #   write:         grant the file write/edit tool (+ extra shell tools needed to manage files).
 #   writable_dirs: paths (relative to ROOT) the agent must be able to modify. Empty for read-only
@@ -395,10 +396,9 @@ def _resolve_strategy(strategy: str | None, iteration_index: int) -> str | None:
     return strategy
 
 
-# Effort currently maps to no claude CLI flags (the headless CLI inherits the
-# session/settings effort level); the arg is kept for interface stability with
-# brain-wiki / dispatch.py callers.
-EFFORT_MAP: dict[str, list[str]] = {
+# Claude behavior stays backward-compatible: effort is accepted but remains
+# inherited from the CLI configuration. Codex maps it to model_reasoning_effort.
+CLAUDE_EFFORT_MAP: dict[str, list[str]] = {
     "low": [],
     "medium": [],
     "high": [],
@@ -415,8 +415,9 @@ Examples:
   # Run quality review
   python3 tools/agents/wiki-agent.py quality --page wiki/concepts/my-concept.md
 
-  # Run with a specific Claude model
-  python3 tools/agents/wiki-agent.py quality --page wiki/concepts/my-concept.md --model opus
+  # Run through a specific backend/model
+  python3 tools/agents/wiki-agent.py quality --page wiki/concepts/my-concept.md --cli codex
+  python3 tools/agents/wiki-agent.py quality --page wiki/concepts/my-concept.md --cli claude --model opus
 
   # Run deep analysis with high effort
   python3 tools/agents/wiki-agent.py verify --source wiki/sources/my-source.md --effort high
@@ -514,7 +515,7 @@ Examples:
         "--cli",
         choices=list(CLI_OPTIONS.keys()),
         default="claude",
-        help="CLI to use (default: claude)",
+        help="CLI to use (default: claude for backward compatibility)",
     )
     parser.add_argument(
         "--model",
@@ -562,13 +563,16 @@ def get_default_model(cli: str) -> str:
     """Get default model for CLI."""
     defaults = {
         "claude": "sonnet",
+        # Let Codex resolve the account/workspace default unless the caller pins
+        # a model explicitly. This avoids baking a fast-moving model ID here.
+        "codex": "",
     }
     return defaults.get(cli, "default")
 
 
 def validate_cli(cli: str) -> bool:
     """Check that the chosen CLI is installed."""
-    return shutil.which(cli) is not None
+    return shutil.which(CLI_OPTIONS[cli]) is not None
 
 
 def build_prompt(
@@ -652,9 +656,8 @@ def build_prompt(
 def _prepare_system_prompt(agent_file: Path, system_addon: str) -> str:
     """Return the system-prompt text: the agent instructions plus the addon (if any).
 
-    Strips the YAML frontmatter from the .claude/agents/*.md definition: the
-    frontmatter (name/description/tools) is consumed by Claude Code's native
-    subagent loader; only the body below it is the system prompt.
+    Strips provider-neutral YAML metadata from the canonical role definition;
+    only the body below it becomes the headless role prompt.
     """
     agent_instructions = agent_file.read_text(encoding="utf-8")
     # Tolerate a UTF-8 BOM and CRLF line endings from non-Unix editors so the
@@ -675,8 +678,8 @@ def _build_allowed_tools(perms: dict) -> list[str]:
     """The `--allowedTools` list for a permission profile. Read/Grep/Glob are
     always granted (read-only navigation), so bash:false agents like quality and
     verify can still check links and find orphans. shell and write add to it.
-    `Bash(<cmd> *)` is Claude Code's prefix-match form (confirmed against the
-    permissions docs); kept pure so tools/tests/test_agent.py can assert it."""
+    `Bash(<cmd> *)` is Claude Code's prefix-match form. This helper is only used
+    by the Claude adapter and stays pure so tools/tests/test_agent.py can assert it."""
     tools = ["Read", "Grep", "Glob"]
     if perms["shell"]:
         tools.extend(f"Bash({c} *)" for c in READ_ONLY_SHELL_COMMANDS)
@@ -704,44 +707,13 @@ def invoke_agent(
         print(f"Error: Agent file not found: {agent_file}")
         return 1
 
-    effort_flags = EFFORT_MAP.get(effort, [])
-
-    # claude -p --model MODEL --system-prompt "text" "task"
     system_text = _prepare_system_prompt(agent_file, system_addon)
     perms = _agent_permissions(agent)
-    cmd = ["claude", "-p"]
-    if model:
-        cmd.extend(["--model", model])
-    cmd.extend(effort_flags)
-    cmd.extend(["--system-prompt", system_text])
-    # Build the --allowedTools list to match the agent's profile.
-    cmd.extend(["--allowedTools", ",".join(_build_allowed_tools(perms))])
-    # Hard "no subagents": a wiki agent must never spawn its own
-    # sub-agent. The orchestrator (this script) is the ONLY multi-agent
-    # layer; a self-spawned subagent would be a privilege/injection vector
-    # (e.g. a read-only agent reaching for a write-capable one) — and the
-    # container mount is the kernel-level backstop regardless, since any
-    # subagent runs in THIS profile's container. Task is already absent
-    # from the allowlist above; deny it explicitly so the intent survives
-    # future edits to allowed_tools.
-    cmd.extend(["--disallowedTools", "Task"])
-    # Scope writes to the agent's writable_dirs. Claude reads from the
-    # whole repo by default; --add-dir is needed when the writable
-    # target lives outside the launching directory.
-    for d in perms.get("writable_dirs", []):
-        cmd.extend(["--add-dir", str(ROOT / d)])
-    # Permission mode: acceptEdits allows non-interactive edits within
-    # the allowed tool set; default still prompts for anything else.
-    cmd.extend(["--permission-mode", "acceptEdits" if perms["write"] else "default"])
-    # extra_args are file paths. claude has no attachment flag and keeps only
-    # the FIRST positional, silently dropping the rest — so passing paths as
-    # positionals would discard the real instruction. Fold them into the
-    # prompt as a "Files to read:" block (claude opens them via Read).
-    claude_prompt = prompt
+    task_prompt = prompt
     if extra_args:
         paths = "\n".join(f"- {p}" for p in extra_args)
-        claude_prompt = f"{prompt}\n\nFiles to read:\n{paths}"
-    cmd.append(claude_prompt)
+        task_prompt = f"{prompt}\n\nFiles to read:\n{paths}"
+    cmd = build_cli_command(cli, model, effort, system_text, task_prompt, perms)
 
     print(f"Invoking {agent} agent with {cli}" + (f" ({model})" if model else ""))
     print(f"Effort: {effort}")
@@ -767,6 +739,58 @@ def invoke_agent(
         print(f"Error: failed to launch {cli}: {exc}")
         return 127
     return result.returncode
+
+
+def build_cli_command(
+    cli: str,
+    model: str,
+    effort: str,
+    role_prompt: str,
+    task_prompt: str,
+    perms: dict,
+) -> list[str]:
+    """Build one provider-specific non-interactive CLI command."""
+    if cli == "claude":
+        cmd = [CLI_OPTIONS[cli], "-p"]
+        if model:
+            cmd.extend(["--model", model])
+        cmd.extend(CLAUDE_EFFORT_MAP.get(effort, []))
+        cmd.extend(["--system-prompt", role_prompt])
+        cmd.extend(["--allowedTools", ",".join(_build_allowed_tools(perms))])
+        cmd.extend(["--disallowedTools", "Task"])
+        for directory in perms.get("writable_dirs", []):
+            cmd.extend(["--add-dir", str(ROOT / directory)])
+        cmd.extend(
+            ["--permission-mode", "acceptEdits" if perms["write"] else "default"]
+        )
+        cmd.append(task_prompt)
+        return cmd
+
+    if cli == "codex":
+        sandbox = "workspace-write" if perms["write"] else "read-only"
+        cmd = [
+            CLI_OPTIONS[cli],
+            "exec",
+            "--ephemeral",
+            "--color",
+            "never",
+            "-C",
+            str(ROOT),
+            "--sandbox",
+            sandbox,
+            "-c",
+            'approval_policy="never"',
+            "-c",
+            "agents.enabled=false",
+            "-c",
+            f'model_reasoning_effort="{effort}"',
+        ]
+        if model:
+            cmd.extend(["--model", model])
+        cmd.append(f"{role_prompt}\n\n# Task\n\n{task_prompt}")
+        return cmd
+
+    raise ValueError(f"Unsupported CLI: {cli}")
 
 
 def _promote_inbox_pdf(source_path: str) -> str:

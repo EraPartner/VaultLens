@@ -33,5 +33,5 @@ description: Add source material to the wiki — ingest a PDF, article, paper, v
 Track not-yet-ingested intentions in the inventory instead of leaving loose notes:
 `python3 tools/wiki.py inventory new ingest-candidate <slug> --priority p2 --summary "…"`.
 
-Related: `.claude/skills/wiki-agents/SKILL.md` (choosing agents) ·
-`.claude/skills/wiki-maintenance/SKILL.md` (lint/index/links commands).
+Related: `.agents/skills/wiki-agents/SKILL.md` (choosing agents) ·
+`.agents/skills/wiki-maintenance/SKILL.md` (lint/index/links commands).

@@ -11,7 +11,9 @@ no CLI is spawned. Run:
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 _spec = importlib.util.spec_from_file_location(
@@ -74,6 +76,64 @@ def main() -> int:
         "every agent in AGENT_FILES has a permission profile",
         set(wa.AGENT_FILES) == set(wa.AGENT_PERMISSIONS),
         str(set(wa.AGENT_FILES) ^ set(wa.AGENT_PERMISSIONS)),
+    )
+
+    print("provider command construction:")
+    claude_cmd = wa.build_cli_command(
+        "claude", "sonnet", "high", "ROLE", "TASK", {"shell": False, "write": False}
+    )
+    check("Claude uses print mode", claude_cmd[:2] == ["claude", "-p"])
+    check(
+        "Claude receives role as system prompt",
+        "--system-prompt" in claude_cmd and claude_cmd[-1] == "TASK",
+    )
+    check("Claude model is explicit", ["--model", "sonnet"] == claude_cmd[2:4])
+
+    codex_ro = wa.build_cli_command(
+        "codex", "", "medium", "ROLE", "TASK", {"shell": True, "write": False}
+    )
+    check("Codex uses non-interactive exec", codex_ro[:2] == ["codex", "exec"])
+    check("Codex read role gets read-only sandbox", "read-only" in codex_ro)
+    check("Codex disables nested agents", "agents.enabled=false" in codex_ro)
+    check("Codex default model stays unpinned", "--model" not in codex_ro)
+    check(
+        "Codex prompt contains role and task",
+        "ROLE" in codex_ro[-1] and "TASK" in codex_ro[-1],
+    )
+
+    codex_wr = wa.build_cli_command(
+        "codex", "gpt-test", "high", "ROLE", "TASK", {"shell": True, "write": True}
+    )
+    check("Codex writer gets workspace-write sandbox", "workspace-write" in codex_wr)
+    check(
+        "Codex explicit model is preserved",
+        "--model" in codex_wr and codex_wr[codex_wr.index("--model") + 1] == "gpt-test",
+    )
+
+    print("generated adapters:")
+    generator = Path(__file__).resolve().parents[1] / "agents" / "generate-adapters.py"
+    generated = subprocess.run(
+        [sys.executable, str(generator), "--check"], capture_output=True, text=True
+    )
+    check(
+        "Claude and Codex manifests match canonical roles",
+        generated.returncode == 0,
+        (generated.stdout + generated.stderr).strip(),
+    )
+    codex_agents = wa.ROOT / ".codex" / "agents"
+    parsed_agents = [
+        tomllib.loads(path.read_text(encoding="utf-8"))
+        for path in sorted(codex_agents.glob("*.toml"))
+    ]
+    check(
+        "all Codex manifests parse as TOML", len(parsed_agents) == len(wa.AGENT_FILES)
+    )
+    check(
+        "Codex manifests contain required identity and instructions",
+        all(
+            {"name", "description", "developer_instructions"} <= data.keys()
+            for data in parsed_agents
+        ),
     )
 
     print(f"\n{PASSED} passed, {FAILED} failed")

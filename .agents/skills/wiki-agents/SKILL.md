@@ -5,10 +5,10 @@ description: Choose and run the vault's custom wiki agents — ingest, enhance, 
 
 # Wiki agents — picking and running
 
-Agent definitions live in `.claude/agents/*.md` (source of truth) — native Claude Code subagents
-you can invoke by name in an interactive session. Headless and batch runs go through
-`wiki-agent.py`, which injects the agent body as a `claude -p` system prompt and builds the
-per-agent tool allowlist. The agents are **orthogonal** — pick by what you have and what you want:
+Canonical role definitions live in `.agents/roles/*.md`; generated adapters under
+`.agents/roles/` and `.codex/agents/` expose them to each client. Headless and batch runs go
+through `wiki-agent.py`, which supports both `claude` and `codex`. The agents are **orthogonal** —
+pick by what you have and what you want:
 
 | You have… | You want to… | Use |
 |---|---|---|
@@ -29,7 +29,7 @@ per-agent tool allowlist. The agents are **orthogonal** — pick by what you hav
 search and the thinking agents challenge/connect/emerge/discover (all read-only). **Handoff:** each
 agent ends by recommending the next (quality → enhancer to apply fixes; contradict → verifier to
 decide which side is right; the thinking agents → enhancer or `inventory new` to persist anything
-worth keeping, since they never write). Read the `.claude/agents/*.md` files for exact handoff lists.
+worth keeping, since they never write). Read the `.agents/roles/*.md` files for exact handoff lists.
 
 **Thinking agents (read-only "think with me" layer):** they reason over the vault and emit text
 only — durable output is filed by the operator via the recommended handoff. `challenge --source
@@ -43,7 +43,7 @@ profile; `connect --source "<A>" --page "<B>"` bridges two domains via the link 
 ```bash
 python3 tools/agents/wiki-agent.py ingest --source raw/sources/x.pdf
 python3 tools/agents/wiki-agent.py enhance --coverage
-python3 tools/agents/wiki-agent.py quality --page wiki/concepts/x.md [--cli claude --model sonnet --effort high]
+python3 tools/agents/wiki-agent.py quality --page wiki/concepts/x.md [--cli claude|codex] [--model MODEL] [--effort high]
 python3 tools/agents/wiki-agent.py verify --source wiki/sources/x.md
 python3 tools/agents/wiki-agent.py search --page "topic"
 python3 tools/agents/wiki-agent.py contradict
@@ -59,19 +59,21 @@ executes clear+due tasks inside `projects/<slug>/` (applied-not-committed), file
 ambiguous ones, and prints a roll-up block. Run it by hand only to test:
 `brain-wiki project-run --project <slug>` (needs the `project` sandbox profile, so launch via
 `brain-wiki`, not bare `wiki-agent.py`). Resolve its clarifications with the `/wiki-project-clarify` skill;
-manage agendas with `wiki.py project agenda …` (see `.claude/skills/wiki-projects/SKILL.md`).
+manage agendas with `wiki.py project agenda …` (see `.agents/skills/wiki-projects/SKILL.md`).
 
-**Models (headless `wiki-agent.py` only):** `sonnet` (default) / `haiku` / `opus` via `--model`.
-**Effort:** `low` / `medium` / `high` (default) / `xhigh` via `--effort` (currently informational —
-the headless CLI inherits the session effort level).
+**Models (headless `wiki-agent.py` only):** `--model` is an optional provider-specific override.
+Claude defaults to `sonnet`; Codex leaves the model unpinned so the active workspace/account default
+can evolve without changing this repository.
+**Effort:** `low` / `medium` / `high` (default) / `xhigh` via `--effort`. Codex maps this to
+`model_reasoning_effort`; Claude currently accepts the flag for a uniform interface but inherits its
+configured effort.
 
 **Interactive subagent runs ignore those flags** — `wiki-agent.py` strips the frontmatter, so the
-CLI values apply only to headless runs. Invoked by name in a session, each agent uses the `model:`
-and `effort:` in its own `.claude/agents/*.md`: the mechanical read-and-report agents
-(`wiki-search`, `wiki-source-verifier`, `wiki-contradiction-detector`, `wiki-quality-reviewer`,
-`wiki-ingest`) run on `sonnet`; the open-ended reasoning agents and the writers (`wiki-challenge`,
-`wiki-connect`, `wiki-emerge`, `wiki-idea-discovery`, `wiki-cos`, `wiki-enhancer`,
-`wiki-project-runner`) run on `opus`.
+CLI values apply only to headless runs. Invoked by name in a session, generated adapters map each
+canonical role's `permission_profile`, `model_profile`, and `reasoning_effort` to provider settings.
+Claude maps `standard`/`deep` to `sonnet`/`opus`. Codex intentionally inherits the current model and
+sets the role's reasoning effort and sandbox mode. Regenerate adapters after role metadata changes:
+`python3 tools/agents/generate-adapters.py`.
 
 **Host vs sandbox:** `wiki-agent.py` refuses to run on the host — invoke wiki agents via
 `brain-wiki <agent> …` and the Chief of Staff via `brain-cos` (other wrappers: `brain-claude`,

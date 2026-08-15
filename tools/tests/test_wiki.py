@@ -20,6 +20,7 @@ import wiki  # noqa: E402
 import wiki_index  # noqa: E402
 import wiki_lint  # noqa: E402
 import wiki_links  # noqa: E402
+import wiki_projects  # noqa: E402
 
 PASSED = 0
 FAILED = 0
@@ -130,6 +131,21 @@ def test_reports_excluded() -> None:
             rep["error_count"] == 0,
             str(rep["errors"]),
         )
+
+
+def test_agent_instructions_excluded() -> None:
+    print("agent instructions excluded from content:")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "wiki"
+        make_clean_wiki(root)
+        (root / "AGENTS.md").write_text(
+            "# Instructions\n\nExample [[raw/sources-text/<stem>]].\n",
+            encoding="utf-8",
+        )
+        rep = report_for(root, strict=True)
+        content_paths = {page.rel.as_posix() for page in wiki.list_content_pages()}
+        check("AGENTS.md not treated as a page", "AGENTS.md" not in content_paths)
+        check("instruction examples are not linted", rep["error_count"] == 0, str(rep))
 
 
 def test_defects() -> None:
@@ -326,15 +342,51 @@ def test_raw_source_links() -> None:
             wiki.ROOT = saved_root
 
 
+def test_project_provider_scaffold() -> None:
+    print("project-provider-scaffold:")
+    saved_root = wiki_projects.ROOT
+    saved_projects = wiki_projects.PROJECTS_DIR
+    saved_rebuild = wiki_projects._rebuild_projects_todo
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        projects = root / "projects"
+        projects.mkdir()
+        wiki_projects.ROOT = root
+        wiki_projects.PROJECTS_DIR = projects
+        wiki_projects._rebuild_projects_todo = lambda: None
+        try:
+            rc = wiki_projects._project_new("model-agnostic")
+            project = projects / "model-agnostic"
+            agents_text = (project / "AGENTS.md").read_text(encoding="utf-8")
+            claude_text = (project / "CLAUDE.md").read_text(encoding="utf-8")
+            check("project scaffold succeeds", rc == 0)
+            check("project gets neutral AGENTS.md", "read\n`project.md`" in agents_text)
+            check(
+                "Claude shim imports neutral context",
+                claude_text.startswith("@AGENTS.md\n@project.md\n"),
+                claude_text,
+            )
+            check(
+                "Claude shim does not duplicate project rules",
+                "Project context wins ties" not in claude_text,
+            )
+        finally:
+            wiki_projects.ROOT = saved_root
+            wiki_projects.PROJECTS_DIR = saved_projects
+            wiki_projects._rebuild_projects_todo = saved_rebuild
+
+
 def main() -> int:
     test_golden()
     test_reports_excluded()
+    test_agent_instructions_excluded()
     test_defects()
     test_warnings()
     test_fix()
     test_links()
     test_index()
     test_raw_source_links()
+    test_project_provider_scaffold()
     print(f"\n{PASSED} passed, {FAILED} failed")
     return 1 if FAILED else 0
 

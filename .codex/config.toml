@@ -1,0 +1,6 @@
+[agents]
+max_concurrent_threads_per_session = 4
+
+[mcp_servers.qmd]
+command = "qmd"
+args = ["mcp"]

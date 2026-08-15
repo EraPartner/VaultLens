@@ -25,7 +25,8 @@ Never hand-edit `wiki_refs` frontmatter — `project link` preserves YAML and bu
 ```
 projects/<slug>/
   project.md      ← metadata + Description + Layout + Rules + Key questions + Context + linked wiki pages
-  CLAUDE.md       ← AI entrypoint: @project.md + operating principles (root schema auto-loads)
+  AGENTS.md       ← provider-neutral project instructions; requires reading project.md
+  CLAUDE.md       ← Claude compatibility import for AGENTS.md + project.md
   TODO.md         ← per-project todo, embedded into projects/TODO.md
   AGENDA.md       ← dormant autonomous-runner agenda (opt-in via enabled flag)
   queries/        ← default Q&A landing zone (overridable in ## Rules)
@@ -80,7 +81,7 @@ embeds; gitignored/generated; the scaffold appends an embed line per `project ne
 Every project carries an `AGENDA.md` (scaffolded by `project new`; backfill existing projects with
 `project agenda scaffold-all`). It is **dormant by default** — `enabled: false` in its frontmatter.
 Flip to `enabled: true` to opt the project into the nightly `project-runner` agent (a writer in the
-scheduled batch; see `tools/schedule/SPEC.md` and `.claude/agents/wiki-project-runner.md`).
+scheduled batch; see `tools/schedule/SPEC.md` and `.agents/roles/wiki-project-runner.md`).
 
 Structure (single file, distinct from `TODO.md` so it never pollutes the Obsidian Tasks widgets):
 
