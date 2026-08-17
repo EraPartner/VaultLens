@@ -226,3 +226,10 @@ python3 tools/wiki.py search "term"              # substring search (qmd preferr
 qmd search "<keywords>"                          # BM25; `qmd query "<question>" --format json` for hybrid
 qmd update                                       # re-index after content changes
 ```
+
+## Cloud sessions
+
+Run `bash .codex/cloud/setup.sh` as the Codex cloud environment setup command. Cloud sessions work
+only with the tracked VaultLens template and example content. Brain is private, local-only, and
+must never be copied, mounted, fetched, indexed, or inferred in a cloud session. The bootstrap
+builds only the keyword index; semantic embeddings remain an explicit optional step.
