@@ -48,6 +48,10 @@ container: it stages a sanitized `~/.claude`, runs an idempotent `container buil
   as `dev`, runs a launch-integrity gate, and forwards the Claude token from the
   Keychain.
 
+Codex uses `.devcontainer/bin/codex` or `vaultlens-codex`. It shares the image and
+security controls, but uses a separate container and private `~/.codex` volume.
+The first interactive launch performs device-code login; host Codex state is not mounted.
+
 The fish function `vaultlens-claude` (in `~/.config/fish/functions/`) walks up from
 `$PWD` to the repo (matching `.devcontainer/Dockerfile`), falls back to
 `$VAULTLENS_HOME`, then runs that launcher. Use it anywhere:

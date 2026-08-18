@@ -10,6 +10,7 @@
 # (no negation) avoid the bug and work identically under Docker.
 README.md
 bin/claude
+bin/codex
 bin/doctor
 launcher-common.sh
 .dockerignore

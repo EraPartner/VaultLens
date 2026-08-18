@@ -51,6 +51,11 @@ code.claude.com
 docs.claude.com
 downloads.claude.ai
 
+# OpenAI Codex — API-key traffic plus ChatGPT/device-code authentication.
+api.openai.com
+auth.openai.com
+chatgpt.com
+
 # npm (installs qmd / safe-chain at runtime)
 registry.npmjs.org
 

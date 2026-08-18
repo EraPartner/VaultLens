@@ -158,9 +158,8 @@ Launch from the host with the `brain-*` wrappers
 `tools/agents/wiki-agent.py` refuses to run on the host — invoke wiki agents via `brain-wiki`
 and the Chief of Staff via `brain-cos`.
 
-The current LockBox-derived container image and host wrappers remain Claude-only. The repository
-runner has a Codex backend, but using it through `brain-wiki` is deferred until that external
-container integration is migrated.
+The local LockBox-derived tooling container supports Claude and Codex through separate provider
+volumes. The external Brain `brain-wiki` container integration remains a separate migration.
 
 **Inside the devcontainer (`$DEVCONTAINER=true`):** `~/.claude/` and `~/.claude.json` are an isolated
 copy, host-pulled on start but **not** pushed back automatically. If you change in-container Claude
@@ -175,8 +174,8 @@ workspace and needs no sync. Outside the devcontainer this does not apply.
 A host-side **catch-up dispatcher** (`tools/schedule/`) runs the maintenance/thinking agents on a
 ~30-minute launchd tick; each tick is a gate-checker, not an LLM trigger — all LLM work runs in one
 nightly batch (AC-only, defer-until-online) on the configured CLI. Claude remains the default for
-backward compatibility; set `VAULTLENS_LLM_CLI=codex` only after the deferred container support is
-available. Read-only agents stay read-only:
+backward compatibility; `VAULTLENS_LLM_CLI=codex` uses the Codex-capable local tooling path.
+Read-only agents stay read-only:
 outputs are filed as dated reports under `wiki/reports/`. The one **writer** in the nightly batch is
 `project-runner` (runs before `enhance`): for each opted-in project it executes due `AGENDA.md` tasks
 inside `projects/<slug>/` (applied-not-committed; the dispatcher clones the project first, so the
@@ -232,4 +231,6 @@ qmd update                                       # re-index after content change
 Run `bash .codex/cloud/setup.sh` as the Codex cloud environment setup command. Cloud sessions work
 only with the tracked VaultLens template and example content. Brain is private, local-only, and
 must never be copied, mounted, fetched, indexed, or inferred in a cloud session. The bootstrap
-builds only the keyword index; semantic embeddings remain an explicit optional step.
+builds only the keyword index; semantic embeddings remain an explicit optional step. In cloud
+sessions, do not commit, sign, tag, push, configure Git credentials, or create a pull request with
+`gh`; leave the diff for Codex's **Open pull request** action.

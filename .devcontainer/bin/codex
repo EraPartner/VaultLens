@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Codex entry point for the shared VaultLens sandbox launcher.
+set -euo pipefail
+export VAULTLENS_AGENT=codex
+exec "$(cd "$(dirname "$0")" && pwd -P)/claude" "$@"
