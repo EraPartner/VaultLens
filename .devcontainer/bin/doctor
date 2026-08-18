@@ -54,6 +54,7 @@ command -v node >/dev/null && pass "node $(node -v)" || fail "node missing"
 command -v npm  >/dev/null && pass "npm $(npm -v)"  || fail "npm missing"
 command -v claude >/dev/null && pass "claude $(claude --version 2>/dev/null | head -1)" || fail "claude missing"
 command -v codex >/dev/null && pass "codex $(codex --version 2>/dev/null | head -1)" || fail "codex missing"
+if command -v bwrap >/dev/null; then pass "bubblewrap present (Codex sandbox prerequisite)"; else fail "bubblewrap missing"; fi
 command -v safe-chain >/dev/null && pass "safe-chain present (package installs are screened)" \
   || fail "safe-chain MISSING — npm/bun/pip installs are NOT supply-chain screened"
 # VaultLens-specific toolchain (Python wiki tooling + search).

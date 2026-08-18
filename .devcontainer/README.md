@@ -26,6 +26,8 @@ in-container squid SNI allowlist.
 | `qmd` (`@tobilu/qmd`)         | npm — the wiki search engine / MCP server (`.mcp.json`), native modules built with cmake |
 | `poppler-utils`, `qpdf`       | apt — PDF ingest for `tools/wiki.py` (`pdftotext`, decrypt)  |
 | Claude Code                   | `npm i -g @anthropic-ai/claude-code` (baked, pinned)        |
+| OpenAI Codex CLI              | `npm i -g @openai/codex` (baked, native payload pinned)     |
+| Bubblewrap (`bwrap`)          | apt; required by Codex and fingerprinted at build time      |
 | safe-chain                    | installed in post-create (screens npm/pip installs)         |
 
 VaultLens is Python tooling (no root `package.json`), so there is no `npm ci` /
@@ -132,7 +134,8 @@ Run `bash .devcontainer/bin/doctor` inside the box for a one-shot readiness chec
 proxy. ECH (encrypted SNI) destinations fail closed (no SNI → terminated).
 
 **Launch-integrity gate.** The image bakes `vaultlens-verify-pins`, which records a
-SHA-256 of `node`, `npm`, `claude`, `gh`, `git`, and `python3` at build time. The
+SHA-256 of `node`, `npm`, `claude`, `codex`, `bwrap`, `gh`, `git`, and `python3`
+at build time. The
 launcher runs it on every start and **aborts fail-closed** on fingerprint drift or
 if the checker is missing (a stale pre-pin image) — rebuild to re-pin
 (`VAULTLENS_REBUILD=1 vaultlens-claude`).
