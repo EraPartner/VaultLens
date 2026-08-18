@@ -12,10 +12,11 @@ grep -Fqx 'export CODEX_SESSION_ENV=cloud' "$HOME/.bashrc" || \
   printf '%s\n' 'export CODEX_SESSION_ENV=cloud' >> "$HOME/.bashrc"
 
 if ! command -v qmd >/dev/null; then
-  if command -v bun >/dev/null; then
+  # Prefer npm for QMD's native Node addons; older Bun releases can omit build helpers.
+  if command -v npm >/dev/null; then
+    npm install --global --no-fund --no-audit @tobilu/qmd
+  elif command -v bun >/dev/null; then
     bun install --global @tobilu/qmd
-  elif command -v npm >/dev/null; then
-    npm install --global @tobilu/qmd
   else
     printf '%s\n' 'Bun or npm is required to install QMD.' >&2
     exit 1

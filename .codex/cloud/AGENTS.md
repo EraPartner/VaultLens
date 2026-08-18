@@ -42,25 +42,26 @@ compressed shorthand, stacked hyphenated phrases, and long clause piles.
   under the Codex workspace. Keep the work in chat unless the user explicitly provides and
   authorizes a different location.
 
-## Changes and commits
+## Changes and pull requests
 
 - Preserve unrelated user changes in a dirty worktree.
-- Explain what changed and why. Use specific commit messages; do not use only “fix” or “update”.
+- Explain what changed and why, and leave a focused diff for review.
 - Do not add an AI co-author line.
+- Do not run `git commit`, `git tag`, `git push`, or `gh pr create` from a cloud session.
+- Do not configure, disable, or work around commit signing in a cloud session.
 
-## Git authentication and signing
+## Git handoff in Codex cloud
 
-Do not retry blindly, suppress a failed Git operation, or switch credentials or transport to work
-around an authentication failure. Report the exact failure and retry the same operation after the
-required credential becomes available.
-
-- GitHub `EraPartner` remotes and commit signing use the macOS Secure Enclave SSH agent with
-  `id_ecdsa_sk_rk_personalgithub`. KeePassXC is not involved. If signing, fetch, or push fails
-  because this key is unavailable, ask the user to authorize Touch ID or make the hardware-backed
-  key available. Do not poll `ssh-add -l` for this case.
-- Non-GitHub KULeuven, RaspiBlitz, and RaspiNostr remotes use the KeePassXC SSH agent. If the key is
-  absent, ask the user to unlock KeePassXC, watch for the expected fingerprint with `ssh-add -l`,
-  then retry the exact operation once.
+- Finish the requested changes and portable checks, then leave the worktree ready for review. The
+  user publishes the result with Codex's **Open pull request** action.
+- A missing remote, upstream, shell push credential, or signing key is expected and is not a task
+  blocker. Do not add or rewrite a remote merely to make shell Git operations work.
+- Do not run `gh auth`, request `GH_TOKEN` or `GITHUB_TOKEN`, or persist a Git credential in the
+  cloud container.
+- Never ask for Touch ID, a Secure Enclave key, KeePassXC, or another host credential from a cloud
+  session. Report host-only commit, signing, and push steps as not run.
+- If the user explicitly requires terminal Git publishing, explain that the work must continue in
+  a local task. Do not weaken or bypass this cloud policy.
 
 ## Safety
 
