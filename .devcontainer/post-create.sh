@@ -8,6 +8,14 @@
 
 set -euo pipefail
 cd /workspaces/VaultLens
+AGENT="${SANDBOX_AGENT:-}"
+case "$AGENT" in
+  claude|codex) ;;
+  *)
+    echo "[post-create] ABORT: SANDBOX_AGENT is '${AGENT:-unset}'; recreate with the selected provider launcher." >&2
+    exit 1
+    ;;
+esac
 
 # Wait for the egress proxy (started by the root entrypoint) before any network
 # install — postCreate can race the entrypoint's proxy startup, and with egress
@@ -69,14 +77,14 @@ fi
 # post-start KEEP note); the PreToolUse guard reaches the box out-of-band via the
 # root-owned managed-settings.json bind, not through this staged config.
 STAGE=/home/dev/.claude-stage
-if [[ ! -f /home/dev/.claude/settings.json && -d "$STAGE/dot-claude" ]]; then
+if [[ "$AGENT" == claude && ! -f /home/dev/.claude/settings.json && -d "$STAGE/dot-claude" ]]; then
   echo "[post-create] Seeding ~/.claude from sanitized stage..."
   if ! rsync -a --ignore-errors "$STAGE/dot-claude/" /home/dev/.claude/; then
     echo "[post-create] WARN: ~/.claude rsync seed had errors (some files may be missing)." >&2
   fi
   echo "[post-create] Seeded $(find /home/dev/.claude -mindepth 1 -maxdepth 1 | wc -l) entries into ~/.claude."
 fi
-if [[ ! -f /home/dev/.claude.json && -f "$STAGE/claude.json" ]]; then
+if [[ "$AGENT" == claude && ! -f /home/dev/.claude.json && -f "$STAGE/claude.json" ]]; then
   cp "$STAGE/claude.json" /home/dev/.claude.json
   chmod 0600 /home/dev/.claude.json
 fi
@@ -84,4 +92,4 @@ fi
 
 echo "[post-create] Done."
 echo "[post-create] Tooling:  python3 tools/wiki.py lint  ·  ruff check tools/  ·  qmd search '<q>'"
-echo "[post-create] Start Claude with:  claude --dangerously-skip-permissions"
+echo "[post-create] Selected agent: $AGENT"

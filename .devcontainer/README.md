@@ -1,8 +1,8 @@
 # VaultLens devcontainer
 
 Hardened, egress-locked **development** sandbox for working on the **VaultLens
-tooling** (the shareable "LLM-wiki" tooling + structure) with the Claude CLI in
-`--dangerously-skip-permissions` mode. It is a dev box, not a service host: it
+tooling** (the shareable "LLM-wiki" tooling + structure) with Claude Code or
+OpenAI Codex. It is a dev box, not a service host: it
 publishes no ports. Same fleet pattern as Vision/Watchman — `debian:bookworm-slim`
 (pinned by `@sha256`), non-root `dev` user (UID 1000), all egress forced through the
 in-container squid SNI allowlist.
