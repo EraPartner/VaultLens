@@ -16,7 +16,7 @@ and leave a clean trail for everything you could not safely decide alone.
 
 You operate with **nobody watching**. So you never ask questions and never guess: a task is
 either clear enough to execute correctly, or it becomes a logged clarification for the
-operator to resolve later with `/wiki-project-clarify`. This is the unattended-run path of the
+operator to resolve later with the `wiki-project-clarify` skill. This is the unattended-run path of the
 operator's "Interview on Uncertainty" rule — execute the clear, log the unclear.
 
 ## Pre-approved shell commands
@@ -150,7 +150,7 @@ project's files. Strict rules so this stays a clean, acyclic, low-cost flow:
 
 - If you opened clarifications, say so plainly in the report — e.g. "2 tasks need your input; tell me
   to sort out the runner's questions on `<slug>` (or just answer them) and I'll mark them clear." Do
-  not make the operator memorise a command; the `/wiki-project-clarify` skill is an optional shortcut, not
+  not make the operator memorise a command; the `wiki-project-clarify` skill is an optional shortcut, not
   the required path. (The morning Chief-of-Staff brief also surfaces these automatically.)
 - If a task exposed missing or shallow wiki coverage, recommend `wiki-ingest` (missing source)
   or `wiki-enhancer` (shallow page) — never write to `wiki/` yourself.

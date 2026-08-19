@@ -58,7 +58,7 @@ invocation per opted-in (`enabled: true`) project with a due `AGENDA.md` task. I
 executes clear+due tasks inside `projects/<slug>/` (applied-not-committed), files clarifications for
 ambiguous ones, and prints a roll-up block. Run it by hand only to test:
 `brain-wiki project-run --project <slug>` (needs the `project` sandbox profile, so launch via
-`brain-wiki`, not bare `wiki-agent.py`). Resolve its clarifications with the `/wiki-project-clarify` skill;
+`brain-wiki`, not bare `wiki-agent.py`). Resolve its clarifications with the `wiki-project-clarify` skill;
 manage agendas with `wiki.py project agenda …` (see `.agents/skills/wiki-projects/SKILL.md`).
 
 **Models (headless `wiki-agent.py` only):** `--model` is an optional provider-specific override.
@@ -74,6 +74,10 @@ canonical role's `permission_profile`, `model_profile`, and `reasoning_effort` t
 Claude maps `standard`/`deep` to `sonnet`/`opus`. Codex intentionally inherits the current model and
 sets the role's reasoning effort and sandbox mode. Regenerate adapters after role metadata changes:
 `python3 tools/agents/generate-adapters.py`.
+
+For interactive Codex agents, the role's file scope is an instruction boundary; a parent session
+can override the generated sandbox default. Use `wiki-agent.py` through the matching container
+profile when the filesystem boundary must be enforced independently of the parent session.
 
 **Host vs sandbox:** `wiki-agent.py` refuses to run on the host — invoke wiki agents via
 `brain-wiki <agent> …` and the Chief of Staff via `brain-cos` (other wrappers: `brain-claude`,

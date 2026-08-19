@@ -135,6 +135,14 @@ def main() -> int:
             for data in parsed_agents
         ),
     )
+    check(
+        "Codex manifests distinguish role scope from hard isolation",
+        all(
+            "instruction boundary" in data["developer_instructions"]
+            and "matching container profile" in data["developer_instructions"]
+            for data in parsed_agents
+        ),
+    )
 
     print(f"\n{PASSED} passed, {FAILED} failed")
     return 1 if FAILED else 0

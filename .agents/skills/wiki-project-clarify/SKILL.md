@@ -1,6 +1,6 @@
 ---
 name: wiki-project-clarify
-description: Resolve the open questions the nightly project-runner could not decide alone. Use when the user runs /wiki-project-clarify, asks to clear project clarifications, wants to answer the runner's questions, or after a morning roll-up reports clarifications opened. Interviews the user one task at a time, then flips each resolved task back to clear so the next nightly run executes it.
+description: Resolve the open questions the nightly project-runner could not decide alone. Use when the user selects this skill, asks to clear project clarifications, wants to answer the runner's questions, or after a morning roll-up reports clarifications opened. Interviews the user one task at a time, then flips each resolved task back to clear so the next nightly run executes it.
 ---
 
 # Project clarifier
@@ -16,9 +16,10 @@ open question (unattended); you conduct the interview (attended).
 
 ## When to use
 
-The operator runs `/wiki-project-clarify` (optionally `/wiki-project-clarify <slug>` to scope to one
-project), asks to "resolve clarifications / answer the runner's questions", or a morning
-project-runner roll-up reported `Clarifications opened`.
+The operator selects the `wiki-project-clarify` skill (optionally naming a project to scope it), asks
+to "resolve clarifications / answer the runner's questions", or a morning project-runner roll-up
+reported `Clarifications opened`. Providers expose skills differently, so do not require a
+provider-specific slash or dollar command; a plain-language request is enough.
 
 ## Procedure
 
@@ -32,9 +33,10 @@ project-runner roll-up reported `Clarifications opened`.
    slug. If the list is empty, say so and stop.
 
 2. **Interview, one task at a time.** For each task, show its `title` and the open `questions`,
-   then ask the operator. Use the `AskUserQuestion` tool when the questions have a small set of
-   concrete options; otherwise just ask in plain text. Keep it tight — do not re-derive the whole
-   task, only resolve what is genuinely open. Batch the questions for a single task together.
+   then ask the operator. Use the provider's structured user-input tool when it is available and
+   the questions have a small set of concrete options; otherwise ask in plain text. Keep it tight —
+   do not re-derive the whole task, only resolve what is genuinely open. Batch the questions for a
+   single task together.
 
 3. **Write the resolution into the task.** Open `projects/<slug>/AGENDA.md` and edit the task's
    `### [id]` block so it is now executable without ambiguity:

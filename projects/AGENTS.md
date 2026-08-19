@@ -16,12 +16,14 @@ Follow these on top of `## Rules` in the project's `project.md` — project rule
 
 If `mcp__qmd__*` tools are exposed in the session, prefer them over the CLI.
 
-> **In the devcontainer (no GPU): invert the ladder — lead with `qmd search` (BM25, instant).**
+> **In the devcontainer or Codex cloud: invert the ladder — lead with `qmd search` (BM25, instant).**
 > `qmd query`/`vsearch` and `mcp__qmd__query` run an LLM expand+embed+rerank pipeline that costs
 > 30s+ on 4 CPU cores and currently stalls for minutes because the snapshot index's chunks are
 > stamped with an uncached embed model (`embeddinggemma-300M`) that qmd then tries to fetch through
-> the locked egress. Fix by re-embedding on the host (`qmd embed`, Metal) so chunks re-stamp to the
-> cached Qwen3 model; it propagates to the container on next start.
+> the locked egress. The cloud setup intentionally prepares only the keyword index. Use semantic
+> search only after `qmd embed` completes in the current environment. For the devcontainer, fix the
+> snapshot by re-embedding on the host (`qmd embed`, Metal) so chunks re-stamp to the cached Qwen3
+> model; it propagates to the container on next start.
 
 **Citation discipline** — every load-bearing claim carries an inline wikilink
 (`[[concepts/some-page]]`) to the wiki page that backs it. Mark anything not wiki-backed as
@@ -55,4 +57,5 @@ what the runner flagged), this is the flow — you do not need them to invoke an
    hand-edit `status`/`next_due`/the `questions` block or the `## Clarifications` entry.
 4. `python3 tools/wiki.py project agenda resolve <slug> <id>` — flips it to `clear`, sets `next_due`,
    removes the questions + clarification entry, logs it. The next nightly run then executes it.
-The `/wiki-project-clarify` skill is just a shortcut for this same flow; the operator never has to name it.
+The `wiki-project-clarify` skill is just a shortcut for this same flow; the operator never has to
+name or explicitly invoke it.
