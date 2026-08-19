@@ -82,7 +82,10 @@ Reads are auto-approved; writes require explicit confirmation. Enforcement is la
 
 - Interactive Claude sessions use `.claude/settings.json`; interactive Codex sessions use the
   active Codex sandbox and approval policy. Provider adapters under `.claude/agents/` and
-  `.codex/agents/` map the neutral role permission profile to each client's controls.
+  `.codex/agents/` map the neutral role permission profile to each client's controls. A Codex
+  role's file scope is an instruction boundary, not proof of hard isolation: the parent session can
+  override a custom agent's sandbox default. Use `wiki-agent.py` through the matching container
+  profile when hard isolation is required.
 - Headless runs use `wiki-agent.py`, which maps the same role profile to Claude tool allowlists or
   Codex sandbox settings. A wiki agent must never spawn another agent; the launcher disables that
   capability for both backends.
@@ -102,8 +105,9 @@ its structure. The scaffold (`project new`) creates `project.md`, `AGENTS.md`, `
 `## Tasks`). Flip its frontmatter `enabled: true` to opt the project into the nightly `project-runner`
 agent, which grooms loose tasks into a clear structured form, executes the ones that are 100% clear
 and due (writing only inside `projects/<slug>/`, applied-not-committed with a pre-run snapshot for
-undo), and files clarifications for anything ambiguous. Resolve those interactively with
-`/wiki-project-clarify`. See `## Scheduled agents` and the runbook below.
+undo), and files clarifications for anything ambiguous. Resolve those interactively with the
+`wiki-project-clarify` skill or an equivalent plain-language request. See `## Scheduled agents`
+and the runbook below.
 
 **Runbook:** scaffolded structure, the `project.md` page schema, `project new/link/show` usage,
 keeping `project.md` current, the TODO.md format/aggregators, and the `AGENDA.md` schema +
@@ -206,6 +210,11 @@ available** (see the devcontainer caveat in `projects/AGENTS.md`). `qmd mcp` exp
 the substring fallback that always works without setup. One-time host setup + re-index live in
 `tools/scripts/setup-qmd.sh`; `qmd status` / `qmd collection list` for health.
 
+In Codex cloud (`CODEX_SESSION_ENV=cloud`), lead with `qmd search "<keywords>"`. Cloud setup builds
+the keyword index but intentionally does not download or build semantic embeddings. Do not use
+`qmd query`, `qmd vsearch`, or the equivalent semantic MCP tools until `qmd embed` has completed
+successfully in that environment.
+
 ## Obsidian skills
 
 Prefer the `obsidian:` skill family for vault-native operations (`obsidian-markdown` for page
@@ -232,5 +241,9 @@ Run `bash .codex/cloud/setup.sh` as the Codex cloud environment setup command. C
 only with the tracked VaultLens template and example content. Brain is private, local-only, and
 must never be copied, mounted, fetched, indexed, or inferred in a cloud session. The bootstrap
 builds only the keyword index; semantic embeddings remain an explicit optional step. In cloud
-sessions, do not commit, sign, tag, push, configure Git credentials, or create a pull request with
-`gh`; leave the diff for Codex's **Open pull request** action.
+sessions, do not publish with shell Git commands, configure Git credentials, or create a pull
+request with `gh`. The platform-managed **Open pull request** action may create a pull request, and
+the connected GitHub integration may update the same branch for pull-request-linked follow-ups.
+When the user explicitly requests it, that integration may merge the pull request after all
+required checks and approvals pass and no blocking review remains. Do not use an admin bypass or
+directly update a default or protected branch outside that approved merge.

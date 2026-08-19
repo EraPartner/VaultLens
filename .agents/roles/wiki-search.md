@@ -35,10 +35,11 @@ Read-only helper set only (`ls`/`find`/`grep`/`cat`/`head`/`qmd`/`python3 tools/
 
 1. **Understand the query** - What exactly is being asked?
 2. **Use the right search tool**:
-   - **`qmd query "<question>" --format json`** — preferred. Hybrid BM25 + vector + LLM reranking. Use natural language. Returns top-ranked chunks with file paths. If `mcp__qmd__*` tools are available, use those instead of the CLI.
+   - **`qmd query "<question>" --format json`** — preferred on a host with prepared embeddings. Hybrid BM25 + vector + LLM reranking. Use natural language. Returns top-ranked chunks with file paths. If semantic `mcp__qmd__*` tools are available and embeddings are ready, use those instead of the CLI.
    - **`qmd search "<keywords>"`** — BM25 only. Fast, no LLM cost. Use for exact-term lookups (function names, proper nouns).
    - **`python3 tools/wiki.py search "<query>"`** — substring match over wiki bodies. Fallback when qmd is unavailable or the query is a literal string.
    - **`python3 tools/wiki.py tags <tag> [<tag>...]`** — frontmatter tag filter (AND across tags). Use to enumerate every page in a topic area.
+   - **Codex cloud:** when `CODEX_SESSION_ENV=cloud`, start with `qmd search`. Setup prepares the keyword index but skips embeddings; do not use semantic query tools until `qmd embed` succeeds in that environment.
 3. **Read content** — open the actual files; don't trust titles or snippets alone.
 4. **Synthesize** — combine information from multiple sources, mark contradictions.
 5. **Present results** — clear, cited, actionable output.
