@@ -23,12 +23,12 @@ in-container squid SNI allowlist.
 | Node.js 24                    | Static build into `/usr/local` (`.claude/hooks/guard.mjs` + qmd) |
 | Python 3.12                   | python-build-standalone into `/opt/python` (the `tools/*.py` wiki tooling) |
 | `ruff`                        | pip into the python prefix — VaultLens's linter (`tools/ruff.toml`) |
-| `qmd` (`@tobilu/qmd`)         | npm — the wiki search engine / MCP server (`.mcp.json`), native modules built with cmake |
+| `qmd` (`@tobilu/qmd`)         | npm — the pinned wiki search engine / MCP server (`.mcp.json`), native modules built with cmake |
 | `poppler-utils`, `qpdf`       | apt — PDF ingest for `tools/wiki.py` (`pdftotext`, decrypt)  |
 | Claude Code                   | `npm i -g @anthropic-ai/claude-code` (baked, pinned)        |
 | OpenAI Codex CLI              | `npm i -g @openai/codex` (baked, native payload pinned)     |
 | Bubblewrap (`bwrap`)          | apt; required by Codex and fingerprinted at build time      |
-| safe-chain                    | installed in post-create (screens npm/pip installs)         |
+| safe-chain                    | npm (baked at reviewed version; screens npm/pip installs)   |
 
 VaultLens is Python tooling (no root `package.json`), so there is no `npm ci` /
 build step — you edit `tools/*.py`, lint with `ruff check tools/`, run
@@ -119,10 +119,11 @@ firewall (no sudo) — a rebuild recreates the container and re-applies it. squi
 supervised by the entrypoint: if it crashes, it's restarted (egress stays denied
 while down — fail-closed).
 
-**Supply-chain scanning.** `post-create` installs Aikido safe-chain and
-`BASH_ENV` wires it into every shell, so `npm`/`pip` installs are
-screened against `malware-list.aikido.dev` before running. Defense-in-depth
-on top of the sandbox.
+**Supply-chain scanning.** The image bakes Aikido safe-chain at a reviewed
+version in the root-owned npm prefix. `post-create` only wires its wrappers, and
+fails if that local setup cannot complete. `BASH_ENV` loads them into every shell,
+so `npm`/`pip` installs are screened against `malware-list.aikido.dev` before
+running. Defense-in-depth on top of the sandbox.
 
 **Observability.** Blocked egress shows as a TLS/cert error or
 `CONNECT 403` — that's the policy denying it. The definitive log is
@@ -134,7 +135,8 @@ Run `bash .devcontainer/bin/doctor` inside the box for a one-shot readiness chec
 proxy. ECH (encrypted SNI) destinations fail closed (no SNI → terminated).
 
 **Launch-integrity gate.** The image bakes `vaultlens-verify-pins`, which records a
-SHA-256 of `node`, `npm`, `claude`, `codex`, `bwrap`, `gh`, `git`, and `python3`
+SHA-256 of `node`, `npm`, `claude`, `codex`, `bwrap`, `gh`, `git`, `python3`,
+`qmd`, and `safe-chain`
 at build time. The
 launcher runs it on every start and **aborts fail-closed** on fingerprint drift or
 if the checker is missing (a stale pre-pin image) — rebuild to re-pin

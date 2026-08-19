@@ -45,7 +45,7 @@ RUN install -d -m 0755 /etc/apt/keyrings \
 # The feature installed Node 24 via nvm under /usr/local/share/nvm; we install
 # the same version it resolved (24.15.0) from the official static build into
 # /usr/local, plus a dev-OWNED global npm prefix so the `dev` user can still
-# `npm i -g` at runtime (safe-chain in post-create) — the equivalent of the
+# install new global tools at runtime — the equivalent of the
 # feature's group-writable nvm dir. Bump NODE_VERSION deliberately to update.
 ARG NODE_VERSION=24.15.0
 RUN set -eux; \
@@ -95,14 +95,14 @@ ENV CC=gcc CXX=g++
 # claude install below) so the unprivileged dev user can't overwrite the pinned
 # claude/npm binaries post-launch (the verify-pins gate fingerprints these paths).
 # Use the ENV var, NOT /etc/npmrc: npm's real "global" config is $PREFIX/etc/npmrc,
-# so a plain /etc/npmrc is ignored. Runtime `npm i -g` (safe-chain) uses a SEPARATE
+# so a plain /etc/npmrc is ignored. Runtime ad-hoc `npm i -g` uses a SEPARATE
 # dev-owned prefix, /home/dev/.npm-global, set after the install. Root prefix is
 # FIRST on PATH so claude resolves to the pinned copy.
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
-ENV PATH=/usr/local/share/npm-global/bin:/home/dev/.npm-global/bin:/opt/python/bin:/usr/local/bin:$PATH
+ENV PATH=/usr/local/share/npm-global/bin:/opt/python/bin:/usr/local/bin:$PATH:/home/dev/.npm-global/bin
 # Login shells (bash -l) reset PATH via /etc/profile, dropping the ENV above;
 # re-add the tool dirs so node/npm/claude/safe-chain resolve in login shells too.
-RUN printf 'export PATH="/usr/local/share/npm-global/bin:/home/dev/.npm-global/bin:/opt/python/bin:/usr/local/bin:$PATH"\n' \
+RUN printf 'export PATH="/usr/local/share/npm-global/bin:/opt/python/bin:/usr/local/bin:$PATH:/home/dev/.npm-global/bin"\n' \
       > /etc/profile.d/00-npm-global.sh
 
 # --- Agent CLIs: Claude Code + qmd (the wiki search engine) ------------------
@@ -120,8 +120,11 @@ RUN printf 'export PATH="/usr/local/share/npm-global/bin:/home/dev/.npm-global/b
 ARG CLAUDE_CODE_VERSION=2.1.207
 ARG CLAUDE_CODE_SHA256_ARM64=8bc14a284065383460f37981d724b8f7aa7ca93c9849d2fe367e08f03383f454
 ARG CLAUDE_CODE_SHA256_AMD64=85e7e988a392d859f90802ca21fb26e89d3c9ab527f5ed0b08df3955e34d5c83
+ARG QMD_VERSION=2.8.3
 RUN set -eux; \
-    npm install -g --no-fund --no-audit "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" @tobilu/qmd; \
+    npm install -g --no-fund --no-audit \
+      "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+      "@tobilu/qmd@${QMD_VERSION}"; \
     case "$(dpkg --print-architecture)" in arm64) na=linux-arm64; want="${CLAUDE_CODE_SHA256_ARM64}" ;; amd64) na=linux-x64; want="${CLAUDE_CODE_SHA256_AMD64}" ;; *) exit 1 ;; esac; \
     root="$(npm root -g)/@anthropic-ai/claude-code"; \
     payload="$root/node_modules/@anthropic-ai/claude-code-${na}/claude"; \
@@ -138,7 +141,7 @@ RUN set -eux; \
     run="$(readlink -f "$claudebin")"; \
     got2="$(sha256sum "$run" | awk '{print $1}')"; \
     test "$got2" = "$want" || exit 1; \
-    claude --version; command -v qmd
+    claude --version; qmd --version
 
 # --- OpenAI Codex CLI (native payload hash-pinned per architecture) ----------
 ARG CODEX_VERSION=0.147.0
@@ -154,13 +157,21 @@ RUN set -eux; \
     echo "codex pin: want=$want got=$got"; \
     test "$want" = "$got"; \
     codex --version
+
+# safe-chain is baked at a reviewed version before the npm prefix becomes
+# dev-writable. Its transitive dependency closure is not hash-pinned.
+ARG SAFE_CHAIN_VERSION=1.5.12
+RUN npm install -g --no-fund --no-audit "@aikidosec/safe-chain@${SAFE_CHAIN_VERSION}" \
+  && command -v safe-chain
+# Version output is diagnostic only; install/presence failures above stay fatal.
+RUN safe-chain --version 2>/dev/null || true
 # Ruff — VaultLens's Python linter (tools/ruff.toml; run in CI). Installed into the
 # root-owned python prefix so `ruff check tools/` resolves on PATH. Not a pinned /
 # security-critical binary, so it is intentionally not in the verify-pins manifest.
 RUN /opt/python/bin/python3 -m pip install --no-cache-dir ruff \
   && ruff --version
 
-# Runtime global installs (safe-chain in post-create) go to a SEPARATE dev-owned
+# Runtime ad-hoc global installs go to a SEPARATE dev-owned
 # prefix, so they never need write access to the pinned root prefix above.
 RUN install -d -o dev -g dev -m 0755 /home/dev/.npm-global
 ENV NPM_CONFIG_PREFIX=/home/dev/.npm-global
@@ -203,7 +214,7 @@ RUN set -eux; \
     pinfile=/usr/local/share/vaultlens/binary-pins.txt; \
     mkdir -p /usr/local/share/vaultlens; \
     : > "$pinfile"; \
-    for b in node npm claude codex bwrap gh git python3 qmd; do \
+    for b in node npm claude codex bwrap gh git python3 qmd safe-chain; do \
       p="$(command -v "$b")"; \
       h="$(sha256sum "$p" | awk '{print $1}')"; \
       printf '%s\t%s\t%s\n' "$b" "$p" "$h" >> "$pinfile"; \

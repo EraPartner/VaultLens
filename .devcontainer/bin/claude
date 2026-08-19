@@ -129,7 +129,8 @@ container exec --user "$SVC_USER" "$NAME" bash -lc '
   set -e
   cd /workspaces/VaultLens
   if [[ ! -f /home/dev/.postcreate-done ]]; then
-    bash .devcontainer/post-create.sh && touch /home/dev/.postcreate-done
+    bash .devcontainer/post-create.sh
+    touch /home/dev/.postcreate-done
   fi
   bash .devcontainer/post-start.sh'
 

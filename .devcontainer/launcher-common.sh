@@ -25,10 +25,17 @@ sandbox_stage_claude_config() {
   local src dst item jf f
   src="$(cd "$HOME/.claude" 2>/dev/null && pwd -P || true)"
   dst="$HOME/.claude-sandbox/stage/$profile"
-  rm -rf "$dst/dot-claude"; mkdir -p "$dst/dot-claude"
+  rm -rf "$dst/dot-claude"
+  mkdir -p "$dst/dot-claude"
+  chmod 0700 "$dst" "$dst/dot-claude"
   if [[ -n "$src" && -d "$src" ]]; then
     for item in settings.json keybindings.json CLAUDE.md agents rules commands skills status-line.sh; do
-      [[ -e "$src/$item" ]] && cp -a "$src/$item" "$dst/dot-claude/" 2>/dev/null || true
+      [[ -e "$src/$item" ]] || continue
+      if ! cp -a "$src/$item" "$dst/dot-claude/"; then
+        echo "sandbox: refusing incomplete Claude stage after copy failure: $item" >&2
+        rm -rf "$dst/dot-claude" "$dst/claude.json"
+        return 1
+      fi
     done
     # statusline/ and plugins/ hold git CLONES (plugin/marketplace checkouts) whose
     # .git dirs can be many MB — exclude them AT COPY TIME rather than cp -a then
@@ -37,8 +44,12 @@ sandbox_stage_claude_config() {
     # any depth; works with both bsdtar (macOS) and GNU tar, bash-3.2 safe.
     for item in statusline plugins; do
       [[ -e "$src/$item" ]] || continue
-      tar -C "$src" --exclude .git -cf - "$item" 2>/dev/null \
-        | tar -C "$dst/dot-claude" -xf - 2>/dev/null || true
+      if ! tar -C "$src" --exclude .git -cf - "$item" \
+        | tar -C "$dst/dot-claude" -xf -; then
+        echo "sandbox: refusing incomplete Claude stage after archive failure: $item" >&2
+        rm -rf "$dst/dot-claude" "$dst/claude.json"
+        return 1
+      fi
     done
     # Rewrite host plugin paths to the container path. Escape the interpolated
     # values for BRE + the `#` sed delimiter first: a host $HOME/$src containing a
@@ -50,12 +61,30 @@ sandbox_stage_claude_config() {
     spat="$(printf '%s' "$src"          | sed 's/[][\.*^$#/]/\\&/g')"
     for jf in known_marketplaces.json installed_plugins.json; do
       f="$dst/dot-claude/plugins/$jf"
-      [[ -f "$f" ]] && sed -i '' -e "s#$hpat#/home/dev/.claude#g" -e "s#$spat#/home/dev/.claude#g" "$f" 2>/dev/null || true
+      [[ -f "$f" ]] || continue
+      if ! sed -i '' -e "s#$hpat#/home/dev/.claude#g" -e "s#$spat#/home/dev/.claude#g" "$f"; then
+        echo "sandbox: refusing Claude stage with unreplaced host plugin paths: $jf" >&2
+        rm -rf "$dst/dot-claude" "$dst/claude.json"
+        return 1
+      fi
     done
     find "$dst/dot-claude" -name '.DS_Store' -delete 2>/dev/null || true
-    if [[ -f "$dst/dot-claude/settings.json" ]] && command -v jq >/dev/null 2>&1; then
-      local hjt; hjt="$(mktemp)"
-      jq 'del(.hooks)' "$dst/dot-claude/settings.json" >"$hjt" 2>/dev/null && mv "$hjt" "$dst/dot-claude/settings.json" || rm -f "$hjt"
+    if [[ -f "$dst/dot-claude/settings.json" ]]; then
+      if ! command -v jq >/dev/null 2>&1; then
+        echo "sandbox: refusing unsanitized Claude settings because jq is unavailable" >&2
+        rm -rf "$dst/dot-claude" "$dst/claude.json"
+        return 1
+      fi
+      local hjt
+      hjt="$(mktemp "$dst/.settings.XXXXXX")"
+      if ! jq 'del(.hooks)' "$dst/dot-claude/settings.json" >"$hjt"; then
+        echo "sandbox: refusing invalid or unsanitized Claude settings" >&2
+        rm -f "$hjt"
+        rm -rf "$dst/dot-claude" "$dst/claude.json"
+        return 1
+      fi
+      chmod 0600 "$hjt"
+      mv "$hjt" "$dst/dot-claude/settings.json"
     fi
   fi
   # Stage .claude.json, stripping the blocks the container must never see:
@@ -76,14 +105,24 @@ sandbox_stage_claude_config() {
   #                   every start (the dir doesn't exist). Stripped so the container
   #                   claude detects its own (npm) install. autoUpdates=false is KEPT
   #                   (we never auto-update a pin-verified sandbox).
-  # Mirrors the .hooks strip above. Falls back to a plain copy if jq is absent.
+  # Mirrors the .hooks strip above. Sanitization is mandatory: absence/failure
+  # of jq aborts the launch instead of copying sensitive host state verbatim.
   if [[ -f "$HOME/.claude.json" ]]; then
-    if command -v jq >/dev/null 2>&1; then
-      jq 'del(.oauthAccount, .projects, .installMethod, .autoUpdatesProtectedForNative)' "$HOME/.claude.json" >"$dst/claude.json" 2>/dev/null \
-        || cp "$HOME/.claude.json" "$dst/claude.json" 2>/dev/null || true
-    else
-      cp "$HOME/.claude.json" "$dst/claude.json" 2>/dev/null || true
+    if ! command -v jq >/dev/null 2>&1; then
+      echo "sandbox: refusing unsanitized ~/.claude.json because jq is unavailable" >&2
+      rm -rf "$dst/dot-claude" "$dst/claude.json"
+      return 1
     fi
+    local cjt
+    cjt="$(mktemp "$dst/.claude-json.XXXXXX")"
+    if ! jq 'del(.oauthAccount, .projects, .installMethod, .autoUpdatesProtectedForNative)' "$HOME/.claude.json" >"$cjt"; then
+      echo "sandbox: refusing invalid or unsanitized ~/.claude.json" >&2
+      rm -f "$cjt"
+      rm -rf "$dst/dot-claude" "$dst/claude.json"
+      return 1
+    fi
+    chmod 0600 "$cjt"
+    mv "$cjt" "$dst/claude.json"
   fi
 }
 
@@ -111,6 +150,35 @@ sandbox_forward_llm_creds() {
   # no keychain token exists and the last env var is unset), which would otherwise
   # abort a `set -e` launcher that calls this as a bare statement.
   return 0
+}
+
+# --- Ensure Codex has a private, in-container login --------------------------
+# Usage: sandbox_ensure_codex_login <container-user> <container> <label> <hint>
+#
+# Both in-repo launchers use the same authentication policy: prefer an existing
+# cache in the provider's private volume, allow one-shot environment bootstrap,
+# then fall back to the official interactive device-code flow. Keeping this here
+# prevents the security-sensitive credential plumbing from drifting between the
+# LockBox and generic sandboxes.
+sandbox_ensure_codex_login() {
+  local container_user="$1" container_name="$2" label="$3" hint="$4"
+
+  container exec --user "$container_user" "$container_name" codex login status >/dev/null 2>&1 && return 0
+
+  if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+    container exec -i --user "$container_user" -e OPENAI_API_KEY "$container_name" \
+      bash -c 'printenv OPENAI_API_KEY | codex login --with-api-key'
+  elif [[ -n "${CODEX_ACCESS_TOKEN:-}" ]]; then
+    container exec -i --user "$container_user" -e CODEX_ACCESS_TOKEN "$container_name" \
+      bash -c 'printenv CODEX_ACCESS_TOKEN | codex login --with-access-token'
+  elif [[ -t 0 && -t 1 ]]; then
+    echo "$label: no cached Codex login; starting ChatGPT device-code login." >&2
+    container exec -i -t --user "$container_user" "$container_name" codex login --device-auth
+  else
+    echo "$label: no cached Codex login. Run interactively once, or set" >&2
+    echo "  OPENAI_API_KEY/CODEX_ACCESS_TOKEN. $hint" >&2
+    return 1
+  fi
 }
 
 # --- Install an exit trap: push config back, then optionally power down --------
@@ -238,6 +306,6 @@ sandbox_git_ro_mounts() {
   GIT_RO_MOUNTS+=(-v "$src:$ws/${hp}:ro")
 }
 
-# ─── vendored by LockBox v0.1.0 · canonical sha256:a1007d62bd10e3aff6869628ddd81452ea992f83756e3cc78de4935c92bcac64 ───
+# ─── vendored by LockBox v0.1.0 · canonical sha256:8057e37bc1ca4a0ebb74286e08843d299417ebe18af4df1ac4735293bc98c80d ───
 # Generated from the canonical source by LockBox/sync.sh — DO NOT EDIT HERE.
 # Edit LockBox/launcher-common.sh and re-run ./sync.sh.
