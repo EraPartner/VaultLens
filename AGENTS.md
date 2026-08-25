@@ -120,6 +120,12 @@ with `project link`, never hand-edit). Its `## Rules` section **overrides the de
 `## Working inside a project` when they conflict**. After any session that establishes new
 information, update the changed `project.md` sections and bump `updated`.
 
+`status: frozen` removes a project from current-work surfaces without deleting it. Default project
+lists, TODO/deadline aggregators, Chief of Staff briefs, thinking-agent open-work scans, agent desk
+status, runner selection, clarifications, and routed proposals/handoffs must exclude frozen
+projects. Direct inspection remains available; `project list --include-frozen` is the audit view.
+Use `project freeze <slug>` and `project unfreeze <slug>` so generated views stay synchronized.
+
 ### Working inside a project (instructions for agents)
 
 The project-session rules — wiki search ladder, citation discipline, durable-Q&A format, write

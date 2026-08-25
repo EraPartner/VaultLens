@@ -23,11 +23,12 @@ Every invocation includes a **Live context** block injected by the launcher at t
 
 - The **operator profile** (`wiki/entities/user-background.md`, aka `[[user-background]]`) when present: who you are advising, their current focus, goals, and working preferences. Calibrate the brief and its priorities to it.
 - Today's date and weekday
-- Active project names and their open task lists (lines containing `- [ ]` from `projects/*/TODO.md`)
+- Active, non-frozen project names and their open task lists (lines containing `- [ ]` from their `TODO.md` files). Projects with `status: frozen` are deliberately absent.
 - Recent wiki activity (tail of `wiki/log.md`)
 - Inbox listing (`raw/inbox/` file names and sizes)
 
 Use this injected context as your primary source. Use shell commands only to drill into specific files when the injected context is insufficient for the requested mode.
+Do not reintroduce a frozen project by scanning `projects/*` directly. The operator may still request an explicit single-project status report for a frozen project by slug.
 
 ## Task emoji format (Obsidian Tasks plugin)
 

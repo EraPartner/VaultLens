@@ -25,9 +25,10 @@ The runner (an LLM) authors prose; all *mechanical* state transitions go through
 the surgical writers here, which rewrite only the targeted lines — bounding the
 risk of the model corrupting the file.
 
-Opt-in is the frontmatter `enabled` flag, NOT file presence: every project gets
-a dormant (`enabled: false`) AGENDA.md, and only `enabled: true` projects are
-ever considered by the nightly builder.
+Opt-in is the frontmatter `enabled` flag, NOT file presence: every non-frozen
+project gets a dormant (`enabled: false`) AGENDA.md, and only `enabled: true`
+projects whose `project.md` is not `status: frozen` are considered by the
+nightly builder.
 """
 
 from __future__ import annotations
@@ -38,6 +39,8 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from project_state import is_frozen_project
 
 # --- Constants ---------------------------------------------------------------
 
@@ -330,8 +333,11 @@ def project_is_due(agenda_path: str | Path, today: dt.date) -> bool:
     """True iff the AGENDA is enabled AND there is work for tonight: either a clear,
     due task, or loose Inbox content awaiting grooming (a project can have zero
     Tasks yet still be due because something was dumped/routed into its Inbox)."""
+    path = Path(agenda_path)
+    if is_frozen_project(path.parent):
+        return False
     try:
-        text = Path(agenda_path).read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8")
     except OSError:
         return False
     fm, tasks = parse_frontmatter(text), parse_tasks(text)
@@ -348,6 +354,8 @@ def due_projects(projects_dir: str | Path, today: dt.date) -> list[str]:
     if not root.is_dir():
         return out
     for agenda_path in sorted(root.glob("*/AGENDA.md")):
+        if is_frozen_project(agenda_path.parent):
+            continue
         try:
             if project_is_due(agenda_path, today):
                 out.append(agenda_path.parent.name)
@@ -686,6 +694,8 @@ def desk_status(projects_dir: str | Path, today: dt.date) -> list[dict]:
     if not root.is_dir():
         return out
     for agenda_path in sorted(root.glob("*/AGENDA.md")):
+        if is_frozen_project(agenda_path.parent):
+            continue
         try:
             text = agenda_path.read_text(encoding="utf-8")
             fm, tasks = parse_frontmatter(text), parse_tasks(text)
@@ -830,6 +840,8 @@ def scaffold_all(projects_dir: str | Path, today: dt.date | None = None) -> list
         return created
     for project_md in sorted(root.glob("*/project.md")):
         proj = project_md.parent
+        if is_frozen_project(proj):
+            continue
         if scaffold(proj / "AGENDA.md", proj.name, today):
             created.append(proj.name)
     return created

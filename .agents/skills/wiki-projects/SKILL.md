@@ -12,10 +12,13 @@ owns its structure; the user adds whatever else the project needs (`papers/`, `m
 ## Commands
 
 ```bash
-python3 tools/wiki.py project list               # enumerate projects
+python3 tools/wiki.py project list               # enumerate non-frozen projects
+python3 tools/wiki.py project list --include-frozen  # administrative full list
 python3 tools/wiki.py project new <slug>         # scaffold project.md + shims + queries/
 python3 tools/wiki.py project show <slug>        # details (--json for machine output)
 python3 tools/wiki.py project link <slug> concepts/some-page   # append wiki_ref + bump updated
+python3 tools/wiki.py project freeze <slug>      # remove from active-work surfaces
+python3 tools/wiki.py project unfreeze <slug>    # restore as status: active
 ```
 
 Never hand-edit `wiki_refs` frontmatter — `project link` preserves YAML and bumps `updated`.
@@ -38,7 +41,7 @@ projects/<slug>/
 ---
 title: <Human Title>
 type: project
-status: active            # active | paused | archived
+status: active            # active | paused | frozen | archived
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 summary: <one-sentence description>
@@ -60,6 +63,12 @@ wiki_refs: [<concepts/foo, topics/bar, sources/src-...>]
 context. `## Rules` overrides the root schema's "Working inside a project" defaults when they
 conflict. If `## Layout` is missing, fall back to `ls`/`find`.
 
+`status: frozen` is a hard visibility boundary for current work. A frozen project is omitted from
+default project lists, TODO and deadline aggregators, Chief of Staff briefs, desk status,
+idea/pattern discovery, runner due/clarification scans, and scheduled proposal or handoff routing.
+Its files remain intact and `project show <slug>` still works. `project unfreeze` restores
+`status: active`; use `project list --include-frozen` to audit frozen projects.
+
 ## Keeping project.md current
 
 `project.md` is the model-agnostic source of truth. After any session that establishes new
@@ -75,6 +84,7 @@ Per-project `TODO.md` uses the Obsidian Tasks plugin emoji format (priority 🔺
 embeds; gitignored/generated; the scaffold appends an embed line per `project new`),
 `projects/TODO-widget.md` (flattened copy for the iOS widget; gitignored/generated),
 `projects/deadlines.md` (live Tasks-plugin query of upcoming dated items; desktop only; tracked).
+The freeze/unfreeze commands rebuild all three surfaces.
 
 ## AGENDA files (autonomous nightly runner)
 

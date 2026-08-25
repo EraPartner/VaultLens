@@ -102,8 +102,11 @@ provider picks up the project's context and the root schema (`## Working inside 
 ```bash
 python3 tools/wiki.py project new my-project                              # create a project
 python3 tools/wiki.py project link my-project concepts/trusted-execution  # link wiki pages into it
-python3 tools/wiki.py project list                                       # list all projects
+python3 tools/wiki.py project list                                       # list non-frozen projects
+python3 tools/wiki.py project list --include-frozen                      # audit all projects
 python3 tools/wiki.py project show my-project                             # inspect structure
+python3 tools/wiki.py project freeze my-project                          # hide current work everywhere
+python3 tools/wiki.py project unfreeze my-project                        # restore as active
 ```
 
 ### Work inside a project
@@ -145,6 +148,10 @@ projects/my-project/
 - Never modify raw/ or wiki/ — treat them as read-only.
 - Save all Q&A artifacts to queries/.
 ```
+
+Project status is `active`, `paused`, `frozen`, or `archived`. `frozen` keeps the
+workspace intact but excludes it from active lists, TODO/deadline views, briefs,
+scheduled agents, and routed work. Direct `project show` remains available.
 
 ## See Also
 

@@ -365,6 +365,9 @@ def main() -> int:
         (projects_dir / "fleet-health" / "AGENDA.md").write_text(
             "# fleet-health AGENDA\n", encoding="utf-8"
         )
+        (projects_dir / "fleet-health" / "project.md").write_text(
+            "---\nstatus: active\n---\n", encoding="utf-8"
+        )
         check(
             "real project slug resolves to its AGENDA",
             str(
@@ -379,6 +382,13 @@ def main() -> int:
         check(
             "empty target => None",
             dispatch.resolve_proposal_dest("", projects_dir) is None,
+        )
+        (projects_dir / "fleet-health" / "project.md").write_text(
+            "---\nstatus: frozen\n---\n", encoding="utf-8"
+        )
+        check(
+            "frozen project => None (cannot receive routed work)",
+            dispatch.resolve_proposal_dest("fleet-health", projects_dir) is None,
         )
         # A project not present in the tree (e.g. the retired `assistant`) resolves to
         # None, so the proposal is left advisory rather than force-filed.

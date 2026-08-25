@@ -11,6 +11,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+from project_state import FROZEN_STATUS
+
 
 ROOT = Path(__file__).resolve().parents[1]
 WIKI_DIR = ROOT / "wiki"
@@ -118,7 +120,11 @@ class Project:
 
     @property
     def status(self) -> str:
-        return self._scalar("status").strip()
+        return self._scalar("status").strip().lower()
+
+    @property
+    def is_frozen(self) -> bool:
+        return self.status == FROZEN_STATUS
 
     @property
     def domain(self) -> str:
@@ -484,11 +490,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     project_parser = sub.add_parser(
         "project",
-        help="Manage application projects that consume the wiki KB (list/new/show/link/agenda)",
+        help="Manage application projects that consume the wiki KB",
     )
     project_parser.add_argument(
         "action",
-        choices=["list", "new", "show", "link", "agenda"],
+        choices=["list", "new", "show", "link", "freeze", "unfreeze", "agenda"],
         help="Project subaction",
     )
     project_parser.add_argument(
@@ -510,6 +516,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit machine-readable JSON for list/show/agenda due/clarifications",
+    )
+    project_parser.add_argument(
+        "--include-frozen",
+        action="store_true",
+        help="Include frozen projects in `project list` (excluded by default)",
+    )
+    project_parser.add_argument(
+        "--slugs",
+        action="store_true",
+        help="Emit only project slugs for `project list`",
     )
 
     index_parser = sub.add_parser(
@@ -663,6 +679,8 @@ def main(argv: list[str] | None = None) -> int:
             ref=args.ref,
             as_json=args.json,
             extra=args.extra,
+            include_frozen=args.include_frozen,
+            slugs_only=args.slugs,
         )
     if args.command == "index":
         from wiki_index import cmd_index

@@ -1,6 +1,6 @@
 # Deadlines
 
-Live cross-project view of upcoming work, rendered by the Obsidian Tasks plugin (desktop only; on iOS use `TODO-widget.md`). Queries scope to `projects/`. Edit items in each `projects/<slug>/TODO.md` and the views below update automatically.
+Live cross-project view of upcoming work, rendered by the Obsidian Tasks plugin (desktop only; on iOS use `TODO-widget.md`). Queries scope to non-frozen projects. Edit items in each `projects/<slug>/TODO.md` and the views below update automatically; `project freeze` and `project unfreeze` maintain path exclusions in every query.
 
 ## Due in the next 7 days
 

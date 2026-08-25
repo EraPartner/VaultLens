@@ -26,6 +26,7 @@ from wiki import (
     list_projects,
     normalize_link_target,
 )
+from project_state import PROJECT_STATUSES
 
 ALLOWED_STATUS = {"active", "superseded", "archived", "draft"}
 SKIP_CATEGORIES = {"system", "root"}
@@ -133,10 +134,11 @@ def lint_projects(
     projects: list[Project],
     canonical: dict[str, Page],
     basename_map: dict[str, list[Page]],
-) -> tuple[list[str], list[str]]:
-    """Validate project metadata and wiki_refs. Returns (missing_fields, broken_refs)."""
+) -> tuple[list[str], list[str], list[str]]:
+    """Validate project metadata, lifecycle status, and wiki_refs."""
     missing: list[str] = []
     broken: list[str] = []
+    invalid_status: list[str] = []
     for project in projects:
         rel = project.path.relative_to(ROOT).as_posix()
         gaps = sorted(
@@ -144,6 +146,10 @@ def lint_projects(
         )
         if gaps:
             missing.append(f"{rel}: missing {', '.join(gaps)}")
+        if project.status and project.status not in PROJECT_STATUSES:
+            invalid_status.append(
+                f"{rel}: status '{project.status}' not in {list(PROJECT_STATUSES)}"
+            )
         for ref in project.wiki_refs:
             target = normalize_link_target(ref)
             if not target or target in canonical:
@@ -153,7 +159,7 @@ def lint_projects(
             if "/" not in target and len(basename_map.get(target, [])) == 1:
                 continue
             broken.append(f"{rel}: wiki_refs [[{ref}]]")
-    return missing, broken
+    return missing, broken, invalid_status
 
 
 def check_missing_fields(pages: list[Page]) -> list[str]:
@@ -278,7 +284,7 @@ def build_report(pages: list[Page], strict: bool) -> dict:
     invalid_enums, low_confidence = check_field_enums(pages)
     malformed_dates, reversed_dates = check_dates(pages)
     projects = list_projects()
-    project_missing, project_broken_refs = lint_projects(
+    project_missing, project_broken_refs, project_invalid_status = lint_projects(
         projects, canonical, basename_map
     )
 
@@ -291,6 +297,7 @@ def build_report(pages: list[Page], strict: bool) -> dict:
         "malformed_dates": malformed_dates,
         "project_missing": project_missing,
         "project_broken_refs": project_broken_refs,
+        "project_invalid_status": project_invalid_status,
     }
     if strict:
         errors["orphans"] = orphan_pages
@@ -350,6 +357,7 @@ def run_lint(strict: bool, as_json: bool, fix: bool) -> int:
         "malformed_dates": "Malformed dates",
         "project_missing": "Project missing fields",
         "project_broken_refs": "Project broken wiki_refs",
+        "project_invalid_status": "Invalid project status values",
         "orphans": "Orphan pages",
         "stale_pages": "Stale pages",
         "low_confidence": "Low-confidence pages (consider wiki-source-verifier / wiki-enhancer)",

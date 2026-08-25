@@ -44,7 +44,7 @@ An optional timeframe arrives in the task prompt (e.g. "2 weeks", "this month").
    - `tail -n 80 wiki/log.md` — the activity timeline; entries are dated `## [YYYY-MM-DD] operation | title`. Filter to the window.
    - Recently-updated pages: `grep -rl "updated: 2026-..." wiki/` (match the window's months), then read the freshest. The `updated` frontmatter field is the signal.
    - `python3 tools/wiki.py inventory list` — open questions and tasks accumulated in the window.
-   - `projects/*/TODO.md` — what the operator has been adding and checking off.
+   - Run `python3 tools/wiki.py project list --slugs`, then read `TODO.md` only for those returned projects — what the operator has been adding and checking off. The command excludes `status: frozen` projects; do not scan them as current activity.
 3. **Detect patterns** across the merged material:
    - **Recurring themes** — a topic that appears 3+ times across unrelated pages/projects without being named a priority anywhere.
    - **Repeated blockers** — the same obstacle or open question resurfacing.

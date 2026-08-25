@@ -10,6 +10,8 @@ and asserts the lint/links/index behaviour. Run with:
 
 from __future__ import annotations
 
+import contextlib
+import io
 import sys
 import tempfile
 from pathlib import Path
@@ -376,6 +378,84 @@ def test_project_provider_scaffold() -> None:
             wiki_projects._rebuild_projects_todo = saved_rebuild
 
 
+def test_project_freeze() -> None:
+    print("project-freeze:")
+    saved_root = wiki_projects.ROOT
+    saved_projects = wiki_projects.PROJECTS_DIR
+    saved_wiki_projects = wiki.PROJECTS_DIR
+    saved_rebuild = wiki_projects._rebuild_projects_todo
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        projects = root / "projects"
+        project = projects / "cryptopals"
+        project.mkdir(parents=True)
+        (project / "project.md").write_text(
+            "---\n"
+            "title: Cryptopals\n"
+            "type: project\n"
+            "status: active\n"
+            "created: 2026-01-01\n"
+            "updated: 2026-01-01\n"
+            "summary: Exercises.\n"
+            "domain: learning\n"
+            "tags: []\n"
+            "wiki_refs: []\n"
+            "---\n",
+            encoding="utf-8",
+        )
+        (project / "TODO.md").write_text("- [ ] finish set 1\n", encoding="utf-8")
+        deadlines = projects / "deadlines.md"
+        deadlines.write_text(
+            "```tasks\nnot done\nfolder includes projects\nhas due date\n```\n",
+            encoding="utf-8",
+        )
+        wiki_projects.ROOT = root
+        wiki_projects.PROJECTS_DIR = projects
+        wiki.PROJECTS_DIR = projects
+        wiki_projects._rebuild_projects_todo = lambda: None
+        try:
+            check(
+                "freeze command succeeds",
+                wiki_projects._project_freeze("cryptopals", True) == 0,
+            )
+            check(
+                "project status becomes frozen",
+                wiki_projects._find_project("cryptopals").status == "frozen",
+            )
+            visible = io.StringIO()
+            with contextlib.redirect_stdout(visible):
+                wiki_projects._project_list(False, slugs_only=True)
+            check("default project list excludes frozen", visible.getvalue() == "")
+            all_projects = io.StringIO()
+            with contextlib.redirect_stdout(all_projects):
+                wiki_projects._project_list(False, include_frozen=True, slugs_only=True)
+            check(
+                "administrative list can include frozen",
+                all_projects.getvalue().strip() == "cryptopals",
+            )
+            wiki_projects._rebuild_deadlines()
+            check(
+                "deadline query excludes frozen TODO",
+                "path does not include projects/cryptopals/TODO.md"
+                in deadlines.read_text(encoding="utf-8"),
+            )
+            check(
+                "unfreeze command succeeds",
+                wiki_projects._project_freeze("cryptopals", False) == 0,
+            )
+            wiki_projects._rebuild_deadlines()
+            check(
+                "unfreeze removes deadline exclusion",
+                "path does not include projects/cryptopals/TODO.md"
+                not in deadlines.read_text(encoding="utf-8"),
+            )
+        finally:
+            wiki_projects.ROOT = saved_root
+            wiki_projects.PROJECTS_DIR = saved_projects
+            wiki.PROJECTS_DIR = saved_wiki_projects
+            wiki_projects._rebuild_projects_todo = saved_rebuild
+
+
 def main() -> int:
     test_golden()
     test_reports_excluded()
@@ -387,6 +467,7 @@ def main() -> int:
     test_index()
     test_raw_source_links()
     test_project_provider_scaffold()
+    test_project_freeze()
     print(f"\n{PASSED} passed, {FAILED} failed")
     return 1 if FAILED else 0
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Project workspaces that consume the wiki KB (list/new/show/link).
+"""Project workspaces that consume the wiki KB.
 
 A project lives under `projects/<slug>/` with its own `project.md` (the source of
 truth), provider-neutral AGENTS.md instructions, a CLAUDE.md compatibility shim,
@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import subprocess
 
 import agenda
+from project_state import is_frozen_project
 
 from wiki import (
     PROJECTS_DIR,
@@ -158,8 +160,18 @@ projects/TODO-widget.md). Organise into sections as the project grows.
 """
 
 
-def _project_list(as_json: bool) -> int:
-    projects = list_projects()
+def _project_list(
+    as_json: bool, include_frozen: bool = False, slugs_only: bool = False
+) -> int:
+    projects = [
+        project
+        for project in list_projects()
+        if include_frozen or not project.is_frozen
+    ]
+    if slugs_only:
+        for project in projects:
+            print(project.slug)
+        return 0
     if as_json:
         rows = [
             {
@@ -191,14 +203,53 @@ def _project_list(as_json: bool) -> int:
 
 
 def _rebuild_projects_todo() -> None:
-    """Regenerate the two project-TODO aggregators.
+    """Regenerate active-work views after a project lifecycle change.
 
     Writes both `projects/TODO.md` (live, embed-based for desktop Obsidian)
-    and `projects/TODO-widget.md` (P1-only inlined for the iOS widget).
-    Delegates to the shell script so the rebuild logic stays single-sourced.
+    and `projects/TODO-widget.md` (P1-only inlined for the iOS widget), then
+    refreshes the frozen-project exclusions in `projects/deadlines.md`.
     """
     script = ROOT / "tools" / "scripts" / "rebuild-projects-todo.sh"
     subprocess.run([str(script)], check=True)
+    _rebuild_deadlines()
+
+
+_DEADLINE_EXCLUSION = re.compile(
+    r"^path does not include projects/([^/]+)/TODO\.md\s*$"
+)
+
+
+def _rebuild_deadlines() -> None:
+    """Keep Tasks queries from surfacing work from frozen projects.
+
+    The Obsidian Tasks query language cannot read sibling `project.md`
+    frontmatter. We therefore materialize one path exclusion per frozen project
+    immediately after each `folder includes projects` line. Lifecycle commands
+    call this function, so the query remains live for task edits while project
+    visibility changes stay explicit and reviewable.
+    """
+    path = PROJECTS_DIR / "deadlines.md"
+    if not path.exists():
+        return
+    projects = list_projects()
+    project_slugs = {project.slug for project in projects}
+    exclusions = [
+        f"path does not include projects/{project.slug}/TODO.md"
+        for project in projects
+        if project.is_frozen
+    ]
+    original = path.read_text(encoding="utf-8")
+    out: list[str] = []
+    for line in original.splitlines():
+        match = _DEADLINE_EXCLUSION.match(line)
+        if match and match.group(1) in project_slugs:
+            continue
+        out.append(line)
+        if line.strip() == "folder includes projects":
+            out.extend(exclusions)
+    rendered = "\n".join(out) + ("\n" if original.endswith("\n") else "")
+    if rendered != original:
+        path.write_text(rendered, encoding="utf-8")
 
 
 def _project_new(slug: str) -> int:
@@ -352,12 +403,48 @@ def _project_link(slug: str, ref: str) -> int:
     return 0
 
 
+def _project_freeze(slug: str, frozen: bool) -> int:
+    project = _find_project(slug)
+    if project is None:
+        print(f"Project '{slug}' not found")
+        return 1
+    target = "frozen" if frozen else "active"
+    if project.status == target:
+        _rebuild_projects_todo()
+        print(f"Project '{slug}' is already {target}; refreshed active-work views.")
+        return 0
+    if frozen and project.status == "archived":
+        print(f"Project '{slug}' is archived; restore it before freezing it.")
+        return 1
+    if not frozen and not project.is_frozen:
+        print(f"Project '{slug}' is not frozen (status: {project.status or 'unset'}).")
+        return 1
+    today = dt.date.today().isoformat()
+    text = project.path.read_text(encoding="utf-8")
+    text = _set_frontmatter_field(text, "status", target)
+    text = _set_frontmatter_field(text, "updated", today)
+    project.path.write_text(text, encoding="utf-8")
+    _rebuild_projects_todo()
+    if frozen:
+        print(
+            f"Froze project '{slug}'. It is excluded from active lists, TODO and "
+            "deadline views, briefs, agent desks, scheduled work, and routed items."
+        )
+    else:
+        print(f"Unfroze project '{slug}' (status: active) and refreshed project views.")
+    return 0
+
+
 def _agenda_path(slug: str):
     return PROJECTS_DIR / slug / "AGENDA.md"
 
 
 def _all_agenda_slugs() -> list[str]:
-    return [p.parent.name for p in sorted(PROJECTS_DIR.glob("*/AGENDA.md"))]
+    return [
+        path.parent.name
+        for path in sorted(PROJECTS_DIR.glob("*/AGENDA.md"))
+        if not is_frozen_project(path.parent)
+    ]
 
 
 def _project_agenda(
@@ -384,6 +471,11 @@ def _project_agenda(
         path = _agenda_path(proj)
         if not path.exists():
             print(f"No AGENDA.md for '{proj}' — run: project agenda scaffold-all")
+            return 1
+        if sub == "enable" and is_frozen_project(path.parent):
+            print(
+                f"Project '{proj}' is frozen; unfreeze it before enabling its agenda."
+            )
             return 1
         text = path.read_text(encoding="utf-8")
         text = _set_frontmatter_field(
@@ -520,9 +612,11 @@ def cmd_project(
     ref: str | None,
     as_json: bool,
     extra: str | None = None,
+    include_frozen: bool = False,
+    slugs_only: bool = False,
 ) -> int:
     if action == "list":
-        return _project_list(as_json)
+        return _project_list(as_json, include_frozen, slugs_only)
     if action == "new":
         if not slug:
             print("Error: project new <slug> requires a slug")
@@ -538,6 +632,11 @@ def cmd_project(
             print("Error: project link <slug> <wiki-ref> requires both arguments")
             return 1
         return _project_link(slug, ref)
+    if action in ("freeze", "unfreeze"):
+        if not slug:
+            print(f"Error: project {action} <slug> requires a slug")
+            return 1
+        return _project_freeze(slug, frozen=action == "freeze")
     if action == "agenda":
         # `project agenda <sub> [<slug>] [<id>]`: argparse packs the agenda
         # subcommand into `slug`, the target project into `ref`, the task id

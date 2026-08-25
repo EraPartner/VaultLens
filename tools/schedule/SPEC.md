@@ -147,7 +147,7 @@ The dispatcher ticks every ~30 min only to check gates + the ledger. Actual work
    (checked here, **once a night**, not per tick)
 3. **Sundays only:** `contradict` + `emerge` + `discover` (read-only digests run
    before enhance, so they analyse the pre-enhance wiki and claim the budget first)
-4. `project-runner` — one invocation per opted-in (`enabled: true`) project with a
+4. `project-runner` — one invocation per non-frozen, opted-in (`enabled: true`) project with a
    due `AGENDA.md` task (capped `MAX_PROJECTS_PER_NIGHT`). Runs before enhance so the
    user-facing work claims budget first; writes `projects/<slug>/` (not wiki/),
    applied-not-committed, with a pre-run snapshot per project for undo
@@ -230,7 +230,7 @@ emerge, discover, project-runner, enhance, cos brief. **Documented but not yet w
 dispatcher (run manually):** links, coverage snapshot, (optional) verify.
 
 The `project-runner` builder (`_project_runner_targets`) is pure-python: it reads each
-project's `AGENDA.md` via `tools/agenda.py`, skips dormant (`enabled: false`) and
+project's `AGENDA.md` via `tools/agenda.py`, skips frozen projects, dormant (`enabled: false`), and
 review-paused projects, and emits one `project-run --project <slug>` arg-vector per
 enabled project that is **due** (capped at `MAX_PROJECTS_PER_NIGHT`). A project is due
 when it is enabled AND has either a clear, due task **or** loose `## Inbox` content

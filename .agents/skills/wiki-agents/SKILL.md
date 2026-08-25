@@ -86,5 +86,5 @@ profile when the filesystem boundary must be enforced independently of the paren
 **Chief of Staff** (`wiki-cos` / `brain-cos`): cross-project daily brief, project status, commitment
 surface, and inbox triage. Read-only; advises, never writes. Modes: `--mode brief` (default),
 `--mode status --project <slug>`, `--mode surface`, `--mode inbox`. The launcher gathers live
-context (all `projects/*/TODO.md` open items, wiki log tail, inbox listing) and injects it before
+context (open items from non-frozen projects, wiki log tail, inbox listing) and injects it before
 invoking the agent. Always uses the reader profile.

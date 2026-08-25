@@ -87,6 +87,7 @@ REPORT_RETENTION = 14
 # without spending any LLM budget.
 sys.path.insert(0, str(ROOT / "tools"))
 import agenda  # noqa: E402
+from project_state import is_frozen_project  # noqa: E402
 
 # Project-runner caps + snapshot store. projects/ is gitignored (apply-don't-commit
 # has no git to revert from), so the dispatcher clones each project BEFORE the runner
@@ -986,16 +987,18 @@ def parse_handoffs(text: str) -> list[dict]:
 
 def resolve_proposal_dest(target: str, projects_dir: Path | None = None) -> Path | None:
     """The AGENDA.md of the project a proposal names, or None if it names no real
-    project. Routing the work to the owning project is safe because that project's
-    runner is scoped to its own dir; an empty / unknown / typo target resolves to
-    None and the proposal is left advisory (never force-filed). Pure (only a
-    `.exists()` check) so it is testable against a temp projects dir."""
+    or visible project. Frozen projects cannot receive proposals or handoffs.
+    Routing the work to the owning project is safe because that project's runner
+    is scoped to its own dir; an empty / unknown / typo / frozen target resolves
+    to None and the proposal is left advisory (never force-filed)."""
     base = Path(projects_dir) if projects_dir is not None else (ROOT / "projects")
     slug = (target or "").strip()
     if not slug:
         return None
     cand = base / slug / "AGENDA.md"
-    return cand if cand.exists() else None
+    if not cand.exists() or is_frozen_project(cand.parent):
+        return None
+    return cand
 
 
 def format_work_item(source: str, item: dict) -> str:
@@ -1065,7 +1068,8 @@ def _route_work_items(
         dest = resolve_proposal_dest(it["target"], projects_dir)
         if dest is None:
             log(
-                f"routing: '{it['target']}' is not a project; '{it['task'][:50]}' left advisory"
+                f"routing: '{it['target']}' is not an active project; "
+                f"'{it['task'][:50]}' left advisory"
             )
             continue
         dest_slug = dest.parent.name

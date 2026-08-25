@@ -46,6 +46,11 @@ Its mechanical transitions (`last_run`/`next_due`/`status: done`, resolving clar
 through `python3 tools/wiki.py project agenda …`, not hand edits. Do not put runner tasks in
 `TODO.md` (that is the operator's Obsidian Tasks list, a separate system).
 
+**Frozen projects** — `status: frozen` in `project.md` excludes the project from all current-work
+surfaces and scheduled routing. Use `python3 tools/wiki.py project freeze <slug>` or `unfreeze
+<slug>` from the vault root; do not hand-edit the status because the commands also refresh TODO and
+deadline views.
+
 **Resolving runner clarifications (do this from a plain request — no command name needed).** When the
 operator asks to "answer / sort out / clear the runner's questions" for a project (or just asks about
 what the runner flagged), this is the flow — you do not need them to invoke any skill:

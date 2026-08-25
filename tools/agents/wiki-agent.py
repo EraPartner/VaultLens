@@ -264,11 +264,17 @@ def _gather_cos_context(mode: str, project_filter: str | None) -> str:
     projects_root = ROOT / "projects"
     project_dirs: list[Path] = []
     if projects_root.is_dir():
+        if TOOLS_DIR not in [Path(p) for p in sys.path]:
+            sys.path.insert(0, str(TOOLS_DIR))
+        from project_state import is_frozen_project  # type: ignore[import]
+
         project_dirs = sorted(
             [
                 d
                 for d in projects_root.iterdir()
-                if d.is_dir() and not d.name.startswith(".")
+                if d.is_dir()
+                and not d.name.startswith(".")
+                and (project_filter or not is_frozen_project(d))
             ],
             key=lambda d: d.name,
         )

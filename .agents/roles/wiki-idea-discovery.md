@@ -34,7 +34,7 @@ Read-only helper set only (`ls`/`find`/`grep`/`cat`/`head`/`qmd`/`python3 tools/
 
 1. **Gather signals exhaustively** (enumerate, do not sample):
    - **Open questions / tracked intentions** — `python3 tools/wiki.py inventory list question` and `... task` (filter to `--status active` where useful).
-   - **Open project work** — `## Key questions` in each `projects/*/project.md`, and open `- [ ]` items in `projects/*/TODO.md`.
+   - **Open project work** — first run `python3 tools/wiki.py project list --slugs`, then inspect `## Key questions` and open `- [ ]` items only for those returned project slugs. The command excludes `status: frozen` projects by default; do not reintroduce them through a wildcard scan.
    - **Orphan pages** — `python3 tools/wiki.py lint --strict` reports orphans (no incoming links); these are research that stalled.
    - **Sparse / underlinked pages** — `python3 tools/wiki.py coverage` ranks thin pages where the operator started something and stopped.
 2. **Rank** each candidate by a transparent heuristic — state the weighting you used:

@@ -24,6 +24,9 @@
 #                            omitted. Inlined so the widget renders real checkboxes.
 #                            NOT git-tracked (regenerated per device; see .gitignore).
 #
+# Projects with `status: frozen` are excluded. The project CLI owns that
+# lifecycle rule and emits only visible slugs by default.
+#
 # Some per-project files are symlinks into product repos (vision, watchman).
 # `[ -f ]` follows symlinks, so they're handled the same way.
 
@@ -41,8 +44,9 @@ WIDGET="$PROJECTS_DIR/TODO-widget.md"
   echo
   echo "Live aggregator: each section embeds the per-project \`TODO.md\` so edits propagate instantly in desktop Obsidian (completed items included). The iOS Obsidian widget cannot render embeds, point it at \`TODO-widget.md\` instead. Per-project files use the Obsidian Tasks plugin emoji format: priority 🔺/⏫/🔼/🔽/⏬, dates 📅/🛫/⏳."
   echo
-  for dir in "$PROJECTS_DIR"/*/; do
-    slug="$(basename "$dir")"
+  while IFS= read -r slug; do
+    [ -n "$slug" ] || continue
+    dir="$PROJECTS_DIR/$slug"
     todo="$dir/TODO.md"
     [ -f "$todo" ] || continue
     # Skip projects with no real task (no heading-only files, no empty
@@ -51,7 +55,7 @@ WIDGET="$PROJECTS_DIR/TODO-widget.md"
     echo "## $slug"
     echo "![[projects/$slug/TODO]]"
     echo
-  done
+  done < <(python3 "$ROOT/tools/wiki.py" project list --slugs)
 } > "$LIVE"
 
 # === Widget aggregator (filtered, inlined) ===
@@ -63,7 +67,9 @@ WIDGET="$PROJECTS_DIR/TODO-widget.md"
   echo "# Projects TODO (widget)"
   echo
   {
-    for dir in "$PROJECTS_DIR"/*/; do
+    while IFS= read -r slug; do
+      [ -n "$slug" ] || continue
+      dir="$PROJECTS_DIR/$slug"
       todo="$dir/TODO.md"
       [ -f "$todo" ] || continue
       awk '
@@ -84,7 +90,7 @@ WIDGET="$PROJECTS_DIR/TODO-widget.md"
         }
         END { flush() }
       ' "$todo"
-    done
+    done < <(python3 "$ROOT/tools/wiki.py" project list --slugs)
   } | sort | tr '\v' '\n'
 } > "$WIDGET"
 

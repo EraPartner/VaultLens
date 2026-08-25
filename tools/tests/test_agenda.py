@@ -246,8 +246,13 @@ def main() -> int:
         (root / "beta" / "project.md").write_text(
             "---\ntype: project\n---\n", encoding="utf-8"
         )
+        (root / "frozen").mkdir()
+        (root / "frozen" / "project.md").write_text(
+            "---\ntype: project\nstatus: frozen\n---\n", encoding="utf-8"
+        )
         created = agenda.scaffold_all(root, today)
         check("scaffolded both", set(created) == {"alpha", "beta"})
+        check("frozen project not scaffolded", not (root / "frozen/AGENDA.md").exists())
         check(
             "alpha AGENDA dormant",
             agenda.is_enabled(agenda.parse_agenda(root / "alpha" / "AGENDA.md")[0])
@@ -263,6 +268,13 @@ def main() -> int:
         )
         (root / "alpha" / "AGENDA.md").write_text(ag, encoding="utf-8")
         check("alpha now due", agenda.due_projects(root, today) == ["alpha"])
+        (root / "alpha" / "project.md").write_text(
+            "---\ntype: project\nstatus: frozen\n---\n", encoding="utf-8"
+        )
+        check("frozen alpha is not due", agenda.due_projects(root, today) == [])
+        (root / "alpha" / "project.md").write_text(
+            "---\ntype: project\nstatus: active\n---\n", encoding="utf-8"
+        )
         # scaffold_all is idempotent.
         check("scaffold_all idempotent", agenda.scaffold_all(root, today) == [])
 
@@ -335,6 +347,9 @@ def main() -> int:
 
         def _mk(slug, enabled):
             (root / slug).mkdir()
+            (root / slug / "project.md").write_text(
+                "---\ntype: project\nstatus: active\n---\n", encoding="utf-8"
+            )
             p = root / slug / "AGENDA.md"
             agenda.scaffold(p, slug, today)
             if enabled:
@@ -366,9 +381,14 @@ def main() -> int:
             encoding="utf-8",
         )
         _mk("gamma", False)  # dormant
+        pd = _mk("delta", True)
+        (pd.parent / "project.md").write_text(
+            "---\ntype: project\nstatus: frozen\n---\n", encoding="utf-8"
+        )
 
         st = agenda.desk_status(root, today)
         check("three desks", len(st) == 3)
+        check("frozen desk excluded", all(s["slug"] != "delta" for s in st))
         check(
             "active desks sorted before dormant",
             [s["slug"] for s in st] == ["alpha", "beta", "gamma"],
