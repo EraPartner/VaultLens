@@ -22,6 +22,7 @@ import wiki  # noqa: E402
 import wiki_index  # noqa: E402
 import wiki_lint  # noqa: E402
 import wiki_links  # noqa: E402
+import wiki_log  # noqa: E402
 import wiki_projects  # noqa: E402
 
 PASSED = 0
@@ -148,6 +149,32 @@ def test_agent_instructions_excluded() -> None:
         content_paths = {page.rel.as_posix() for page in wiki.list_content_pages()}
         check("AGENTS.md not treated as a page", "AGENTS.md" not in content_paths)
         check("instruction examples are not linted", rep["error_count"] == 0, str(rep))
+
+
+def test_runtime_log_excluded() -> None:
+    print("runtime log excluded from content:")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "wiki"
+        make_clean_wiki(root)
+        log_dir = root / "log"
+        log_dir.mkdir()
+        (log_dir / "2026-08-25-enhance.md").write_text(
+            "# Runtime entry\n\nNo page metadata; broken [[concepts/gone]].\n",
+            encoding="utf-8",
+        )
+        concept = root / "concepts" / "a.md"
+        concept.write_text(
+            concept.read_text(encoding="utf-8")
+            + "\nLinked runtime record [[log/2026-08-25-enhance]].\n",
+            encoding="utf-8",
+        )
+        rep = report_for(root, strict=True)
+        content_paths = {page.rel.as_posix() for page in wiki.list_content_pages()}
+        check(
+            "runtime log note is not a content page",
+            "log/2026-08-25-enhance.md" not in content_paths,
+        )
+        check("runtime log note is not linted", rep["error_count"] == 0, str(rep))
 
 
 def test_defects() -> None:
@@ -405,7 +432,7 @@ def test_project_freeze() -> None:
         )
         (project / "TODO.md").write_text("- [ ] finish set 1\n", encoding="utf-8")
         deadlines = projects / "deadlines.md"
-        deadlines.write_text(
+        (projects / "deadlines.template.md").write_text(
             "```tasks\nnot done\nfolder includes projects\nhas due date\n```\n",
             encoding="utf-8",
         )
@@ -435,6 +462,10 @@ def test_project_freeze() -> None:
             )
             wiki_projects._rebuild_deadlines()
             check(
+                "deadline query is created from tracked template",
+                deadlines.is_file(),
+            )
+            check(
                 "deadline query excludes frozen TODO",
                 "path does not include projects/cryptopals/TODO.md"
                 in deadlines.read_text(encoding="utf-8"),
@@ -456,10 +487,52 @@ def test_project_freeze() -> None:
             wiki_projects._rebuild_projects_todo = saved_rebuild
 
 
+def test_frontmatter_list_parsing() -> None:
+    # Normal comma-separated arrays parse to N items (unchanged behavior).
+    check(
+        "comma list parses to N items",
+        wiki._parse_frontmatter_value("[a, b, c]") == ["a", "b", "c"]
+        and wiki._coerce_str_list("[a, b, c]") == ["a", "b", "c"],
+    )
+    # Recovery: an array reflowed to whitespace-separated with no commas — as the
+    # host Obsidian app can do to frontmatter a CLI just wrote — still parses to N
+    # items instead of one joined blob, so the next write self-heals it.
+    check(
+        "whitespace-reflowed list recovers to N items",
+        wiki._parse_frontmatter_value("[a b c]") == ["a", "b", "c"]
+        and wiki._coerce_str_list("[a b c]") == ["a", "b", "c"],
+    )
+    # Guard: quoted multi-word items (aliases/requires) are never split mid-value.
+    check(
+        "quoted multi-word items are not split",
+        wiki._parse_frontmatter_value('["machine learning", "deep learning"]')
+        == ["machine learning", "deep learning"],
+    )
+    check("single-item list", wiki._parse_frontmatter_value("[a]") == ["a"])
+    check("empty list", wiki._parse_frontmatter_value("[]") == [])
+
+
+def test_log_frontmatter_is_stdlib_and_yaml_safe() -> None:
+    rendered = wiki_log._render_frontmatter(
+        {
+            "date": "2026-08-17",
+            "title": "Codex: migration",
+            "pages": ["concepts/a", "topics/quoted \"item\""],
+        }
+    )
+    check("log frontmatter quotes punctuation", 'title: "Codex: migration"' in rendered)
+    check(
+        "log frontmatter renders arrays",
+        'pages: ["concepts/a", "topics/quoted \\"item\\\""]' in rendered,
+        rendered,
+    )
+
+
 def main() -> int:
     test_golden()
     test_reports_excluded()
     test_agent_instructions_excluded()
+    test_runtime_log_excluded()
     test_defects()
     test_warnings()
     test_fix()
@@ -468,6 +541,8 @@ def main() -> int:
     test_raw_source_links()
     test_project_provider_scaffold()
     test_project_freeze()
+    test_frontmatter_list_parsing()
+    test_log_frontmatter_is_stdlib_and_yaml_safe()
     print(f"\n{PASSED} passed, {FAILED} failed")
     return 1 if FAILED else 0
 

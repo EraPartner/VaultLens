@@ -2,6 +2,10 @@
 # macOS custom-folder-icon resource (a file literally named "Icon" + CR).
 Icon?
 
+# Obsidian's local trash (soft-deleted notes/attachments) — not currently
+# created, but not excluded either; deleted content shouldn't get committed.
+.trash/
+
 # Agent-scratch append-log payloads. wiki-enhancer/wiki-cos write a temp JSON
 # entry then call `wiki.py append-log --from-json`; agents sometimes write it
 # in-tree instead of /tmp/ and leave .bak/.done renames behind. The agent prompt
@@ -21,6 +25,11 @@ wiki-log-*.json
 # mount-roots.local.example documents the format. (The .example is NOT ignored.)
 .devcontainer/mount-roots.local
 
+# Private, separately versioned adapter for this live Brain instance. The public
+# VaultLens skeleton exposes the shared implementation but never owns this tree.
+.brain-local/
+.devcontainer/bin/agent
+
 # Agent config: track canonical AGENTS.md/.agents/, generated provider adapters,
 # CLAUDE.md, and shared settings; only machine-local Claude state stays ignored.
 .claude/settings.local.json
@@ -39,10 +48,10 @@ __pycache__
 .obsidian/plugins/templater-obsidian/*
 !.obsidian/plugins/templater-obsidian/data.json
 
-raw/assets/*
-raw/inbox/*
-raw/sources/*
-raw/sources-text/*
+# Raw material belongs to the local Brain, not the public skeleton. Ignore every
+# present and future raw category while retaining the scaffold placeholder.
+raw/*
+!raw/.gitkeep
 wiki/comparisons/*
 wiki/concepts/*
 wiki/entities/*
@@ -72,3 +81,7 @@ projects/*/
 # not version-controlled. (Per-project projects/<slug>/TODO.md are ignored above
 # via `projects/*/`.)
 projects/TODO*.md
+# Live deadline queries contain one generated exclusion per frozen local
+# project. Keep the reusable query in deadlines.template.md; never publish the
+# rendered local view.
+projects/deadlines.md

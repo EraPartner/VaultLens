@@ -168,8 +168,9 @@ Launch from the host with the `brain-*` wrappers
 `tools/agents/wiki-agent.py` refuses to run on the host — invoke wiki agents via `brain-wiki`
 and the Chief of Staff via `brain-cos`.
 
-The local LockBox-derived tooling container supports Claude and Codex through separate provider
-volumes. The external Brain `brain-wiki` container integration remains a separate migration.
+The LockBox-derived container image and host wrappers support both Claude and Codex. Codex uses
+private per-profile container state and must be logged in once for every scheduled capability
+profile before `brain-wiki` uses it unattended.
 
 **Inside the devcontainer (`$DEVCONTAINER=true`):** `~/.claude/` and `~/.claude.json` are an isolated
 copy, host-pulled on start but **not** pushed back automatically. If you change in-container Claude
@@ -183,9 +184,9 @@ workspace and needs no sync. Outside the devcontainer this does not apply.
 
 A host-side **catch-up dispatcher** (`tools/schedule/`) runs the maintenance/thinking agents on a
 ~30-minute launchd tick; each tick is a gate-checker, not an LLM trigger — all LLM work runs in one
-nightly batch (AC-only, defer-until-online) on the configured CLI. Claude remains the default for
-backward compatibility; `VAULTLENS_LLM_CLI=codex` uses the Codex-capable local tooling path.
-Read-only agents stay read-only:
+nightly batch (AC-only, defer-until-online) on the configured CLI. Codex is the default; Claude can
+still be selected explicitly. Every required Codex container profile must complete its one-time
+login before unattended runs are enabled. Read-only agents stay read-only:
 outputs are filed as dated reports under `wiki/reports/`. The one **writer** in the nightly batch is
 `project-runner` (runs before `enhance`): for each opted-in project it executes due `AGENDA.md` tasks
 inside `projects/<slug>/` (applied-not-committed; the dispatcher clones the project first, so the

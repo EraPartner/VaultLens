@@ -11,6 +11,8 @@ no CLI is spawned. Run:
 from __future__ import annotations
 
 import importlib.util
+import json
+import re
 import subprocess
 import sys
 import tomllib
@@ -121,19 +123,40 @@ def main() -> int:
         (generated.stdout + generated.stderr).strip(),
     )
     codex_agents = wa.ROOT / ".codex" / "agents"
-    parsed_agents = [
-        tomllib.loads(path.read_text(encoding="utf-8"))
-        for path in sorted(codex_agents.glob("*.toml"))
-    ]
+    manifest_paths = sorted(codex_agents.glob("*.toml"))
+    expected_manifests = {
+        f"{Path(filename).stem}.toml" for filename in wa.AGENT_FILES.values()
+    }
     check(
-        "all Codex manifests parse as TOML", len(parsed_agents) == len(wa.AGENT_FILES)
+        "Codex manifest filenames match canonical roles",
+        {path.name for path in manifest_paths} == expected_manifests,
+        str(sorted(path.name for path in manifest_paths)),
     )
+    parsed_agents = []
+    parse_errors = []
+    for path in manifest_paths:
+        try:
+            parsed_agents.append(tomllib.loads(path.read_text(encoding="utf-8")))
+        except tomllib.TOMLDecodeError as error:
+            parse_errors.append(f"{path.name}: {error}")
+    check("all Codex manifests parse as TOML", not parse_errors, "; ".join(parse_errors))
     check(
         "Codex manifests contain required identity and instructions",
         all(
             {"name", "description", "developer_instructions"} <= data.keys()
             for data in parsed_agents
         ),
+    )
+    conflict_copies = sorted(
+        path.relative_to(wa.ROOT).as_posix()
+        for directory in (wa.ROOT / ".agents", wa.ROOT / ".claude", wa.ROOT / ".codex")
+        for path in directory.rglob("*")
+        if path.is_file() and re.search(r" \d+(?=\.[^.]+$)", path.name)
+    )
+    check(
+        "provider configuration has no conflict copies",
+        not conflict_copies,
+        ", ".join(conflict_copies),
     )
     check(
         "Codex manifests distinguish role scope from hard isolation",
@@ -142,6 +165,109 @@ def main() -> int:
             and "matching container profile" in data["developer_instructions"]
             for data in parsed_agents
         ),
+    )
+
+    print("project provider parity:")
+    projects = sorted(
+        project_md.parent
+        for project_md in (wa.ROOT / "projects").glob("*/project.md")
+    )
+    expected_claude_adapter = (
+        "@AGENTS.md\n"
+        "@project.md\n\n"
+        "# Claude Code compatibility\n\n"
+        "`AGENTS.md` is the provider-neutral project instruction source.\n"
+    )
+    missing_neutral_sources = [
+        project.name for project in projects if not (project / "AGENTS.md").is_file()
+    ]
+    check(
+        "every project has provider-neutral AGENTS.md",
+        not missing_neutral_sources,
+        ", ".join(missing_neutral_sources),
+    )
+    stale_claude_adapters = [
+        project.name
+        for project in projects
+        if not (project / "CLAUDE.md").is_file()
+        or (project / "CLAUDE.md").read_text(encoding="utf-8")
+        != expected_claude_adapter
+    ]
+    check(
+        "every project Claude adapter is thin and canonical",
+        not stale_claude_adapters,
+        ", ".join(stale_claude_adapters),
+    )
+
+    mcp_projects = [
+        project
+        for project in projects
+        if (project / ".mcp.json").exists()
+        or (project / ".codex" / "config.toml").exists()
+    ]
+    mcp_errors: list[str] = []
+    arxiv_servers: list[tuple[str, dict[str, object]]] = []
+    for project in mcp_projects:
+        claude_path = project / ".mcp.json"
+        codex_path = project / ".codex" / "config.toml"
+        if not claude_path.is_file() or not codex_path.is_file():
+            mcp_errors.append(f"{project.name}: missing one provider MCP config")
+            continue
+        try:
+            claude_data = json.loads(claude_path.read_text(encoding="utf-8"))
+            codex_data = tomllib.loads(codex_path.read_text(encoding="utf-8"))
+            claude_servers = claude_data["mcpServers"]
+            codex_servers = codex_data["mcp_servers"]
+        except (json.JSONDecodeError, tomllib.TOMLDecodeError, KeyError) as error:
+            mcp_errors.append(f"{project.name}: {error}")
+            continue
+        if not isinstance(claude_servers, dict) or not isinstance(codex_servers, dict):
+            mcp_errors.append(f"{project.name}: MCP server tables must be objects")
+            continue
+        if set(claude_servers) != set(codex_servers):
+            mcp_errors.append(f"{project.name}: provider server names differ")
+            continue
+        for name in sorted(claude_servers):
+            claude_server = claude_servers[name]
+            codex_server = codex_servers[name]
+            if not isinstance(claude_server, dict) or not isinstance(codex_server, dict):
+                mcp_errors.append(f"{project.name}/{name}: server config must be an object")
+                continue
+            claude_launch = (claude_server.get("command"), claude_server.get("args", []))
+            codex_launch = (codex_server.get("command"), codex_server.get("args", []))
+            if claude_launch != codex_launch:
+                mcp_errors.append(f"{project.name}/{name}: launch command differs")
+            if name == "arxiv":
+                arxiv_servers.append((project.name, codex_server))
+    check(
+        "project MCP launch configuration matches across providers",
+        not mcp_errors,
+        "; ".join(mcp_errors),
+    )
+
+    arxiv_errors: list[str] = []
+    for project_name, server in arxiv_servers:
+        args = server.get("args", [])
+        if server.get("command") != "uvx" or not isinstance(args, list) or not args:
+            arxiv_errors.append(f"{project_name}: arxiv must launch with uvx")
+            continue
+        if not re.fullmatch(r"arxiv-mcp-server==\d+\.\d+\.\d+", str(args[0])):
+            arxiv_errors.append(f"{project_name}: arxiv package is not exactly pinned")
+        try:
+            storage_path = str(args[args.index("--storage-path") + 1])
+        except (ValueError, IndexError):
+            arxiv_errors.append(f"{project_name}: storage path is missing")
+            continue
+        if (
+            Path(storage_path).is_absolute()
+            or storage_path.startswith("~")
+            or "$" in storage_path
+        ):
+            arxiv_errors.append(f"{project_name}: storage path is host-dependent")
+    check(
+        "arxiv MCP is version-pinned with a portable cache path",
+        not arxiv_errors,
+        "; ".join(arxiv_errors),
     )
 
     print(f"\n{PASSED} passed, {FAILED} failed")

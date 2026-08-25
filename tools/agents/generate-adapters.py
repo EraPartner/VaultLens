@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate thin Claude and Codex manifests from canonical wiki-agent roles."""
+"""Generate thin provider adapters from canonical agent and project guidance."""
 
 from __future__ import annotations
 
@@ -14,6 +14,16 @@ ROOT = Path(__file__).resolve().parents[2]
 ROLES_DIR = ROOT / ".agents" / "roles"
 CLAUDE_DIR = ROOT / ".claude" / "agents"
 CODEX_DIR = ROOT / ".codex" / "agents"
+PROJECTS_DIR = ROOT / "projects"
+
+PROJECT_CLAUDE_ADAPTER = """\
+@AGENTS.md
+@project.md
+
+# Claude Code compatibility
+
+`AGENTS.md` is the provider-neutral project instruction source.
+"""
 
 CLAUDE_TOOLS = {
     "read": "Read, Glob, Grep",
@@ -101,6 +111,17 @@ def load_roles() -> list[Role]:
     return roles
 
 
+def load_projects() -> list[Path]:
+    """Return real project workspaces and require their neutral adapter source."""
+    projects: list[Path] = []
+    for project_md in sorted(PROJECTS_DIR.glob("*/project.md")):
+        project = project_md.parent
+        if not (project / "AGENTS.md").is_file():
+            raise ValueError(f"{project}: missing provider-neutral AGENTS.md")
+        projects.append(project)
+    return projects
+
+
 def _role_instruction(role: Role) -> str:
     rel = role.path.relative_to(ROOT).as_posix()
     return (
@@ -154,6 +175,16 @@ def _sync(path: Path, expected: str, check: bool) -> bool:
     return True
 
 
+def _check_adapter_set(directory: Path, suffix: str, expected: set[str]) -> bool:
+    actual = {path.name for path in directory.glob(f"*{suffix}")}
+    unexpected = sorted(actual - expected)
+    if not unexpected:
+        return True
+    for name in unexpected:
+        print(f"unexpected generated adapter: {(directory / name).relative_to(ROOT)}")
+    return False
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -161,10 +192,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    ok = True
-    for role in load_roles():
+    roles = load_roles()
+    ok = _check_adapter_set(
+        CLAUDE_DIR, ".md", {f"{role.name}.md" for role in roles}
+    )
+    ok &= _check_adapter_set(
+        CODEX_DIR, ".toml", {f"{role.name}.toml" for role in roles}
+    )
+    for role in roles:
         ok &= _sync(CLAUDE_DIR / f"{role.name}.md", claude_manifest(role), args.check)
         ok &= _sync(CODEX_DIR / f"{role.name}.toml", codex_manifest(role), args.check)
+    for project in load_projects():
+        ok &= _sync(project / "CLAUDE.md", PROJECT_CLAUDE_ADAPTER, args.check)
     return 0 if ok else 1
 
 

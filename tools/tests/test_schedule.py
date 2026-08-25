@@ -237,6 +237,35 @@ def main() -> int:
     finally:
         dispatch.CLI, dispatch.MODEL = original_cli, original_model
 
+    print("agent report stream selection:")
+    check(
+        "successful agent report keeps stdout only",
+        dispatch._agent_output(0, "final answer\n", "runtime trace\n")
+        == "final answer\n",
+    )
+    check(
+        "failed agent result keeps diagnostics",
+        dispatch._agent_output(1, "partial\n", "failure detail\n")
+        == "partial\nfailure detail\n",
+    )
+
+    print("scheduled qmd maintenance:")
+    scheduled = dispatch.build_steps()
+    scheduled_names = [step.name for step in scheduled]
+    qmd_update = next(step for step in scheduled if step.name == "qmd-update")
+    qmd_embed = next(step for step in scheduled if step.name == "qmd-embed")
+    check(
+        "qmd update follows markdown index",
+        scheduled_names.index("qmd-update") == scheduled_names.index("index") + 1,
+    )
+    check("qmd update uses host qmd runner", qmd_update.kind == "qmd")
+    check("qmd embed is AC gated", qmd_embed.gates == ["ac"])
+    check(
+        "qmd embed is bounded and resumable",
+        qmd_embed.builder() == [["embed", "--timeout", "24"]]
+        and qmd_embed.timeout == 1500,
+    )
+
     print("_record failure semantics:")
     led7 = fresh_ledger()
     dispatch._record(led7, "enhance", now, "ok")
@@ -257,10 +286,12 @@ def main() -> int:
         "lint-report.md",
         ".gitkeep",
     ]
-    prune = dispatch._reports_to_prune(names, 14)
+    prune = dispatch._reports_to_prune(
+        names, 14, dispatch.REPORT_RETENTION_BY_TYPE
+    )
     check(
-        "prunes oldest cos-briefs beyond 14/type",
-        sum("cos-brief" in n for n in prune) == 6,
+        "daily cos briefs retain only the latest generated report",
+        sum("cos-brief" in n for n in prune) == 19,
     )
     check(
         "deletes oldest, keeps newest",
@@ -310,6 +341,11 @@ def main() -> int:
     )
     check(
         "brief with no block => []", dispatch.parse_cos_proposals("no block here") == []
+    )
+    stripped = dispatch.strip_cos_proposals(brief)
+    check(
+        "stored brief omits legacy proposal block",
+        "## Proposals" not in stripped and "Today's focus" in stripped,
     )
     check(
         "format_work_item: from-tag + why",

@@ -45,15 +45,15 @@ LOCK_FILE = STATE_DIR / "schedule.lock"
 LOG_DIR = STATE_DIR / "logs"
 REPORTS_DIR = ROOT / "wiki" / "reports"
 
-# One explicitly selected LLM backend runs a complete batch. Claude remains the
-# default for backward compatibility. Codex intentionally has no pinned default
+# One explicitly selected LLM backend runs a complete batch. Codex is the
+# default and intentionally has no pinned default
 # model: the authenticated workspace configuration chooses it unless an operator
 # sets VAULTLENS_LLM_MODEL. Do not silently fall back between providers mid-batch.
 BACKENDS = {
     "claude": {"model": "sonnet", "health_host": "api.anthropic.com"},
     "codex": {"model": "", "health_host": "chatgpt.com"},
 }
-CLI = os.environ.get("VAULTLENS_LLM_CLI", "claude").strip().lower()
+CLI = os.environ.get("VAULTLENS_LLM_CLI", "codex").strip().lower()
 if CLI not in BACKENDS:
     choices = ", ".join(sorted(BACKENDS))
     raise ValueError(f"VAULTLENS_LLM_CLI must be one of: {choices}")
@@ -81,6 +81,9 @@ FAIL_STREAK_ALERT = 3
 # pruned each tick so wiki/reports/ does not pile up. The CoS is read-only, so
 # this hygiene runs host-side in the dispatcher that writes the reports.
 REPORT_RETENTION = 14
+# A daily brief is a current advisory surface, not a historical log. Keep only
+# the newest generated brief; longer-term signal belongs in an explicit synthesis.
+REPORT_RETENTION_BY_TYPE = {"cos-brief": 1}
 
 # The AGENDA.md format + recurrence engine (tools/agenda.py, stdlib-only). Imported
 # so the project-runner builder can decide which projects are enabled-and-due
@@ -115,6 +118,7 @@ def _tool(name: str, *fallbacks: str) -> str:
 
 PYTHON = sys.executable or _tool("python3", "/opt/homebrew/bin/python3")
 FISH = _tool("fish", "/opt/homebrew/bin/fish")
+QMD = _tool("qmd", str(HOME / ".bun" / "bin" / "qmd"))
 CONTAINER = _tool("container", "/usr/local/bin/container")
 NC = _tool("nc", "/opt/homebrew/bin/nc", "/usr/bin/nc")
 PMSET = _tool("pmset", "/usr/bin/pmset")
@@ -257,7 +261,7 @@ def step_due(step: "Step", ledger: dict, now: datetime) -> bool:
 @dataclass
 class Step:
     name: str
-    kind: str  # "host" (wiki.py, offline) | "llm" (brain-wiki backend)
+    kind: str  # "host" (wiki.py) | "qmd" (host index) | "llm" (brain-wiki backend)
     period: str  # "daily" | "weekly"
     window: tuple[int, int]
     gates: list[str]  # subset of {"ac","online","container","icloud","battery"}
@@ -469,6 +473,24 @@ def build_steps() -> list[Step]:
             lambda: [["index", "--rebuild"]],
             timeout=600,
         ),
+        Step(
+            "qmd-update",
+            "qmd",
+            "daily",
+            NIGHTLY_WINDOW,
+            [],
+            lambda: [["update"]],
+            timeout=600,
+        ),
+        Step(
+            "qmd-embed",
+            "qmd",
+            "daily",
+            NIGHTLY_WINDOW,
+            ["ac"],
+            lambda: [["embed", "--timeout", "24"]],
+            timeout=1500,
+        ),
         # 2. ingest new raw material (only if any), before enhance.
         Step(
             "ingest",
@@ -678,6 +700,17 @@ def run_host(args: list[str], timeout: int) -> tuple[int, str]:
         return 124, "timeout"
 
 
+def run_qmd(args: list[str], timeout: int) -> tuple[int, str]:
+    """Run qmd on the host so it can use Metal and its persistent host index."""
+    try:
+        p = subprocess.run(
+            [QMD, *args], capture_output=True, text=True, timeout=timeout, cwd=str(ROOT)
+        )
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+    except subprocess.TimeoutExpired:
+        return 124, "timeout"
+
+
 def exec_brain_wiki(
     args: list[str], acct: str, effort: str, timeout: int
 ) -> tuple[int, str]:
@@ -699,9 +732,21 @@ def exec_brain_wiki(
             timeout=timeout,
             env=env,
         )
-        return p.returncode, (p.stdout or "") + (p.stderr or "")
+        return p.returncode, _agent_output(p.returncode, p.stdout, p.stderr)
     except subprocess.TimeoutExpired:
         return 124, "timeout"
+
+
+def _agent_output(returncode: int, stdout: str | None, stderr: str | None) -> str:
+    """Keep successful reports clean while retaining failure diagnostics.
+
+    brain-wiki writes the agent's final answer to stdout and container/runtime
+    traces to stderr. A successful run therefore reports stdout only. On failure,
+    both streams remain available to failure classification and the operator.
+    """
+    if returncode == 0:
+        return stdout or ""
+    return (stdout or "") + (stderr or "")
 
 
 def build_brain_wiki_args(args: list[str], effort: str) -> list[str]:
@@ -875,7 +920,11 @@ def write_schedule_status(ledger: dict, steps: list["Step"], now: datetime) -> P
     return f
 
 
-def _reports_to_prune(names: list[str], retention: int) -> list[str]:
+def _reports_to_prune(
+    names: list[str],
+    retention: int,
+    retention_by_type: dict[str, int] | None = None,
+) -> list[str]:
     """Pure: of `scheduled-<type>-<date>.md` names, those to delete to keep only
     the latest `retention` per type. Any other filename is ignored, so
     schedule-status.md and hand-written reports are never touched. Tested directly."""
@@ -886,9 +935,11 @@ def _reports_to_prune(names: list[str], retention: int) -> list[str]:
         if m:
             groups.setdefault(m.group(1), []).append((m.group(2), n))
     out: list[str] = []
-    for items in groups.values():
+    per_type = retention_by_type or {}
+    for report_type, items in groups.items():
         items.sort()  # date strings sort chronologically; oldest first
-        stale = items[:-retention] if retention > 0 else items
+        keep = per_type.get(report_type, retention)
+        stale = items[:-keep] if keep > 0 else items
         out.extend(n for _d, n in stale)
     return out
 
@@ -902,7 +953,7 @@ def prune_reports(retention: int = REPORT_RETENTION) -> list[str]:
         return []
     names = [f.name for f in REPORTS_DIR.glob("scheduled-*.md")]
     removed: list[str] = []
-    for n in _reports_to_prune(names, retention):
+    for n in _reports_to_prune(names, retention, REPORT_RETENTION_BY_TYPE):
         try:
             (REPORTS_DIR / n).unlink()
             removed.append(n)
@@ -952,6 +1003,19 @@ def _routed_re(keyword: str):
 
 _PROPOSAL_RE = _routed_re("proposal")  # CoS → project
 _HANDOFF_RE = _routed_re("handoff")  # any producer role → another desk
+
+
+def strip_cos_proposals(text: str) -> str:
+    """Remove the legacy final Proposals block from a Chief of Staff brief.
+
+    Chief of Staff output is advisory. The scheduler neither stores nor routes
+    this machine-readable tail.
+    """
+    lines = (text or "").splitlines()
+    for i, line in enumerate(lines):
+        if line.strip() == "## Proposals":
+            return "\n".join(lines[:i]).rstrip()
+    return text or ""
 
 
 def _parse_routed(text: str, pattern) -> list[dict]:
@@ -1259,9 +1323,8 @@ def _run_steps(
     llm_blocked = (
         False  # set once the backend is usage-limited; skip remaining LLM steps
     )
-    # One routing guard per tick: its cap + cycle-blocks span every item routed during
-    # this dispatcher run — CoS proposals and/or project-runner handoffs, whichever steps
-    # run this tick (a step that runs in a different tick gets a fresh guard).
+    # One routing guard per tick: its cap + cycle-blocks span project-runner
+    # handoffs produced during this dispatcher run.
     routing_guard = RoutingGuard()
     for step in steps:
         if not step_due(step, ledger, now):
@@ -1288,8 +1351,9 @@ def _run_steps(
         ran_slugs: list[str] = []  # project-runner: projects actually executed
         for args in invocations:
             log(f"run {step.name}: {' '.join(args)}")
-            if step.kind == "host":
-                rc, out = run_host(args, step.timeout)
+            if step.kind in {"host", "qmd"}:
+                runner = run_host if step.kind == "host" else run_qmd
+                rc, out = runner(args, step.timeout)
                 if rc == 124:
                     all_ok = False
                     outcome = "timeout"
@@ -1318,14 +1382,14 @@ def _run_steps(
                         agenda.record_run(slug, _parse_executed(out), iso(now))
                         ran_slugs.append(slug)
                     if step.report:
-                        report_chunks.append(out)
-                    # Routing seam: the CoS brief's proposals, and any project-runner
-                    # pass's `handoff::` lines, are filed into the named projects'
-                    # inboxes by the dispatcher (the agents are read-only / dir-scoped;
-                    # the dispatcher does the guarded cross-project write).
-                    if step.name == "cos-brief":
-                        route_cos_proposals(out, now, log, routing_guard)
-                    elif slug:
+                        report_chunks.append(
+                            strip_cos_proposals(out)
+                            if step.name == "cos-brief"
+                            else out
+                        )
+                    # Project-runner `handoff::` lines remain the guarded
+                    # cross-project bus. Chief of Staff advice stays advisory.
+                    if slug:
                         route_handoffs(out, slug, now, log, routing_guard)
                 elif status == "deferred":
                     all_ok = False
