@@ -45,8 +45,8 @@ LOCK_FILE = STATE_DIR / "schedule.lock"
 LOG_DIR = STATE_DIR / "logs"
 REPORTS_DIR = ROOT / "wiki" / "reports"
 
-# One explicitly selected LLM backend runs a complete batch. Claude remains the
-# default for backward compatibility. Codex intentionally has no pinned default
+# One explicitly selected LLM backend runs a complete batch. Codex is the
+# default and intentionally has no pinned default
 # model: the authenticated workspace configuration chooses it unless an operator
 # sets VAULTLENS_LLM_MODEL. Do not silently fall back between providers mid-batch.
 BACKENDS = {
@@ -67,7 +67,7 @@ def _env_flag(name: str, default: bool = False) -> bool:
     raise ValueError(f"{name} must be a boolean flag (0/1, false/true, no/yes, off/on)")
 
 
-CLI = os.environ.get("VAULTLENS_LLM_CLI", "claude").strip().lower()
+CLI = os.environ.get("VAULTLENS_LLM_CLI", "codex").strip().lower()
 if CLI not in BACKENDS:
     choices = ", ".join(sorted(BACKENDS))
     raise ValueError(f"VAULTLENS_LLM_CLI must be one of: {choices}")
@@ -96,6 +96,9 @@ FAIL_STREAK_ALERT = 3
 # pruned each tick so wiki/reports/ does not pile up. The CoS is read-only, so
 # this hygiene runs host-side in the dispatcher that writes the reports.
 REPORT_RETENTION = 14
+# A daily brief is a current advisory surface, not a historical log. Keep only
+# the newest generated brief; longer-term signal belongs in an explicit synthesis.
+REPORT_RETENTION_BY_TYPE = {"cos-brief": 1}
 
 # The AGENDA.md format + recurrence engine (tools/agenda.py, stdlib-only). Imported
 # so the project-runner builder can decide which projects are enabled-and-due
@@ -972,7 +975,11 @@ def write_schedule_status(ledger: dict, steps: list["Step"], now: datetime) -> P
     return f
 
 
-def _reports_to_prune(names: list[str], retention: int) -> list[str]:
+def _reports_to_prune(
+    names: list[str],
+    retention: int,
+    retention_by_type: dict[str, int] | None = None,
+) -> list[str]:
     """Pure: of `scheduled-<type>-<date>.md` names, those to delete to keep only
     the latest `retention` per type. Any other filename is ignored, so
     schedule-status.md and hand-written reports are never touched. Tested directly."""
@@ -983,9 +990,11 @@ def _reports_to_prune(names: list[str], retention: int) -> list[str]:
         if m:
             groups.setdefault(m.group(1), []).append((m.group(2), n))
     out: list[str] = []
-    for items in groups.values():
+    per_type = retention_by_type or {}
+    for report_type, items in groups.items():
         items.sort()  # date strings sort chronologically; oldest first
-        stale = items[:-retention] if retention > 0 else items
+        keep = per_type.get(report_type, retention)
+        stale = items[:-keep] if keep > 0 else items
         out.extend(n for _d, n in stale)
     return out
 
@@ -999,7 +1008,7 @@ def prune_reports(retention: int = REPORT_RETENTION) -> list[str]:
         return []
     names = [f.name for f in REPORTS_DIR.glob("scheduled-*.md")]
     removed: list[str] = []
-    for n in _reports_to_prune(names, retention):
+    for n in _reports_to_prune(names, retention, REPORT_RETENTION_BY_TYPE):
         try:
             (REPORTS_DIR / n).unlink()
             removed.append(n)
@@ -1049,6 +1058,19 @@ def _routed_re(keyword: str):
 
 _PROPOSAL_RE = _routed_re("proposal")  # CoS → project
 _HANDOFF_RE = _routed_re("handoff")  # any producer role → another desk
+
+
+def strip_cos_proposals(text: str) -> str:
+    """Remove the legacy final Proposals block from a Chief of Staff brief.
+
+    Chief of Staff output is advisory. The scheduler neither stores nor routes
+    this machine-readable tail.
+    """
+    lines = (text or "").splitlines()
+    for i, line in enumerate(lines):
+        if line.strip() == "## Proposals":
+            return "\n".join(lines[:i]).rstrip()
+    return text or ""
 
 
 def _parse_routed(text: str, pattern) -> list[dict]:
@@ -1356,9 +1378,8 @@ def _run_steps(
     llm_blocked = (
         False  # set once the backend is usage-limited; skip remaining LLM steps
     )
-    # One routing guard per tick: its cap + cycle-blocks span every item routed during
-    # this dispatcher run — CoS proposals and/or project-runner handoffs, whichever steps
-    # run this tick (a step that runs in a different tick gets a fresh guard).
+    # One routing guard per tick: its cap + cycle-blocks span project-runner
+    # handoffs produced during this dispatcher run.
     routing_guard = RoutingGuard()
     for step in steps:
         if not step_due(step, ledger, now):

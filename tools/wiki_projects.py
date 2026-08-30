@@ -229,8 +229,11 @@ def _rebuild_deadlines() -> None:
     visibility changes stay explicit and reviewable.
     """
     path = PROJECTS_DIR / "deadlines.md"
+    template = PROJECTS_DIR / "deadlines.template.md"
     if not path.exists():
-        return
+        if not template.exists():
+            return
+        path.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
     projects = list_projects()
     project_slugs = {project.slug for project in projects}
     exclusions = [

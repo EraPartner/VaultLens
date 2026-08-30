@@ -14,8 +14,9 @@ Based on [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf5
 ## Prerequisites
 
 - [Obsidian](https://obsidian.md) with plugins: Dataview, Templater
-- Python 3.10+
-- An LLM CLI: `claude`, `opencode`, or `ollama`
+- Apple's `container` runtime with the system service started
+- The LockBox-managed Brain image (Python 3.12 and qmd are baked in)
+- An LLM provider login for Claude Code or OpenAI Codex
 
 ## Quick Setup
 
@@ -23,8 +24,8 @@ Based on [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf5
 # Initialize directories for your data
 mkdir -p raw/sources raw/assets raw/inbox raw/review-inbox
 
-# Verify tools work
-python3 tools/wiki.py lint
+# Verify tools inside the Brain LockBox container
+brain-wiki lint
 ```
 
 ## Obsidian Configuration
@@ -112,6 +113,34 @@ The status view shows each job's last run, next due time, result, and cooldown. 
 are available under [Scheduled-Agent Reports](reports/). Detailed design and recovery commands are
 in the [scheduler specification](../tools/schedule/SPEC.md). Scheduled ingest checks
 `raw/inbox/` and `raw/sources/`; it never checks `raw/review-inbox/`.
+
+## ChatGPT desktop and Codex
+
+Create one **local project** in the ChatGPT desktop app and attach this Brain
+vault as its primary folder. Keep the Brain root primary so Codex automatically
+discovers the root `AGENTS.md`, `.codex/config.toml`, skills, and the full
+`wiki/` context.
+
+Use a separate chat for each outcome or Brain project. When working on
+`projects/<slug>/`, state that directory in the request or start the Codex CLI
+there. Each project has its own `AGENTS.md`, which requires reading
+`project.md` and preserves the project write boundary.
+
+The desktop app's local-command sandbox cannot be replaced with the Apple
+`container` runtime. Use the app for context, search, planning, and review.
+Run authoritative wiki agents, mutations, tests, and scheduled work through the
+LockBox entry points:
+
+```bash
+brain-wiki search --cli codex --task "..."
+brain-cos --cli codex
+.devcontainer/bin/codex
+```
+
+If a Brain project depends on an external repository, add it as a secondary
+folder only when the chat needs direct access. The Brain root must remain
+primary; Codex does not automatically discover `AGENTS.md`, skills, or
+`config.toml` from secondary folders.
 
 ## Directory Structure
 

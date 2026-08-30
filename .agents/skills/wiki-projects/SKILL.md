@@ -83,7 +83,8 @@ Per-project `TODO.md` uses the Obsidian Tasks plugin emoji format (priority 🔺
 📅/🛫/⏳). Three aggregators surface them — read but never hand-edit: `projects/TODO.md` (desktop
 embeds; gitignored/generated; the scaffold appends an embed line per `project new`),
 `projects/TODO-widget.md` (flattened copy for the iOS widget; gitignored/generated),
-`projects/deadlines.md` (live Tasks-plugin query of upcoming dated items; desktop only; tracked).
+`projects/deadlines.md` (live Tasks-plugin query of upcoming dated items; desktop only;
+gitignored/generated from tracked `projects/deadlines.template.md`).
 The freeze/unfreeze commands rebuild all three surfaces.
 
 ## AGENDA files (autonomous nightly runner)

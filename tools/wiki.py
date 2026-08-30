@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WIKI_DIR = ROOT / "wiki"
 PROJECTS_DIR = ROOT / "projects"
 
-IGNORE_DIRS = {"_templates", ".obsidian"}
+IGNORE_DIRS = {"_templates", ".obsidian", "log"}
 # Navigation/runtime files and nested agent instructions are repository
 # infrastructure, not knowledge pages. Keep them out of lint, indexes, search,
 # coverage, and stats even when they live under wiki/ for scoped discovery.
@@ -139,16 +139,35 @@ class Project:
         return _coerce_str_list(self.frontmatter.get("wiki_refs"))
 
 
+def _split_inline_list(inner: str) -> list[str]:
+    """Split the body of an inline frontmatter list (`[...]` already stripped) into items.
+
+    Normally comma-separated (`a, b, c`). Recovery path: if an external editor
+    reflows the array to whitespace-separated with no commas (`a b c` — observed
+    when the host Obsidian app re-serialises frontmatter that a CLI wrote), split
+    on whitespace instead — but ONLY when there are no quotes, so quoted
+    multi-word items (e.g. `aliases`, `requires`) are never split mid-value.
+    """
+    if "," not in inner and '"' not in inner and "'" not in inner:
+        parts = inner.split()
+    else:
+        parts = inner.split(",")
+    return [p.strip().strip('"').strip("'") for p in parts if p.strip()]
+
+
 def _coerce_str_list(value: str | list[str] | None) -> list[str]:
     """Frontmatter list coercion shared by Page.tags and Project.{tags,wiki_refs}."""
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
     if not value:
         return []
-    text = str(value).strip().strip("[]")
-    return [
-        item.strip().strip('"').strip("'") for item in text.split(",") if item.strip()
-    ]
+    inner = str(value).strip()
+    if inner.startswith("[") and inner.endswith("]"):
+        inner = inner[1:-1]
+    inner = inner.strip()
+    if not inner:
+        return []
+    return _split_inline_list(inner)
 
 
 def slug_to_title(slug: str) -> str:
@@ -181,8 +200,7 @@ def _parse_frontmatter_value(raw: str) -> str | list[str]:
         inner = value[1:-1].strip()
         if not inner:
             return []
-        items = [item.strip().strip('"').strip("'") for item in inner.split(",")]
-        return [item for item in items if item]
+        return _split_inline_list(inner)
     return value
 
 
@@ -283,6 +301,13 @@ def is_raw_file_target(target: str) -> bool:
     return (ROOT / target).exists() or (ROOT / f"{target}.md").exists()
 
 
+def is_runtime_log_target(target: str) -> bool:
+    """True when a link points at an existing ignored `wiki/log/` note."""
+    if not target.startswith("log/") or ".." in target:
+        return False
+    return (WIKI_DIR / f"{target}.md").is_file()
+
+
 def build_page_indexes(
     pages: list[Page],
 ) -> tuple[dict[str, Page], dict[str, list[Page]]]:
@@ -333,6 +358,8 @@ def compute_inbound_links(
                     )
                 continue
             if is_raw_file_target(target):
+                continue
+            if is_runtime_log_target(target):
                 continue
             broken.append(f"{page.rel.as_posix()}: [[{raw_target}]]")
 

@@ -21,11 +21,11 @@ sudoers commands it prints. This file remains the design rationale.
 > successes). The "Deactivation / reactivation" section at the bottom remains the
 > procedure if it is ever paused again.
 >
-> **2026-08-15 — provider adapter added; container migration deferred.**
+> **2026-08-17 — Codex container migration complete.**
 > The dispatcher now reads `VAULTLENS_LLM_CLI=claude|codex` and optional model,
-> health-host, and identity overrides. Claude remains the installed default.
-> Selecting Codex is configuration-complete but not operational through
-> `brain-wiki` until the LockBox-derived container launcher is migrated.
+> health-host, and identity overrides. The LockBox-derived `brain-wiki` launcher
+> supports Codex with private per-profile login state. The installer can either
+> enable a selected backend immediately or prepare it in a disabled state.
 
 ## Lid-closed runs (AC-gated keep-awake)
 
@@ -59,8 +59,8 @@ pmset call still needs a password. `sudo -n` is used so a missing rule fails fas
 4. Read-only agents never write their own reports; the **dispatcher** captures
    their stdout and writes the dated report. Keeps the agents read-only.
 5. **Backend (current):** one explicit provider runs an entire batch. The
-   dispatcher reads `VAULTLENS_LLM_CLI=claude|codex`; Claude is the backward-
-   compatible default and pins `sonnet`. Codex leaves its model unpinned unless
+   dispatcher reads `VAULTLENS_LLM_CLI=claude|codex`; Codex is the default and
+   leaves its model unpinned unless
    `VAULTLENS_LLM_MODEL` is set. It never falls back across providers mid-batch.
 6. **Single backend identity (current):** the ledger identity defaults to
    `<cli>-plan` and can be overridden with `VAULTLENS_LLM_IDENTITY`. A usage or
@@ -88,9 +88,9 @@ pmset call still needs a password. `sudo -n` is used so a missing rule fails fas
   coarse online gate.
 - Auth is owned by the selected CLI's logged-in session. Verify the chosen CLI
   non-interactively from a launchd-spawned login `fish` before relying on it.
-- Deferred boundary: `brain-wiki` still selects the existing Claude-oriented
-  devcontainer profiles. Do not install with `VAULTLENS_LLM_CLI=codex` until
-  the LockBox-derived container launcher supports Codex.
+- `brain-wiki` selects the same least-privilege container profiles for either
+  provider. Every Codex profile used by unattended jobs must complete its
+  one-time login before the scheduler is enabled.
 
 ### Historical Copilot account selection and failover
 
@@ -284,13 +284,13 @@ running these, but never auto-fire them.
 ## Output, notifications, failure
 
 - **Reports:** dispatcher writes `wiki/reports/scheduled-<job>-<YYYY-MM-DD>.md`
-  from captured stdout. (The vault `wiki/reports/` is gitignored personal content;
-  fine — these are local artifacts.)
+  from successful agent stdout only. Container and runtime diagnostics on stderr
+  stay out of successful reports; both streams remain available when a run fails.
+  (The vault `wiki/reports/` is gitignored personal content.)
 - **Retention:** each tick the dispatcher prunes dated `scheduled-<type>-*.md` to
-  the latest `REPORT_RETENTION` (14) per type, so daily cos-brief / weekly digests
-  do not pile up. Only `scheduled-*` files are touched — never `schedule-status.md`
-  or hand-written reports. The CoS is read-only, so this hygiene lives in the
-  dispatcher (which owns report writing), not the agent.
+  the latest `REPORT_RETENTION` (14) per type, except `cos-brief`, which retains
+  only the latest generated report. Only `scheduled-*` files are touched — never
+  `schedule-status.md` or hand-written synthesis reports.
 - **Notifications:** `osascript -e 'display notification …'` (or `terminal-notifier`
   if present) on completion of cos brief / emerge / discover, and on any job error.
 - **Logs:** `~/.brain/logs/schedule-<date>.log`; LaunchAgent `StandardOutPath` /
@@ -299,52 +299,29 @@ running these, but never auto-fire them.
   timestamp, so it retries next tick. A *succeeded* job advances it. Repeated
   failures (e.g. 3 ticks) raise an error notification rather than looping silently.
 
-## Routed work-items → per-project inboxes (CoS→AGENDA seam + inter-role handoff bus)
+## Routed work-items → per-project inboxes (inter-role handoff bus)
 
-Added 2026-06-29. Closes the loop between the read-only Chief of Staff (which *advises*)
-and the project-runner (which *acts*) **without adding a second write-capable agent** —
-preserving the orthogonal split: CoS decides what should happen *and which project owns it*,
-the dispatcher wires it, each project's runner does the doing within its own scope.
+Chief of Staff briefs are advisory only. The dispatcher does not route
+`proposal::` lines, and strips any legacy final `## Proposals` block before
+storing a brief. This prevents daily advice from becoming duplicate tracked work.
 
-- **CoS side (read-only, load-bearing invariant):** the `wiki-cos` agent ends its `brief`
-  with an optional machine-readable block — zero to five lines of
-  `proposal:: <target> | <imperative task> | <one-line why>`, where `<target>` is the
-  **exact slug of a real project**. The CoS writes nothing; it only emits text, exactly as
-  it already emits the brief. If an action belongs to no project, the CoS leaves it as advice
-  in the brief and emits no proposal line.
-- **Dispatcher side (the only writer):** after a successful `cos-brief`, `_run_steps`
-  calls `route_cos_proposals(out, …)`, which `parse_cos_proposals()`-es the block,
-  `resolve_proposal_dest()`-resolves each target to `projects/<slug>/AGENDA.md`, and appends
-  the item to *that project's* `## Inbox` via `agenda.append_inbox_items` (dedup-on-text,
-  provenance `[from:cos]`, batched per destination). A target that is not a real project resolves
-  to `None` — the proposal is **logged and left advisory** (it still appears in the brief and
-  the saved report), never force-filed. Best-effort: catches all errors so a routing problem
-  can never abort the morning tick.
-- **Action side (the existing executor):** each receiving project is a normal project, and a
-  non-empty Inbox makes it *due* (see the builder note above), so its own project-runner
-  grooms the routed proposals into Tasks and actions the clear, in-scope ones — the clarity
-  gate guarantees only unambiguous work runs unattended, and the runner is confined to that
-  project's dir, so cross-project routing is safe. Most projects ship `enabled: false`, so a
-  routed proposal simply queues in the right place until the operator enables that project.
-  There is intentionally **no catch-all "assistant" project** — un-attributable items stay
-  advisory in the brief; add a real catch-all project if you ever want them tracked.
-- **Inter-role handoff bus (generalization):** the same routing path carries **any producer
-  agent's** `handoff:: <to-project> | <ask> | <deliverable-ref>` lines, not just CoS proposals.
-  The project-runner is wired as the first producer (`route_handoffs(out, slug, …)` after a
-  successful pass); its agent def documents the `Handoffs:` output block. CoS proposals and
-  handoffs share one core (`_route_work_items`) and one per-tick **`RoutingGuard`**, so
-  anti-loop limits span everything routed in a tick (CoS proposals and project-runner
-  handoffs alike when they share a tick; a step in a separate tick gets its own guard):
-  it blocks self-handoffs, blocks direct reciprocal edges (A→B when
-  B→A was already routed this tick), and caps total routed items per dispatcher run
-  (`MAX_ROUTED_PER_TICK`). Longer cycles are bounded by the cap + `enabled:false` defaults + the
-  daily brief review; precise multi-hop detection (hop propagation) is deferred. Token-frugal by
-  construction: a handoff only *queues* into an inbox picked up by an already-scheduled run — it
-  never triggers an extra ad-hoc agent run. Items carry `[from:<source>]` provenance for audit.
+The project-runner can still emit
+`handoff:: <to-project> | <ask> | <deliverable-ref>` lines after a successful
+pass. The dispatcher routes them through `_route_work_items` and one per-tick
+`RoutingGuard`:
 
-Tested: `parse_cos_proposals` / `parse_handoffs` / `resolve_proposal_dest` / `format_work_item` / `RoutingGuard` in `test_schedule.py`;
-`append_inbox_items` / `inbox_has_groomable_content` / inbox-driven `project_is_due` in
-`test_agenda.py`.
+- self-handoffs are blocked;
+- direct reciprocal edges within one tick are blocked;
+- total routed items per tick are capped by `MAX_ROUTED_PER_TICK`;
+- frozen, unknown, and missing project targets are not routed.
+
+Items carry `[from:<source>]` provenance. A handoff only queues into an inbox
+picked up by an already-scheduled project run; it never triggers another ad-hoc
+agent run.
+
+Tested: successful-output selection, Chief of Staff proposal stripping,
+`parse_handoffs`, `resolve_proposal_dest`, `format_work_item`, and `RoutingGuard`
+in `test_schedule.py`; inbox append and due-state behavior in `test_agenda.py`.
 
 ## Open implementation questions / risks
 
@@ -366,24 +343,25 @@ Tested: `parse_cos_proposals` / `parse_handoffs` / `resolve_proposal_dest` / `fo
 
 ## Deactivation / reactivation
 
-Deactivated 2026-06-02. The plist, dispatcher, sudoers rule, and ledger are all
-left in place; only the LaunchAgent and the forced wake were turned off:
+To deactivate a deployed scheduler while leaving the plist, dispatcher,
+sudoers rule, and ledger in place, turn off only the LaunchAgent and forced
+wake:
 
 ```sh
 launchctl bootout gui/$(id -u)/com.brain.schedule   # stop the agent firing
 sudo pmset repeat cancel                             # stop the nightly 01:25 wake
 ```
 
-**To reactivate** (after verifying the selected CLI runs non-interactively from
-a launchd-spawned login `fish` — see "Backend and model"):
+To reactivate an already prepared scheduler:
 
 ```sh
-VAULTLENS_LLM_CLI=claude tools/schedule/install.sh  # re-copies plist, re-bootstraps, kickstarts one run
+tools/schedule/install.sh --enable-prepared         # loads the backend stored in the plist
 sudo pmset repeat wakeorpoweron MTWRFSU 01:25:00     # restore the overnight wake
 launchctl list | grep com.brain                      # confirm loaded
 python3 tools/schedule/dispatch.py status            # confirm ledger + backend identity health
 ```
 
-`install.sh` is idempotent (it boots out any existing agent first), so it is the
-single command to bring the scheduler back. The least-privilege lid-close sudoers
-rule, if it was installed, is untouched by deactivation and needs no action.
+To change and prepare a backend without starting it, run
+`VAULTLENS_LLM_CLI=<claude|codex> tools/schedule/install.sh --prepare-disabled`.
+The least-privilege lid-close sudoers rule, if installed, is untouched by
+deactivation and needs no action.

@@ -13,7 +13,28 @@ LABEL="com.brain.schedule"
 SRC="$HERE/$LABEL.plist"
 DEST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
-LLM_CLI="${VAULTLENS_LLM_CLI:-claude}"
+LLM_CLI="${VAULTLENS_LLM_CLI:-codex}"
+MODE="${1:---install}"
+
+case "$MODE" in
+  --install|--prepare-disabled|--enable-prepared) ;;
+  *)
+    echo "usage: $0 [--install|--prepare-disabled|--enable-prepared]" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "$MODE" == "--enable-prepared" ]]; then
+  [[ -f "$DEST" ]] || { echo "missing prepared plist: $DEST" >&2; exit 1; }
+  BACKEND="$(/usr/bin/plutil -extract EnvironmentVariables.VAULTLENS_LLM_CLI raw -o - "$DEST" 2>/dev/null || true)"
+  [[ -n "$BACKEND" ]] || { echo "prepared plist has no VAULTLENS_LLM_CLI" >&2; exit 1; }
+  echo "==> enabling prepared $LABEL (backend: $BACKEND)"
+  launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+  launchctl enable "$DOMAIN/$LABEL"
+  launchctl bootstrap "$DOMAIN" "$DEST"
+  echo "Enabled. RunAtLoad starts one gate-check now; calendar triggers handle later runs."
+  exit 0
+fi
 
 case "$LLM_CLI" in
   claude|codex) ;;
@@ -51,15 +72,20 @@ if [[ -n "${VAULTLENS_SCHEDULE_ENHANCE:-}" ]]; then
 fi
 
 echo "==> scheduled LLM backend: $LLM_CLI"
-if [[ "$LLM_CLI" == "codex" ]]; then
-  echo "warning: Codex scheduling needs the deferred container launcher support" >&2
+
+echo "==> unloading any existing $LABEL from $DOMAIN"
+launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+
+if [[ "$MODE" == "--prepare-disabled" ]]; then
+  launchctl disable "$DOMAIN/$LABEL"
+  echo "Prepared and disabled. Backend is stored as $LLM_CLI."
+  echo "Enable later with: tools/schedule/install.sh --enable-prepared"
+  exit 0
 fi
 
 echo "==> (re)bootstrapping $LABEL into $DOMAIN"
-launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
-launchctl bootstrap "$DOMAIN" "$DEST"
 launchctl enable "$DOMAIN/$LABEL"
-
+launchctl bootstrap "$DOMAIN" "$DEST"
 echo "==> kickstarting one run now"
 launchctl kickstart -k "$DOMAIN/$LABEL" || true
 
@@ -72,7 +98,9 @@ Installed. Useful commands:
 
 Backend selection is captured when this installer runs:
   VAULTLENS_LLM_CLI=claude tools/schedule/install.sh
-  VAULTLENS_LLM_CLI=codex tools/schedule/install.sh   # after container launcher support lands
+  VAULTLENS_LLM_CLI=codex tools/schedule/install.sh   # after one-time profile logins
+  VAULTLENS_LLM_CLI=codex tools/schedule/install.sh --prepare-disabled
+  tools/schedule/install.sh --enable-prepared         # uses the stored backend
 Optional overrides: VAULTLENS_LLM_MODEL, VAULTLENS_LLM_HEALTH_HOST,
 VAULTLENS_LLM_IDENTITY. Nightly wiki enhancement is paused by default; opt in
 when installing with VAULTLENS_SCHEDULE_ENHANCE=1.

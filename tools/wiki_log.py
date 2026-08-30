@@ -10,9 +10,60 @@ of existing ones (`validate-log`).
 from __future__ import annotations
 
 import datetime as dt
+import json
 import re
 
 from wiki import WIKI_DIR
+
+LOG_NOTES_DIR = WIKI_DIR / "log"
+
+
+def _render_frontmatter(frontmatter: dict[str, str | list[str]]) -> str:
+    """Render this module's small YAML subset without a third-party dependency.
+
+    JSON strings and arrays are valid YAML scalars, preserve punctuation safely,
+    and are understood by Obsidian properties and Bases.
+    """
+    return "\n".join(
+        f"{key}: {json.dumps(value, ensure_ascii=False)}"
+        for key, value in frontmatter.items()
+    )
+
+
+def _slug(text: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return slug or "entry"
+
+
+def _write_log_note(
+    date: str,
+    operation: str,
+    title: str,
+    summary: str,
+    pages: list[str],
+    sources: list[str],
+    notes: str,
+) -> None:
+    # One frontmatter-bearing file per entry, alongside the log.md ledger, so a
+    # Base can query/aggregate operations by date/operation/pages as properties
+    # (Bases matches on per-file frontmatter; a shared log.md can't be queried
+    # that way). wiki/log/ is already gitignored, same as log.md.
+    LOG_NOTES_DIR.mkdir(parents=True, exist_ok=True)
+    frontmatter = {
+        "date": date,
+        "operation": operation,
+        "title": title,
+        "pages": [page.strip().removesuffix(".md") for page in pages],
+        "sources": list(sources),
+    }
+    note_path = LOG_NOTES_DIR / f"{date}-{_slug(operation)}-{_slug(title)}.md"
+    body = f"# {title}\n\n{summary}\n"
+    if notes:
+        body += f"\nNotes: {notes}\n"
+    note_path.write_text(
+        "---\n" + _render_frontmatter(frontmatter) + "\n---\n\n" + body,
+        encoding="utf-8",
+    )
 
 
 def append_log_entry(
@@ -36,7 +87,7 @@ def append_log_entry(
     if pages:
         rendered_pages = []
         for page in pages:
-            cleaned = page.strip().replace(".md", "")
+            cleaned = page.strip().removesuffix(".md")
             rendered_pages.append(f"[[{cleaned}]]")
         rows.append("- Pages touched: " + ", ".join(rendered_pages))
     if notes:
@@ -46,6 +97,8 @@ def append_log_entry(
 
     with log_path.open("a", encoding="utf-8") as handle:
         handle.write("\n\n" + "\n".join(rows))
+
+    _write_log_note(date, operation, title, summary, pages, sources, notes)
 
     print(f"Appended log entry to {log_path}")
     return 0
