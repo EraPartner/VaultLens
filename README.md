@@ -64,6 +64,7 @@ Beyond the folder skeleton, the template ships a working agent operating model:
   due tasks inside `projects/<slug>/` (applied-not-committed, with a snapshot for undo).
 - **Scheduled agents** — a host-side catch-up dispatcher (`tools/schedule/`) runs the
   maintenance/thinking agents on a launchd tick and files dated outputs under `wiki/reports/`.
+  Broad nightly wiki enhancement is paused by default and requires explicit opt-in.
 - **Hybrid search** — qmd (BM25 + vector + LLM-rerank) is the primary engine, exposed over MCP;
   `python3 tools/wiki.py search "…"` is the always-works substring fallback.
 - **Sandboxed autonomous runs** — the existing egress-locked devcontainer remains Claude-oriented.
@@ -87,6 +88,10 @@ mkdir -p wiki/system wiki/sources wiki/entities wiki/concepts wiki/topics \
 # Open in Obsidian
 open .
 ```
+
+`raw/inbox/` is for approved ingest candidates. `raw/review-inbox/` is a consent queue for material
+that is only of interest: agents must ask before reading or processing an item. The qmd setup script
+excludes that queue from lexical, vector, and hybrid search.
 
 ## Projects Layer
 

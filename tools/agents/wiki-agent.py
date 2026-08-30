@@ -235,6 +235,28 @@ ALTERNATE_CYCLE = ["coverage", "source-gap", "random", "stub"]
 # ---------------------------------------------------------------------------
 
 
+def _queue_entries(queue_dir: Path) -> list[tuple[Path, os.stat_result]]:
+    """Return visible queue entries newest-first without racing synced storage."""
+    if not queue_dir.is_dir():
+        return []
+    entries: list[tuple[Path, os.stat_result]] = []
+    for path in queue_dir.iterdir():
+        if path.name.startswith("."):
+            continue
+        try:
+            entries.append((path, path.stat()))
+        except OSError:
+            continue
+    entries.sort(key=lambda item: item[1].st_mtime, reverse=True)
+    return entries
+
+
+def _format_queue_entry(path: Path, stat_result: os.stat_result) -> str:
+    size = stat_result.st_size
+    size_str = f"{size // 1024}KB" if size >= 1024 else f"{size}B"
+    return f"- {path.name} ({size_str})"
+
+
 def _gather_cos_context(mode: str, project_filter: str | None) -> str:
     """Gather live project state and inject it as context for the CoS agent.
 
@@ -356,23 +378,11 @@ def _gather_cos_context(mode: str, project_filter: str | None) -> str:
 
     # --- Inbox listing -------------------------------------------------------
     inbox_dir = ROOT / "raw" / "inbox"
+    inbox_entries = _queue_entries(inbox_dir)
     if inbox_dir.is_dir():
-        # Stat each file defensively: on synced storage (iCloud) a file can vanish
-        # between iterdir() and stat(), which must not crash the brief.
-        inbox_entries: list[tuple[Path, os.stat_result]] = []
-        for f in inbox_dir.iterdir():
-            if f.name.startswith("."):
-                continue
-            try:
-                inbox_entries.append((f, f.stat()))
-            except OSError:
-                continue
-        inbox_entries.sort(key=lambda fs: fs[1].st_mtime, reverse=True)
         parts.append(f"\n## Inbox: raw/inbox/ ({len(inbox_entries)} files)")
         for f, st in inbox_entries:
-            size = st.st_size
-            size_str = f"{size // 1024}KB" if size >= 1024 else f"{size}B"
-            parts.append(f"- {f.name} ({size_str})")
+            parts.append(_format_queue_entry(f, st))
 
         if mode == "inbox" and inbox_entries:
             parts.append("\n## Inbox file previews")
@@ -387,6 +397,23 @@ def _gather_cos_context(mode: str, project_filter: str | None) -> str:
                         parts.append(f"\n### {f.name} (could not read)")
     else:
         parts.append("\n## Inbox: raw/inbox/ — directory not found")
+
+    # This is a consent gate, not an ingest queue. Surface names so the operator
+    # knows a decision is waiting, but never preview or process an item by default.
+    review_dir = ROOT / "raw" / "review-inbox"
+    review_entries = _queue_entries(review_dir)
+    if review_dir.is_dir():
+        parts.append(
+            f"\n## Review inbox: raw/review-inbox/ ({len(review_entries)} files)"
+        )
+        parts.append(
+            "Consent required: list names only and ask the operator before reading, "
+            "summarizing, moving, or ingesting any item."
+        )
+        for f, st in review_entries:
+            parts.append(_format_queue_entry(f, st))
+    else:
+        parts.append("\n## Review inbox: raw/review-inbox/ — directory not found")
 
     return "\n".join(parts)
 
@@ -721,10 +748,13 @@ def invoke_agent(
         task_prompt = f"{prompt}\n\nFiles to read:\n{paths}"
     cmd = build_cli_command(cli, model, effort, system_text, task_prompt, perms)
 
-    print(f"Invoking {agent} agent with {cli}" + (f" ({model})" if model else ""))
-    print(f"Effort: {effort}")
-    print(f"Agent: {agent_file.name}")
-    print()
+    print(
+        f"Invoking {agent} agent with {cli}" + (f" ({model})" if model else ""),
+        file=sys.stderr,
+    )
+    print(f"Effort: {effort}", file=sys.stderr)
+    print(f"Agent: {agent_file.name}", file=sys.stderr)
+    print(file=sys.stderr)
 
     if debug:
         import shlex
@@ -904,7 +934,8 @@ def run_agent(args, strategy: str | None = None) -> int:
         print(
             f"[cos] Gathering live context (mode={cos_mode}"
             + (f", project={cos_project}" if cos_project else "")
-            + ")..."
+            + ")...",
+            file=sys.stderr,
         )
         cos_ctx = _gather_cos_context(cos_mode, cos_project)
         system_addon = (system_addon + "\n\n" + cos_ctx).strip()
@@ -1040,7 +1071,12 @@ def main(argv=None) -> int:
             if inbox_dir.is_dir()
             else 0
         )
-        print(f"[cos] Inbox mode: {count} files in raw/inbox/")
+        review_count = len(_queue_entries(ROOT / "raw" / "review-inbox"))
+        print(
+            f"[cos] Inbox mode: {count} ingest candidate(s), "
+            f"{review_count} review item(s) requiring consent",
+            file=sys.stderr,
+        )
 
     # --coverage is a shorthand for --strategy coverage
     if args.agent == "enhance" and args.coverage and not args.strategy:

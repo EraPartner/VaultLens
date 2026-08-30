@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -77,6 +78,29 @@ def main() -> int:
         set(wa.AGENT_FILES) == set(wa.AGENT_PERMISSIONS),
         str(set(wa.AGENT_FILES) ^ set(wa.AGENT_PERMISSIONS)),
     )
+
+    print("Chief of Staff queue context:")
+    original_root = wa.ROOT
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            wa.ROOT = Path(tmp)
+            inbox = wa.ROOT / "raw" / "inbox"
+            review = wa.ROOT / "raw" / "review-inbox"
+            inbox.mkdir(parents=True)
+            review.mkdir(parents=True)
+            (inbox / "ready.md").write_text("READY BODY", encoding="utf-8")
+            (review / "ask-first.md").write_text("PRIVATE BODY", encoding="utf-8")
+            context = wa._gather_cos_context("brief", None)
+            check(
+                "brief lists normal and review queue names",
+                "ready.md" in context and "ask-first.md" in context,
+            )
+            check(
+                "review queue is consent-gated and not previewed",
+                "Consent required" in context and "PRIVATE BODY" not in context,
+            )
+    finally:
+        wa.ROOT = original_root
 
     print("provider command construction:")
     claude_cmd = wa.build_cli_command(

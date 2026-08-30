@@ -8,8 +8,10 @@ description: Add source material to the wiki — ingest a PDF, article, paper, v
 `raw/` is immutable source-of-truth; ingest never modifies it in place.
 
 1. **Place the material.** New files land in `raw/inbox/` (or directly `raw/sources/` when final).
-   Items needing human review first go to `raw/review-inbox/`. URLs: extract clean markdown with
-   the `obsidian:defuddle` skill before placing it in `raw/inbox/`.
+   `raw/review-inbox/` is a consent queue for interesting material, not a pending-ingest queue.
+   List names only and ask the operator before reading, summarizing, moving, or ingesting any item
+   from it. URLs approved for ingest: extract clean markdown with the `obsidian:defuddle` skill
+   before placing the result in `raw/inbox/`.
 2. **PDFs:** first-class sources — the model reads them directly. For large/complex PDFs,
    pre-extract text: `python3 tools/wiki.py preprocess` (writes `raw/sources/*.pdf` →
    `raw/sources-text/*.md`).

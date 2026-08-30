@@ -39,7 +39,8 @@ template. The Chief of Staff launcher injects it automatically into its live con
 ## Directory contract
 
 - `raw/sources/` immutable source docs · `raw/sources-text/` preprocessed PDF text (`preprocess` output) ·
-  `raw/assets/` images/attachments · `raw/inbox/` new files awaiting ingest · `raw/review-inbox/` items staged for manual review before ingest
+  `raw/assets/` images/attachments · `raw/inbox/` approved files awaiting ingest ·
+  `raw/review-inbox/` consent queue (agents may list names and sizes only, then must ask before reading, summarizing, moving, or ingesting)
 - `wiki/system/` schema & operating docs · `wiki/sources/` one page per ingested source ·
   `wiki/entities/` person/org/tool/place/artifact · `wiki/concepts/` concept/method pages ·
   `wiki/topics/` thematic syntheses · `wiki/syntheses/` cross-topic analyses ·
@@ -186,11 +187,13 @@ A host-side **catch-up dispatcher** (`tools/schedule/`) runs the maintenance/thi
 nightly batch (AC-only, defer-until-online) on the configured CLI. Claude remains the default for
 backward compatibility; `VAULTLENS_LLM_CLI=codex` uses the Codex-capable local tooling path.
 Read-only agents stay read-only:
-outputs are filed as dated reports under `wiki/reports/`. The one **writer** in the nightly batch is
-`project-runner` (runs before `enhance`): for each opted-in project it executes due `AGENDA.md` tasks
-inside `projects/<slug>/` (applied-not-committed; the dispatcher clones the project first, so the
-roll-up's restore command is the undo since `projects/` is gitignored). Design rationale and
-operational detail: `tools/schedule/SPEC.md`; install with `tools/schedule/install.sh`.
+outputs are filed as dated reports under `wiki/reports/`. The scheduled writer enabled by default is
+`project-runner`: for each opted-in project it executes due `AGENDA.md` tasks inside
+`projects/<slug>/` (applied-not-committed; the dispatcher clones the project first, so the roll-up's
+restore command is the undo since `projects/` is gitignored). Broad nightly wiki enhancement is
+paused unless the operator installs with `VAULTLENS_SCHEDULE_ENHANCE=1`; manual enhancement remains
+available. Design rationale and operational detail: `tools/schedule/SPEC.md`; install with
+`tools/schedule/install.sh`.
 
 ## Canonical operations
 

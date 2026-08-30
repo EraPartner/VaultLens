@@ -35,6 +35,11 @@ qmd collection add wiki/ --name wiki 2>/dev/null || echo "Wiki collection may al
 echo "Adding raw sources collection..."
 qmd collection add raw/ --name raw 2>/dev/null || echo "Raw collection may already exist"
 
+# raw/review-inbox is a human consent queue. Keep it out of lexical, vector,
+# and hybrid search so an agent cannot discover its contents before approval.
+echo "Applying review-inbox consent boundary..."
+python3 "$SCRIPT_DIR/configure-qmd.py"
+
 # Build the BM25 index
 echo ""
 echo "Building search index..."
@@ -60,6 +65,7 @@ echo ""
 echo "Maintenance:"
 echo "  qmd update                   # Re-index after adding content"
 echo "  qmd embed                    # Refresh embeddings"
+echo "  qmd cleanup                  # Remove inactive documents and orphan chunks"
 echo "  qmd status                   # Check index health"
 echo ""
 echo "For MCP integration, add to your AI config:"

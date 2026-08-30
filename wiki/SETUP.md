@@ -3,8 +3,8 @@ title: Setup Guide
 type: page
 status: active
 created: 2026-04-11
-updated: 2026-04-11
-summary: How to set up and configure your LLM Wiki Second Brain.
+updated: 2026-08-30
+summary: How to set up the public wiki template, projects, search index, and scheduled agents safely.
 ---
 
 # Setup Guide
@@ -21,7 +21,7 @@ Based on [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf5
 
 ```bash
 # Initialize directories for your data
-mkdir -p raw/sources raw/assets raw/inbox
+mkdir -p raw/sources raw/assets raw/inbox raw/review-inbox
 
 # Verify tools work
 python3 tools/wiki.py lint
@@ -61,7 +61,57 @@ First run downloads a ~1.3GB embedding model. After setup:
 qmd search "query"    # Keyword
 qmd vsearch "query"   # Semantic
 qmd query "query"     # Hybrid (best)
+qmd status            # Collection and index health
 ```
+
+The setup script configures the `raw` collection to ignore `review-inbox/**` before indexing.
+
+## Source Approval Queues
+
+- `raw/inbox/` contains approved material awaiting ingest.
+- `raw/review-inbox/` contains material that is merely of interest. Agents may list file names and
+  sizes so you know a decision is waiting, but they must ask before reading, summarizing, moving, or
+  ingesting an item. Scheduled ingest never consumes this directory.
+
+## Project Workspaces
+
+Projects consume the wiki without writing back to `wiki/` or `raw/`. Use the generated workboard
+and deadlines pages for daily navigation:
+
+- [Project Workboard](../projects/TODO.md)
+- [Upcoming Deadlines](../projects/deadlines.md)
+
+```bash
+python3 tools/wiki.py project list
+python3 tools/wiki.py project show <slug>
+python3 tools/wiki.py project agenda status
+python3 tools/wiki.py project agenda enable <slug>   # explicit nightly-runner opt-in
+```
+
+Every `AGENDA.md` is disabled by default. Only enable a project when its task scope and acceptance
+criteria are ready for unattended edits. The runner writes only inside that project and creates a
+pre-run snapshot for recovery.
+
+## Scheduled Agents
+
+The optional host catch-up dispatcher runs maintenance, read-only thinking agents, opted-in project
+work, and the morning Chief of Staff brief. Broad nightly wiki enhancement is paused by default.
+
+```bash
+tools/schedule/install.sh
+python3 tools/schedule/dispatch.py status
+```
+
+Opt in to nightly wiki enhancement only when you want broad autonomous wiki writes:
+
+```bash
+VAULTLENS_SCHEDULE_ENHANCE=1 tools/schedule/install.sh
+```
+
+The status view shows each job's last run, next due time, result, and cooldown. Generated outputs
+are available under [Scheduled-Agent Reports](reports/). Detailed design and recovery commands are
+in the [scheduler specification](../tools/schedule/SPEC.md). Scheduled ingest checks
+`raw/inbox/` and `raw/sources/`; it never checks `raw/review-inbox/`.
 
 ## Directory Structure
 
@@ -71,7 +121,9 @@ Second Brain/
 ├── raw/                   # YOUR source material (immutable)
 │   ├── sources/
 │   ├── assets/
-│   └── inbox/
+│   ├── inbox/             # approved pending ingestion
+│   └── review-inbox/      # explicit approval required
+├── projects/              # project workspaces, TODOs, deadlines, and agendas
 ├── wiki/                  # LLM-maintained knowledge base
 │   ├── sources/
 │   ├── entities/
@@ -90,6 +142,7 @@ Second Brain/
     ├── wiki.py
     ├── wiki_extra.py
     ├── agents/
+    ├── schedule/
     └── scripts/
 ```
 
