@@ -53,6 +53,20 @@ BACKENDS = {
     "claude": {"model": "sonnet", "health_host": "api.anthropic.com"},
     "codex": {"model": "", "health_host": "chatgpt.com"},
 }
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean flag (0/1, false/true, no/yes, off/on)")
+
+
 CLI = os.environ.get("VAULTLENS_LLM_CLI", "claude").strip().lower()
 if CLI not in BACKENDS:
     choices = ", ".join(sorted(BACKENDS))
@@ -62,6 +76,7 @@ BACKEND_HEALTH_HOST = os.environ.get(
     "VAULTLENS_LLM_HEALTH_HOST", BACKENDS[CLI]["health_host"]
 ).strip()
 BACKEND_IDENTITY = os.environ.get("VAULTLENS_LLM_IDENTITY", f"{CLI}-plan").strip()
+SCHEDULE_ENHANCE = _env_flag("VAULTLENS_SCHEDULE_ENHANCE", default=False)
 if not BACKEND_HEALTH_HOST:
     raise ValueError("VAULTLENS_LLM_HEALTH_HOST must not be empty")
 if not BACKEND_IDENTITY:
@@ -115,6 +130,7 @@ def _tool(name: str, *fallbacks: str) -> str:
 
 PYTHON = sys.executable or _tool("python3", "/opt/homebrew/bin/python3")
 FISH = _tool("fish", "/opt/homebrew/bin/fish")
+QMD = _tool("qmd", str(HOME / ".bun" / "bin" / "qmd"))
 CONTAINER = _tool("container", "/usr/local/bin/container")
 NC = _tool("nc", "/opt/homebrew/bin/nc", "/usr/bin/nc")
 PMSET = _tool("pmset", "/usr/bin/pmset")
@@ -257,7 +273,7 @@ def step_due(step: "Step", ledger: dict, now: datetime) -> bool:
 @dataclass
 class Step:
     name: str
-    kind: str  # "host" (wiki.py, offline) | "llm" (brain-wiki backend)
+    kind: str  # "host" (wiki.py) | "qmd" (host index) | "llm" (brain-wiki backend)
     period: str  # "daily" | "weekly"
     window: tuple[int, int]
     gates: list[str]  # subset of {"ac","online","container","icloud","battery"}
@@ -455,7 +471,7 @@ def _project_runner_header(slugs: list[str], now: datetime) -> str:
 def build_steps() -> list[Step]:
     """Ordered step list. The nightly batch is just the nightly-window steps run
     in this order; cos-brief is the lone morning step."""
-    return [
+    steps = [
         # 1. maintenance: offline, host-native, runs even on a battery night.
         Step(
             "lint", "host", "daily", NIGHTLY_WINDOW, [], lambda: [["lint"]], timeout=600
@@ -469,7 +485,34 @@ def build_steps() -> list[Step]:
             lambda: [["index", "--rebuild"]],
             timeout=600,
         ),
-        # 2. ingest new raw material (only if any), before enhance.
+        Step(
+            "qmd-update",
+            "qmd",
+            "daily",
+            NIGHTLY_WINDOW,
+            [],
+            lambda: [["update"]],
+            timeout=600,
+        ),
+        Step(
+            "qmd-cleanup",
+            "qmd",
+            "weekly",
+            NIGHTLY_WINDOW,
+            ["ac"],
+            lambda: [["cleanup"]],
+            timeout=900,
+        ),
+        Step(
+            "qmd-embed",
+            "qmd",
+            "daily",
+            NIGHTLY_WINDOW,
+            ["ac"],
+            lambda: [["embed", "--timeout", "24"]],
+            timeout=1500,
+        ),
+        # 2. ingest new raw material (only if any), before optional enhancement.
         Step(
             "ingest",
             "llm",
@@ -532,19 +575,26 @@ def build_steps() -> list[Step]:
             timeout=2400,
             report=True,
         ),
-        # 5. enhance LAST, capped at 10 iterations/night (the biggest budget
-        #    consumer); soaks up whatever time/quota is left after the digests.
-        Step(
-            "enhance",
-            "llm",
-            "daily",
-            NIGHTLY_WINDOW,
-            ["ac", "online", "container", "icloud"],
-            lambda: [["enhance", "--iterations", "10", "--strategy", "alternate"]],
-            effort="low",
-            timeout=7200,
-        ),
-        # morning: daily chief-of-staff brief (battery OK, no AC gate).
+    ]
+    # 5. Optional wiki enhancement. This is a broad writer and the biggest
+    #    budget consumer, so unattended runs require explicit operator opt-in.
+    if SCHEDULE_ENHANCE:
+        steps.append(
+            Step(
+                "enhance",
+                "llm",
+                "daily",
+                NIGHTLY_WINDOW,
+                ["ac", "online", "container", "icloud"],
+                lambda: [
+                    ["enhance", "--iterations", "10", "--strategy", "alternate"]
+                ],
+                effort="low",
+                timeout=7200,
+            )
+        )
+    # Morning: daily chief-of-staff brief (battery OK, no AC gate).
+    steps.append(
         Step(
             "cos-brief",
             "llm",
@@ -555,8 +605,9 @@ def build_steps() -> list[Step]:
             effort="low",
             timeout=1800,
             report=True,
-        ),
-    ]
+        )
+    )
+    return steps
 
 
 # --------------------------------------------------------------------------- #
@@ -678,6 +729,17 @@ def run_host(args: list[str], timeout: int) -> tuple[int, str]:
         return 124, "timeout"
 
 
+def run_qmd(args: list[str], timeout: int) -> tuple[int, str]:
+    """Run qmd on the host so it can use Metal and its persistent host index."""
+    try:
+        p = subprocess.run(
+            [QMD, *args], capture_output=True, text=True, timeout=timeout, cwd=str(ROOT)
+        )
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+    except subprocess.TimeoutExpired:
+        return 124, "timeout"
+
+
 def exec_brain_wiki(
     args: list[str], acct: str, effort: str, timeout: int
 ) -> tuple[int, str]:
@@ -699,9 +761,44 @@ def exec_brain_wiki(
             timeout=timeout,
             env=env,
         )
-        return p.returncode, (p.stdout or "") + (p.stderr or "")
+        return p.returncode, _agent_output(p.returncode, p.stdout, p.stderr)
     except subprocess.TimeoutExpired:
         return 124, "timeout"
+
+
+def _agent_output(returncode: int, stdout: str | None, stderr: str | None) -> str:
+    """Keep successful reports clean while retaining failure diagnostics.
+
+    brain-wiki writes the agent's final answer to stdout and container/runtime
+    traces to stderr. A successful run therefore reports stdout only. On failure,
+    both streams remain available to failure classification and the operator.
+    """
+    if returncode == 0:
+        return stdout or ""
+    return (stdout or "") + (stderr or "")
+
+
+_REPORT_DIAGNOSTIC_PATTERNS = (
+    re.compile(r"^\[post-start\] (?:Ready\.|Refreshing qmd index snapshot).*$"),
+    re.compile(r"^\[cos\] (?:Gathering live context|Inbox mode:).*$"),
+    re.compile(r"^Invoking [a-z-]+ agent with (?:claude|codex)(?: \(.+\))?$"),
+    re.compile(r"^Effort: (?:low|medium|high|xhigh)$"),
+    re.compile(r"^Agent: wiki-[a-z-]+\.md$"),
+)
+
+
+def clean_scheduled_report(text: str) -> str:
+    """Remove known launcher progress lines from a successful report body.
+
+    Security warnings and arbitrary tool output are retained. Producers now send
+    progress to stderr; this fallback also handles older containers and wrappers.
+    """
+    lines = [
+        line
+        for line in text.splitlines()
+        if not any(pattern.match(line) for pattern in _REPORT_DIAGNOSTIC_PATTERNS)
+    ]
+    return "\n".join(lines).strip()
 
 
 def build_brain_wiki_args(args: list[str], effort: str) -> list[str]:
@@ -1288,8 +1385,9 @@ def _run_steps(
         ran_slugs: list[str] = []  # project-runner: projects actually executed
         for args in invocations:
             log(f"run {step.name}: {' '.join(args)}")
-            if step.kind == "host":
-                rc, out = run_host(args, step.timeout)
+            if step.kind in {"host", "qmd"}:
+                runner = run_host if step.kind == "host" else run_qmd
+                rc, out = runner(args, step.timeout)
                 if rc == 124:
                     all_ok = False
                     outcome = "timeout"
@@ -1318,7 +1416,7 @@ def _run_steps(
                         agenda.record_run(slug, _parse_executed(out), iso(now))
                         ran_slugs.append(slug)
                     if step.report:
-                        report_chunks.append(out)
+                        report_chunks.append(clean_scheduled_report(out))
                     # Routing seam: the CoS brief's proposals, and any project-runner
                     # pass's `handoff::` lines, are filed into the named projects'
                     # inboxes by the dispatcher (the agents are read-only / dir-scoped;
@@ -1500,6 +1598,15 @@ def cmd_status() -> int:
     steps = build_steps()
     print(f"Brain schedule status  ({now:%Y-%m-%d %H:%M %Z})")
     print(f"ledger: {STATE_FILE}\n")
+    print(
+        "nightly wiki enhancement: "
+        + (
+            "enabled"
+            if SCHEDULE_ENHANCE
+            else "paused (opt in with VAULTLENS_SCHEDULE_ENHANCE=1)"
+        )
+        + "\n"
+    )
     print(f"{'step':12} {'period':7} {'due':4} {'last run':16} result")
     print("-" * 60)
     for step in steps:

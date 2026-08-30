@@ -70,7 +70,9 @@ pmset call still needs a password. `sudo -n` is used so a missing rule fails fas
 7. **Nothing LLM runs per tick.** All LLM work happens in **one nightly batch**;
    the only daily-morning LLM job is the cos brief. The ~30-min tick is purely the
    catch-up gate-checker, never an LLM trigger.
-8. **`enhance` is capped at `--iterations 10` per night** (not `--forever`).
+8. **Nightly `enhance` is paused by default.** Set
+   `VAULTLENS_SCHEDULE_ENHANCE=1` when installing to opt in. When enabled, it is
+   capped at `--iterations 10` per night (not `--forever`).
 
 ## Backend and model
 
@@ -78,8 +80,9 @@ pmset call still needs a password. `sudo -n` is used so a missing rule fails fas
   [--model <model>] --effort <low|medium|high>"`.
 - Configuration: `VAULTLENS_LLM_CLI`, with optional
   `VAULTLENS_LLM_MODEL`, `VAULTLENS_LLM_HEALTH_HOST`, and
-  `VAULTLENS_LLM_IDENTITY`. `install.sh` copies these into the installed
-  LaunchAgent. Re-run it when changing providers.
+  `VAULTLENS_LLM_IDENTITY`. Broad nightly wiki enhancement has a separate
+  explicit opt-in, `VAULTLENS_SCHEDULE_ENHANCE=1`. `install.sh` copies these
+  into the installed LaunchAgent. Re-run it when changing providers or this opt-in.
 - Defaults: Claude uses `sonnet` and `api.anthropic.com`; Codex leaves model
   selection to its workspace configuration and uses `chatgpt.com` for the
   coarse online gate.
@@ -132,8 +135,8 @@ There is one configured backend identity. The dispatcher never switches provider
 or credentials automatically.
 
 Budget-shaping (build into the job table):
-- `enhance` capped at **`--iterations 10` per night** (the biggest consumer; no
-  `--forever`).
+- `enhance` is **off by default**. When explicitly enabled, it is capped at
+  **`--iterations 10` per night** (the biggest consumer; no `--forever`).
 - Heavy digests (contradict/emerge/discover) stay **weekly** (Sunday batch).
 - Each agentic run is many model turns, so cos brief uses `--effort low`.
 
@@ -142,17 +145,19 @@ Budget-shaping (build into the job table):
 The dispatcher ticks every ~30 min only to check gates + the ledger. Actual work:
 
 **Nightly batch — once per night, ~01:30 (pmset wake 01:25), AC-gated, in order:**
-1. `lint` + `index` (offline, host-native pre-check; clean state for the LLM steps)
+1. `lint` + `index` + `qmd update` (offline, host-native pre-check), weekly
+   `qmd cleanup` for inactive documents and orphan chunks, then a bounded
+   `qmd embed` pass on AC power. Cleanup and embedding run only on AC. Embedding
+   saves progress and resumes on later nights until the semantic index is current.
 2. `ingest` **if** `raw/inbox` / `raw/sources` has unprocessed files
    (checked here, **once a night**, not per tick)
-3. **Sundays only:** `contradict` + `emerge` + `discover` (read-only digests run
-   before enhance, so they analyse the pre-enhance wiki and claim the budget first)
+3. **Sundays only:** `contradict` + `emerge` + `discover` (read-only digests)
 4. `project-runner` — one invocation per non-frozen, opted-in (`enabled: true`) project with a
-   due `AGENDA.md` task (capped `MAX_PROJECTS_PER_NIGHT`). Runs before enhance so the
-   user-facing work claims budget first; writes `projects/<slug>/` (not wiki/),
+   due `AGENDA.md` task (capped `MAX_PROJECTS_PER_NIGHT`). User-facing work claims
+   budget before any optional enhancement; writes `projects/<slug>/` (not wiki/),
    applied-not-committed, with a pre-run snapshot per project for undo
-5. `enhance --iterations 10` (capped) — **last**, the biggest budget consumer;
-   soaks up whatever time/quota remains after the digests
+5. **Only when `VAULTLENS_SCHEDULE_ENHANCE=1`:** `enhance --iterations 10`
+   (capped), last in the nightly batch and before the morning-only brief
 
 All LLM steps use the configured `--cli` and optional `--model`, and defer if a
 usage limit is hit or if offline. The whole batch runs at most once per night; if a night is missed
@@ -168,9 +173,9 @@ Weekly digests land Sunday night so Monday's brief can reference them.
 - Built-in: `launchctl list | grep com.brain` (loaded? last exit), `launchctl print
   gui/$(id -u)/com.brain.schedule` (full state), `pmset -g sched` (scheduled wakes),
   `log show --last 2h --predicate 'process == "dispatch.py"'`.
-- Domain-specific (preferred): **`brain-wiki schedule status`** = `dispatch.py
-  --status` -> table of job | last run | next due | last result | cooldown/quota.
-  Build this alongside the dispatcher. Raw ledger: `jq . ~/.brain/schedule-state.json`.
+- Domain-specific (preferred): **`python3 tools/schedule/dispatch.py status`** ->
+  table of job | last run | next due | last result | cooldown/quota. Raw ledger:
+  `jq . ~/.brain/schedule-state.json`.
 - Logs: `~/.brain/logs/`.
 - Optional GUI: LaunchControl (third-party) browses all LaunchAgents/Daemons.
 
@@ -213,7 +218,10 @@ next eligible tick. Sleep / offline / closed-lid become non-events.
 | Job | Command | Cadence / window | Gates | Output |
 |---|---|---|---|---|
 | lint | `wiki.py lint` | **nightly** (batch step 1) | offline-ok, host-native | notify only on errors |
-| index | `wiki.py index --check` (→ `--rebuild` if stale) | **nightly** (batch step 1) | offline-ok, host-native | log |
+| index | `wiki.py index` (→ `--rebuild` if stale) | **nightly** (batch step 1) | offline-ok, host-native | log |
+| qmd update | `qmd update` | **nightly** (batch step 1) | offline-ok, host-native | lexical search index |
+| qmd cleanup | `qmd cleanup` | **weekly**, before embedding | offline-ok, host-native, **AC** | remove inactive documents/orphan chunks; compact derived index |
+| qmd embed | `qmd embed --timeout 24` | **nightly**, bounded/resumable | offline-ok, host-native, **AC** | semantic vectors |
 | links | `wiki.py links --fix` | weekly *(manual — not in the dispatcher; writes wiki/, needs the author profile)* | offline-ok, host-native | log |
 | coverage snapshot | `wiki.py coverage --json` | weekly *(manual — not in the dispatcher)* | offline-ok, host-native | feeds enhance |
 | **cos brief** | `brain-wiki cos --mode brief` | daily, 07:00 window | online, container, icloud, battery-ok | `wiki/reports/` + macOS notify |
@@ -221,12 +229,12 @@ next eligible tick. Sleep / offline / closed-lid become non-events.
 | emerge | `brain-wiki emerge` | weekly | online, container, icloud | `wiki/reports/` + notify |
 | discover | `brain-wiki discover` | weekly | online, container, icloud | `wiki/reports/` + notify |
 | verify *(optional)* | `brain-wiki verify --source <changed>` | weekly, on recently-changed source pages | online, container, icloud | report |
-| ingest | `brain-wiki ingest --source <new>` | **nightly**, before enhance, only if `raw/inbox` / `raw/sources` has unprocessed files | online, container, icloud, **AC** | wiki + promote inbox PDF |
-| project-runner | `brain-wiki project-run --project <slug>` (one per due, opted-in project) | **nightly**, after the digests, before enhance | online, container, icloud, **AC** | writes `projects/<slug>/` (applied-not-committed; pre-run snapshot) + roll-up `wiki/reports/` |
-| enhance | `brain-wiki enhance --iterations 10` | **nightly**, last step, after the weekly digests (capped, not `--forever`) | online, container, icloud, **AC** | writes wiki directly |
+| ingest | `brain-wiki ingest --source <new>` | **nightly**, only if `raw/inbox` / `raw/sources` has unprocessed files | online, container, icloud, **AC** | wiki + promote inbox PDF |
+| project-runner | `brain-wiki project-run --project <slug>` (one per due, opted-in project) | **nightly**, after the digests | online, container, icloud, **AC** | writes `projects/<slug>/` (applied-not-committed; pre-run snapshot) + roll-up `wiki/reports/` |
+| enhance *(opt-in)* | `brain-wiki enhance --iterations 10` | nightly only when `VAULTLENS_SCHEDULE_ENHANCE=1`, last nightly step (capped, not `--forever`) | online, container, icloud, **AC** | writes wiki directly |
 
-**Scheduled (in `build_steps`), in run order:** lint, index, ingest, contradict,
-emerge, discover, project-runner, enhance, cos brief. **Documented but not yet wired into the
+**Scheduled (in `build_steps`), in run order:** lint, index, qmd update, qmd cleanup, qmd embed,
+ingest, contradict, emerge, discover, project-runner, optional enhance, cos brief. **Documented but not yet wired into the
 dispatcher (run manually):** links, coverage snapshot, (optional) verify.
 
 The `project-runner` builder (`_project_runner_targets`) is pure-python: it reads each

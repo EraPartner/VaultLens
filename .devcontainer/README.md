@@ -13,7 +13,9 @@ in-container squid SNI allowlist.
 > seed personal embeddings the way the Brain sandbox does). So developing the tooling
 > here can't leak your personal Brain content. This is a **distinct** sandbox from
 > the Brain sandbox (`brain-*`, which operates a live vault); Brain's containers are
-> untouched.
+> untouched. The private Brain launcher mounts its host qmd cache as a read-only
+> seed; `post-start.sh` copies a consistent index snapshot into each Brain capability
+> profile's writable cache. The generic VaultLens launcher has no seed and remains empty.
 
 ## What's inside
 

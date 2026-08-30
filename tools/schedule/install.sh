@@ -45,6 +45,10 @@ if [[ -n "${VAULTLENS_LLM_IDENTITY:-}" ]]; then
   /usr/bin/plutil -insert EnvironmentVariables.VAULTLENS_LLM_IDENTITY \
     -string "$VAULTLENS_LLM_IDENTITY" "$DEST"
 fi
+if [[ -n "${VAULTLENS_SCHEDULE_ENHANCE:-}" ]]; then
+  /usr/bin/plutil -insert EnvironmentVariables.VAULTLENS_SCHEDULE_ENHANCE \
+    -string "$VAULTLENS_SCHEDULE_ENHANCE" "$DEST"
+fi
 
 echo "==> scheduled LLM backend: $LLM_CLI"
 if [[ "$LLM_CLI" == "codex" ]]; then
@@ -70,7 +74,8 @@ Backend selection is captured when this installer runs:
   VAULTLENS_LLM_CLI=claude tools/schedule/install.sh
   VAULTLENS_LLM_CLI=codex tools/schedule/install.sh   # after container launcher support lands
 Optional overrides: VAULTLENS_LLM_MODEL, VAULTLENS_LLM_HEALTH_HOST,
-VAULTLENS_LLM_IDENTITY.
+VAULTLENS_LLM_IDENTITY. Nightly wiki enhancement is paused by default; opt in
+when installing with VAULTLENS_SCHEDULE_ENHANCE=1.
 
 To enable the overnight forced wake (AC-gated in the dispatcher), run with sudo:
   sudo pmset repeat wakeorpoweron MTWRFSU 01:25:00

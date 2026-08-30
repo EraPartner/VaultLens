@@ -10,6 +10,7 @@ system. Run with:
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 from datetime import datetime, timedelta
@@ -46,6 +47,39 @@ def fresh_ledger() -> dict:
 
 def main() -> int:
     now = datetime(2026, 6, 7, 3, 30).astimezone()  # a Sunday at 03:30
+
+    print("command interface:")
+    original_cmd_status = dispatch.cmd_status
+    try:
+        dispatch.cmd_status = lambda: 37
+        check(
+            "status is a subcommand",
+            dispatch.main(["status"]) == 37,
+        )
+    finally:
+        dispatch.cmd_status = original_cmd_status
+
+    print("environment flags:")
+    flag_name = "VAULTLENS_TEST_BOOLEAN_FLAG"
+    original_flag = os.environ.get(flag_name)
+    try:
+        os.environ[flag_name] = "yes"
+        check("true environment flag", dispatch._env_flag(flag_name) is True)
+        os.environ[flag_name] = "off"
+        check("false environment flag", dispatch._env_flag(flag_name) is False)
+        os.environ[flag_name] = "invalid"
+        try:
+            dispatch._env_flag(flag_name)
+        except ValueError:
+            invalid_rejected = True
+        else:
+            invalid_rejected = False
+        check("invalid environment flag rejected", invalid_rejected)
+    finally:
+        if original_flag is None:
+            os.environ.pop(flag_name, None)
+        else:
+            os.environ[flag_name] = original_flag
 
     print("classify_failure:")
     check("rc 0 -> ok", dispatch.classify_failure(0, "all good") == "ok")
@@ -236,6 +270,86 @@ def main() -> int:
         check("Codex default model unpinned", "--model" not in codex_parts)
     finally:
         dispatch.CLI, dispatch.MODEL = original_cli, original_model
+
+    print("agent report stream selection:")
+    check(
+        "successful agent report keeps stdout only",
+        dispatch._agent_output(0, "final answer\n", "runtime trace\n")
+        == "final answer\n",
+    )
+    check(
+        "failed agent result keeps diagnostics",
+        dispatch._agent_output(1, "partial\n", "failure detail\n")
+        == "partial\nfailure detail\n",
+    )
+    noisy_report = (
+        "[post-start] Ready. Work on the tooling: qmd.\n"
+        "[cos] Gathering live context (mode=brief)...\n"
+        "## Chief of Staff Brief — 2026-06-07\n\n"
+        "Keep this [post-start] text because it is not a diagnostic line.\n"
+        "Agent: Alice\n"
+        "Invoking cos agent with codex\n"
+        "Effort: low\n"
+        "Agent: wiki-cos.md\n"
+    )
+    cleaned_report = dispatch.clean_scheduled_report(noisy_report)
+    check(
+        "scheduled report strips known launcher diagnostics",
+        cleaned_report.startswith("## Chief of Staff Brief")
+        and "Invoking cos agent" not in cleaned_report
+        and "Effort: low" not in cleaned_report,
+    )
+    check(
+        "scheduled report keeps non-diagnostic content",
+        "Keep this [post-start] text" in cleaned_report
+        and "Agent: Alice" in cleaned_report,
+    )
+
+    print("scheduled qmd maintenance:")
+    original_schedule_enhance = dispatch.SCHEDULE_ENHANCE
+    try:
+        dispatch.SCHEDULE_ENHANCE = False
+        paused_names = [step.name for step in dispatch.build_steps()]
+        check("nightly enhancement is paused by default", "enhance" not in paused_names)
+        dispatch.SCHEDULE_ENHANCE = True
+        opted_in_names = [step.name for step in dispatch.build_steps()]
+        check(
+            "nightly enhancement requires opt-in and runs before brief",
+            "enhance" in opted_in_names
+            and opted_in_names.index("enhance") < opted_in_names.index("cos-brief"),
+        )
+    finally:
+        dispatch.SCHEDULE_ENHANCE = original_schedule_enhance
+
+    scheduled = dispatch.build_steps()
+    scheduled_names = [step.name for step in scheduled]
+    qmd_update = next(step for step in scheduled if step.name == "qmd-update")
+    qmd_cleanup = next(step for step in scheduled if step.name == "qmd-cleanup")
+    qmd_embed = next(step for step in scheduled if step.name == "qmd-embed")
+    check(
+        "qmd update follows markdown index",
+        scheduled_names.index("qmd-update") == scheduled_names.index("index") + 1,
+    )
+    check("qmd update uses host qmd runner", qmd_update.kind == "qmd")
+    check(
+        "qmd cleanup is weekly, host-side, and AC gated",
+        qmd_cleanup.kind == "qmd"
+        and qmd_cleanup.period == "weekly"
+        and qmd_cleanup.gates == ["ac"]
+        and qmd_cleanup.builder() == [["cleanup"]],
+    )
+    check(
+        "qmd cleanup runs between update and embed",
+        scheduled_names.index("qmd-update")
+        < scheduled_names.index("qmd-cleanup")
+        < scheduled_names.index("qmd-embed"),
+    )
+    check("qmd embed is AC gated", qmd_embed.gates == ["ac"])
+    check(
+        "qmd embed is bounded and resumable",
+        qmd_embed.builder() == [["embed", "--timeout", "24"]]
+        and qmd_embed.timeout == 1500,
+    )
 
     print("_record failure semantics:")
     led7 = fresh_ledger()

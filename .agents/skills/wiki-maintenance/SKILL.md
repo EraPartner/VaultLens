@@ -41,6 +41,8 @@ python3 tools/wiki.py append-log ...             # append-only; headings "## [YY
 # Search index (qmd)
 qmd update                                       # re-index after content changes
 qmd embed                                        # refresh vector embeddings (host: Metal)
+qmd cleanup --dry-run                            # preview inactive docs/orphan cleanup
+qmd cleanup                                      # drop orphans, compact FTS, vacuum derived index
 qmd status                                       # index health
 ```
 

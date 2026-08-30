@@ -49,6 +49,48 @@ if [[ -d "$MEM_SEED" ]]; then
   rsync -a --delete --ignore-errors "$MEM_SEED/" "$MEM_DIR/" 2>/dev/null || true
 fi
 
+# --- qmd: refresh the writable per-profile cache from the host snapshot --------
+# Brain mounts the host qmd cache read-only at ~/.qmd-seed and gives each
+# capability profile a writable ~/.cache volume. qmd query writes its LLM cache,
+# so using the seed in place fails with SQLITE_READONLY. post-start is replayed
+# for every launcher invocation, including an already-running container; the boot
+# marker prevents replacing the database under a live qmd process.
+QMD_SEED=/home/dev/.qmd-seed
+QMD_CACHE=/home/dev/.cache/qmd
+QMD_BOOT_ID="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)"
+QMD_BOOT_MARKER="$QMD_CACHE/.seed-boot-id"
+QMD_LAST_BOOT="$(cat "$QMD_BOOT_MARKER" 2>/dev/null || true)"
+if [[ -f "$QMD_SEED/index.sqlite" && "$QMD_BOOT_ID" != "$QMD_LAST_BOOT" ]]; then
+  mkdir -p "$QMD_CACHE"
+  if [[ -s "$QMD_SEED/index.sqlite-wal" ]]; then
+    echo "[post-start] WARN: host qmd write-ahead log is active; keeping the prior container snapshot." >&2
+  else
+    QMD_SEED_META="$(stat -c '%s:%Y' "$QMD_SEED/index.sqlite" 2>/dev/null || true)"
+    QMD_CACHE_META="$(stat -c '%s:%Y' "$QMD_CACHE/index.sqlite" 2>/dev/null || true)"
+    QMD_REFRESH_OK=1
+    if [[ ! -f "$QMD_CACHE/index.sqlite" || "$QMD_SEED_META" != "$QMD_CACHE_META" ]]; then
+      QMD_REFRESH="$QMD_CACHE/index.sqlite.refresh.$$"
+      if rsync -a --ignore-errors "$QMD_SEED/index.sqlite" "$QMD_REFRESH" 2>/dev/null; then
+        chmod u+rw "$QMD_REFRESH" 2>/dev/null || true
+        mv -f "$QMD_REFRESH" "$QMD_CACHE/index.sqlite"
+        rm -f "$QMD_CACHE/index.sqlite-shm" "$QMD_CACHE/index.sqlite-wal"
+      else
+        rm -f "$QMD_REFRESH"
+        QMD_REFRESH_OK=0
+        echo "[post-start] WARN: qmd index refresh failed; keeping the prior container snapshot." >&2
+      fi
+    fi
+    if [[ "$QMD_REFRESH_OK" -eq 1 && -d "$QMD_SEED/models" ]]; then
+      mkdir -p "$QMD_CACHE/models"
+      rsync -a --ignore-errors "$QMD_SEED/models/" "$QMD_CACHE/models/" 2>/dev/null || \
+        echo "[post-start] WARN: qmd model refresh had errors." >&2
+    fi
+    if [[ "$QMD_REFRESH_OK" -eq 1 && -n "$QMD_BOOT_ID" ]]; then
+      printf '%s\n' "$QMD_BOOT_ID" > "$QMD_BOOT_MARKER"
+    fi
+  fi
+fi
+
 # Refuse to proceed if the egress firewall didn't verify. The entrypoint writes
 # this sentinel only after confirming default-deny is active; its absence means
 # the lock may be open. Egress is fail-closed regardless (init-firewall.sh sets
@@ -63,4 +105,4 @@ EOF
   exit 1
 fi
 
-echo "[post-start] Ready. Work on the tooling: python3 tools/wiki.py … · ruff check tools/ · qmd."
+echo "[post-start] Ready. Work on the tooling: python3 tools/wiki.py … · ruff check tools/ · qmd." >&2
