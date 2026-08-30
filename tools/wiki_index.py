@@ -7,7 +7,7 @@ markdown `_index.md` files (one per category + a root summary) that are readable
 anywhere — terminal, GitHub, any markdown viewer — and rebuilt on demand.
 
 The indexes are *derived*: they are regenerated from page frontmatter, never
-hand-edited. `index --check` (default) reports when an index is stale (its row
+hand-edited. `index` (the default check mode) reports when an index is stale (its row
 count no longer matches the files on disk); `index --rebuild` regenerates them.
 """
 
