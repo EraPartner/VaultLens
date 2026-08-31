@@ -64,7 +64,8 @@ Beyond the folder skeleton, the template ships a working agent operating model:
   due tasks inside `projects/<slug>/` (applied-not-committed, with a snapshot for undo).
 - **Scheduled agents** — a host-side catch-up dispatcher (`tools/schedule/`) runs the
   maintenance/thinking agents on a launchd tick and files dated outputs under `wiki/reports/`.
-  Broad nightly wiki enhancement is paused by default and requires explicit opt-in.
+  Broad nightly wiki enhancement is paused by default and requires explicit opt-in; when enabled,
+  it runs five alternating iterations across the whole wiki.
 - **Hybrid search** — qmd (BM25 + vector + LLM-rerank) is the primary engine, exposed over MCP;
   `python3 tools/wiki.py search "…"` is the always-works substring fallback.
 - **Sandboxed autonomous runs** — the existing egress-locked devcontainer remains Claude-oriented.

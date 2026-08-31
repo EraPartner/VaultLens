@@ -77,6 +77,7 @@ BACKEND_HEALTH_HOST = os.environ.get(
 ).strip()
 BACKEND_IDENTITY = os.environ.get("VAULTLENS_LLM_IDENTITY", f"{CLI}-plan").strip()
 SCHEDULE_ENHANCE = _env_flag("VAULTLENS_SCHEDULE_ENHANCE", default=False)
+ENHANCE_ITERATIONS = 5
 if not BACKEND_HEALTH_HOST:
     raise ValueError("VAULTLENS_LLM_HEALTH_HOST must not be empty")
 if not BACKEND_IDENTITY:
@@ -506,15 +507,6 @@ def build_steps() -> list[Step]:
             lambda: [["cleanup"]],
             timeout=900,
         ),
-        Step(
-            "qmd-embed",
-            "qmd",
-            "daily",
-            NIGHTLY_WINDOW,
-            ["ac"],
-            lambda: [["embed", "--timeout", "24"]],
-            timeout=1500,
-        ),
         # 2. ingest new raw material (only if any), before optional enhancement.
         Step(
             "ingest",
@@ -590,7 +582,13 @@ def build_steps() -> list[Step]:
                 NIGHTLY_WINDOW,
                 ["ac", "online", "container", "icloud"],
                 lambda: [
-                    ["enhance", "--iterations", "10", "--strategy", "alternate"]
+                    [
+                        "enhance",
+                        "--iterations",
+                        str(ENHANCE_ITERATIONS),
+                        "--strategy",
+                        "alternate",
+                    ]
                 ],
                 effort="low",
                 timeout=7200,
@@ -1437,14 +1435,15 @@ def _run_steps(
                         agenda.record_run(slug, _parse_executed(out), iso(now))
                         ran_slugs.append(slug)
                     if step.report:
-                        report_chunks.append(clean_scheduled_report(out))
-                    # Routing seam: the CoS brief's proposals, and any project-runner
-                    # pass's `handoff::` lines, are filed into the named projects'
-                    # inboxes by the dispatcher (the agents are read-only / dir-scoped;
-                    # the dispatcher does the guarded cross-project write).
-                    if step.name == "cos-brief":
-                        route_cos_proposals(out, now, log, routing_guard)
-                    elif slug:
+                        clean_out = clean_scheduled_report(out)
+                        report_chunks.append(
+                            strip_cos_proposals(clean_out)
+                            if step.name == "cos-brief"
+                            else clean_out
+                        )
+                    # Project-runner `handoff::` lines remain the guarded
+                    # cross-project bus. Chief of Staff advice stays advisory.
+                    if slug:
                         route_handoffs(out, slug, now, log, routing_guard)
                 elif status == "deferred":
                     all_ok = False

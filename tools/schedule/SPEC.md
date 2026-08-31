@@ -72,7 +72,7 @@ pmset call still needs a password. `sudo -n` is used so a missing rule fails fas
    catch-up gate-checker, never an LLM trigger.
 8. **Nightly `enhance` is paused by default.** Set
    `VAULTLENS_SCHEDULE_ENHANCE=1` when installing to opt in. When enabled, it is
-   capped at `--iterations 10` per night (not `--forever`).
+   capped at `--iterations 5` across the whole wiki per night (not `--forever`).
 
 ## Backend and model
 
@@ -136,7 +136,7 @@ or credentials automatically.
 
 Budget-shaping (build into the job table):
 - `enhance` is **off by default**. When explicitly enabled, it is capped at
-  **`--iterations 10` per night** (the biggest consumer; no `--forever`).
+  **`--iterations 5` across the whole wiki per night** (the biggest consumer; no `--forever`).
 - Heavy digests (contradict/emerge/discover) stay **weekly** (Sunday batch).
 - Each agentic run is many model turns, so cos brief uses `--effort low`.
 
@@ -145,10 +145,9 @@ Budget-shaping (build into the job table):
 The dispatcher ticks every ~30 min only to check gates + the ledger. Actual work:
 
 **Nightly batch — once per night, ~01:30 (pmset wake 01:25), AC-gated, in order:**
-1. `lint` + `index` + `qmd update` (offline, host-native pre-check), weekly
-   `qmd cleanup` for inactive documents and orphan chunks, then a bounded
-   `qmd embed` pass on AC power. Cleanup and embedding run only on AC. Embedding
-   saves progress and resumes on later nights until the semantic index is current.
+1. `lint` + `index` + `qmd update` (offline, host-native pre-check), then weekly
+   `qmd cleanup` for inactive documents and orphan chunks on AC power. Semantic
+   embedding is manual because it is too resource-intensive for the scheduled host.
 2. `ingest` **if** `raw/inbox` / `raw/sources` has unprocessed files
    (checked here, **once a night**, not per tick)
 3. **Sundays only:** `contradict` + `emerge` + `discover` (read-only digests)
@@ -156,8 +155,9 @@ The dispatcher ticks every ~30 min only to check gates + the ledger. Actual work
    due `AGENDA.md` task (capped `MAX_PROJECTS_PER_NIGHT`). User-facing work claims
    budget before any optional enhancement; writes `projects/<slug>/` (not wiki/),
    applied-not-committed, with a pre-run snapshot per project for undo
-5. **Only when `VAULTLENS_SCHEDULE_ENHANCE=1`:** `enhance --iterations 10`
-   (capped), last in the nightly batch and before the morning-only brief
+5. **Only when `VAULTLENS_SCHEDULE_ENHANCE=1`:** `enhance --iterations 5
+   --strategy alternate` across the whole wiki, last in the nightly batch and before the
+   morning-only brief
 
 All LLM steps use the configured `--cli` and optional `--model`, and defer if a
 usage limit is hit or if offline. The whole batch runs at most once per night; if a night is missed
@@ -220,8 +220,8 @@ next eligible tick. Sleep / offline / closed-lid become non-events.
 | lint | `wiki.py lint` | **nightly** (batch step 1) | offline-ok, host-native | notify only on errors |
 | index | `wiki.py index` (→ `--rebuild` if stale) | **nightly** (batch step 1) | offline-ok, host-native | log |
 | qmd update | `qmd update` | **nightly** (batch step 1) | offline-ok, host-native | lexical search index |
-| qmd cleanup | `qmd cleanup` | **weekly**, before embedding | offline-ok, host-native, **AC** | remove inactive documents/orphan chunks; compact derived index |
-| qmd embed | `qmd embed --timeout 24` | **nightly**, bounded/resumable | offline-ok, host-native, **AC** | semantic vectors |
+| qmd cleanup | `qmd cleanup` | **weekly**, after update | offline-ok, host-native, **AC** | remove inactive documents/orphan chunks; compact derived index |
+| qmd embed | `qmd embed` | **manual only** | run explicitly on a suitable machine | semantic vectors |
 | links | `wiki.py links --fix` | weekly *(manual — not in the dispatcher; writes wiki/, needs the author profile)* | offline-ok, host-native | log |
 | coverage snapshot | `wiki.py coverage --json` | weekly *(manual — not in the dispatcher)* | offline-ok, host-native | feeds enhance |
 | **cos brief** | `brain-wiki cos --mode brief` | daily, 07:00 window | online, container, icloud, battery-ok | `wiki/reports/` + macOS notify |
@@ -231,10 +231,10 @@ next eligible tick. Sleep / offline / closed-lid become non-events.
 | verify *(optional)* | `brain-wiki verify --source <changed>` | weekly, on recently-changed source pages | online, container, icloud | report |
 | ingest | `brain-wiki ingest --source <new>` | **nightly**, only if `raw/inbox` / `raw/sources` has unprocessed files | online, container, icloud, **AC** | wiki + promote inbox PDF |
 | project-runner | `brain-wiki project-run --project <slug>` (one per due, opted-in project) | **nightly**, after the digests | online, container, icloud, **AC** | writes `projects/<slug>/` (applied-not-committed; pre-run snapshot) + roll-up `wiki/reports/` |
-| enhance *(opt-in)* | `brain-wiki enhance --iterations 10` | nightly only when `VAULTLENS_SCHEDULE_ENHANCE=1`, last nightly step (capped, not `--forever`) | online, container, icloud, **AC** | writes wiki directly |
+| enhance *(opt-in)* | `brain-wiki enhance --iterations 5 --strategy alternate` | nightly only when `VAULTLENS_SCHEDULE_ENHANCE=1`, last nightly step; cycles global sparse-coverage, source-gap, random-page, and stub strategies | online, container, icloud, **AC** | writes wiki directly |
 
-**Scheduled (in `build_steps`), in run order:** lint, index, qmd update, qmd cleanup, qmd embed,
-ingest, contradict, emerge, discover, project-runner, optional enhance, cos brief. **Documented but not yet wired into the
+**Scheduled (in `build_steps`), in run order:** lint, index, qmd update, qmd cleanup, ingest,
+contradict, emerge, discover, project-runner, optional enhance, cos brief. **Documented but not yet wired into the
 dispatcher (run manually):** links, coverage snapshot, (optional) verify.
 
 The `project-runner` builder (`_project_runner_targets`) is pure-python: it reads each

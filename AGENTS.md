@@ -192,7 +192,8 @@ outputs are filed as dated reports under `wiki/reports/`. The scheduled writer e
 `project-runner`: for each opted-in project it executes due `AGENDA.md` tasks inside
 `projects/<slug>/` (applied-not-committed; the dispatcher clones the project first, so the roll-up's
 restore command is the undo since `projects/` is gitignored). Broad nightly wiki enhancement is
-paused unless the operator installs with `VAULTLENS_SCHEDULE_ENHANCE=1`; manual enhancement remains
+paused unless the operator installs with `VAULTLENS_SCHEDULE_ENHANCE=1`; when enabled, it runs five
+alternating enhancement iterations across the whole wiki each night. Manual enhancement remains
 available. Design rationale and operational detail: `tools/schedule/SPEC.md`; install with
 `tools/schedule/install.sh`.
 

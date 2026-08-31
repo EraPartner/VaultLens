@@ -47,7 +47,8 @@ project runner to apply due, fully specified tasks inside that project only. Rev
 morning report and acknowledge accumulated edits as described in the project runbook.
 
 Broad nightly wiki enhancement is paused by default. Manual enhancement remains available; opt in
-to scheduled runs only with `VAULTLENS_SCHEDULE_ENHANCE=1` during scheduler installation.
+to five alternating iterations across the whole wiki with `VAULTLENS_SCHEDULE_ENHANCE=1` during
+scheduler installation.
 
 `raw/review-inbox/` is separate from `raw/inbox/`. It is a human consent queue. Scheduled ingest
 does not process it, and agents should expose only file names until you approve a specific item.

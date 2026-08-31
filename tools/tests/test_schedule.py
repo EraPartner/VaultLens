@@ -312,11 +312,18 @@ def main() -> int:
         paused_names = [step.name for step in dispatch.build_steps()]
         check("nightly enhancement is paused by default", "enhance" not in paused_names)
         dispatch.SCHEDULE_ENHANCE = True
-        opted_in_names = [step.name for step in dispatch.build_steps()]
+        opted_in_steps = dispatch.build_steps()
+        opted_in_names = [step.name for step in opted_in_steps]
+        enhance = next(step for step in opted_in_steps if step.name == "enhance")
         check(
             "nightly enhancement requires opt-in and runs before brief",
             "enhance" in opted_in_names
             and opted_in_names.index("enhance") < opted_in_names.index("cos-brief"),
+        )
+        check(
+            "nightly enhancement runs five global alternating iterations",
+            enhance.builder()
+            == [["enhance", "--iterations", "5", "--strategy", "alternate"]],
         )
     finally:
         dispatch.SCHEDULE_ENHANCE = original_schedule_enhance
@@ -325,7 +332,6 @@ def main() -> int:
     scheduled_names = [step.name for step in scheduled]
     qmd_update = next(step for step in scheduled if step.name == "qmd-update")
     qmd_cleanup = next(step for step in scheduled if step.name == "qmd-cleanup")
-    qmd_embed = next(step for step in scheduled if step.name == "qmd-embed")
     check(
         "qmd update follows markdown index",
         scheduled_names.index("qmd-update") == scheduled_names.index("index") + 1,
@@ -339,16 +345,12 @@ def main() -> int:
         and qmd_cleanup.builder() == [["cleanup"]],
     )
     check(
-        "qmd cleanup runs between update and embed",
-        scheduled_names.index("qmd-update")
-        < scheduled_names.index("qmd-cleanup")
-        < scheduled_names.index("qmd-embed"),
+        "qmd cleanup follows update",
+        scheduled_names.index("qmd-update") < scheduled_names.index("qmd-cleanup"),
     )
-    check("qmd embed is AC gated", qmd_embed.gates == ["ac"])
     check(
-        "qmd embed is bounded and resumable",
-        qmd_embed.builder() == [["embed", "--timeout", "24"]]
-        and qmd_embed.timeout == 1500,
+        "qmd embedding remains manual",
+        "qmd-embed" not in scheduled_names,
     )
 
     print("_record failure semantics:")

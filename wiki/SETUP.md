@@ -62,10 +62,15 @@ First run downloads a ~1.3GB embedding model. After setup:
 qmd search "query"    # Keyword
 qmd vsearch "query"   # Semantic
 qmd query "query"     # Hybrid (best)
-qmd status            # Collection and index health
+qmd status             # Collection and index health
 ```
 
 The setup script configures the `raw` collection to ignore `review-inbox/**` before indexing.
+
+The Brain container receives the host qmd index as a read-only seed. Once per container boot it
+copies a changed, consistent snapshot into that capability profile's writable cache. If the host
+seed has an active SQLite write-ahead log, the refresh is skipped and the previous good container
+snapshot is kept. Replayed launch commands do not replace a cache under a live qmd process.
 
 ## Source Approval Queues
 
@@ -97,13 +102,14 @@ pre-run snapshot for recovery.
 
 The optional host catch-up dispatcher runs maintenance, read-only thinking agents, opted-in project
 work, and the morning Chief of Staff brief. Broad nightly wiki enhancement is paused by default.
+Install or refresh the dispatcher only from the host:
 
 ```bash
 tools/schedule/install.sh
 python3 tools/schedule/dispatch.py status
 ```
 
-Opt in to nightly wiki enhancement only when you want broad autonomous wiki writes:
+Opt in to five nightly enhancement iterations across the whole wiki:
 
 ```bash
 VAULTLENS_SCHEDULE_ENHANCE=1 tools/schedule/install.sh
