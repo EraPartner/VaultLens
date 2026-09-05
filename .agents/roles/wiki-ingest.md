@@ -19,6 +19,15 @@ Process raw source material and create/update wiki pages following the LLM Wiki 
 
 Read-only helper set plus file-management (`touch`/`mkdir`/`mv`/`cp`/`sed`/`awk`) within your writable scope (`wiki/`) — never `curl`, `git`, or delete. Enforcement mechanics: see AGENTS.md § Tool permissions.
 
+## Search capabilities
+
+Apply the repository `AGENTS.md` Search rules to every search example below. Use
+`qmd query`, `qmd vsearch`, or semantic MCP tools only when embeddings and their
+required models are ready in the current environment. In the devcontainer or a
+keyword-only setup, lead with `qmd search "<keywords>"`; if qmd is unavailable, use
+`python3 tools/wiki.py search "<query>"`. Do not run `qmd embed` or download models
+as a search fallback; request environment preparation when semantic search is needed.
+
 ## Scope
 
 **Owns**: First-pass extraction from a source the wiki has never seen before. Creates the `wiki/sources/src-*.md` page and the initial concept/entity/topic pages spawned from the source.

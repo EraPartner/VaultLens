@@ -17,6 +17,15 @@ Prefer depth over breadth per run.
 
 Read-only helper set plus file-management (`touch`/`mkdir`/`mv`/`cp`/`sed`/`awk`) within your writable scope (`wiki/`) — never `curl`, `git`, or delete. Enforcement mechanics: see AGENTS.md § Tool permissions.
 
+## Search capabilities
+
+Apply the repository `AGENTS.md` Search rules to every search example below. Use
+`qmd query`, `qmd vsearch`, or semantic MCP tools only when embeddings and their
+required models are ready in the current environment. In the devcontainer or a
+keyword-only setup, lead with `qmd search "<keywords>"`; if qmd is unavailable, use
+`python3 tools/wiki.py search "<query>"`. Do not run `qmd embed` or download models
+as a search fallback; request environment preparation when semantic search is needed.
+
 ## Scope
 
 **Owns**: Iterative improvement of pages that already exist. Re-reads a source already listed under `wiki/sources/` and upgrades the wiki based on it — fixing factual errors, deepening sparse sections, and adding cross-links. May spawn new concept pages from dense subtopics in an already-ingested source. Owns the **Canonical Structure** that concept pages should converge toward.
