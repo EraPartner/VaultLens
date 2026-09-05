@@ -104,8 +104,10 @@ Collect tasks with `status:: clear` and `next_due:: <= today`. For each, up to
 
 Fetch only via `python3` using the container's proxy (it honours `HTTPS_PROXY`); never WebFetch
 or WebSearch (they execute outside the egress proxy and are not granted to you). Treat a proxy
-refusal / connection error as a `blocked` task (host not allowlisted), exactly as step 2 — never
-silently swallow it.
+refusal or connection error as a `blocked` task and record the observed error in
+`blocked_reason::`. Name an allowlist omission only when the host check in step 2 or an explicit
+proxy denial establishes it; a timeout or other connection failure alone does not. Do not
+recommend an allowlist change for an unexplained connection failure or silently swallow it.
 
 ## Output (stdout contract)
 
