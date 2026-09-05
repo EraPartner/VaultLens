@@ -220,7 +220,7 @@ next eligible tick. Sleep / offline / closed-lid become non-events.
 |---|---|---|---|
 | 1 | LaunchAgent plist | `~/Library/LaunchAgents/com.brain.schedule.plist` | **User agent, not a daemon** — only the GUI session has Keychain, iCloud, and the apple/container runtime. **No `StartInterval` polling** (work runs at most once/day). `RunAtLoad` + `StartCalendarInterval` anchors spanning the windows (nightly 01:30/04, morning 07:05, catch-up 09/10). launchd reruns a missed anchor on the next wake; the spread anchors give same-day retry if a gate was temporarily down. |
 | 2 | Dispatcher | `tools/schedule/dispatch.py` | stdlib only (matches the rest of `tools/`). Reads job table, checks gates, runs due jobs, writes ledger, captures + files output. |
-| 3 | Ledger + lock | `~/.brain/schedule-state.json` | per-job last-run timestamps + a `flock` so ticks never overlap and never collide with the enhance loop. Outside the iCloud vault to avoid sync conflict copies. |
+| 3 | Ledger + lock | `~/.brain/schedule-state.json` | per-job last-run timestamps + a `flock` so dispatcher ticks never overlap. Outside the iCloud vault to avoid sync conflict copies. |
 | 4 | Job table | inline in `dispatch.py` (or sibling `jobs.json`) | declarative: command, cadence, window, gates, invocation path. |
 | 5 | pmset wake | one-time `sudo pmset repeat wakeorpoweron MTWRFSU 01:25:00` | wakes the Mac before the overnight heavy window; AC gate in the dispatcher decides whether to actually run. |
 
@@ -295,7 +295,7 @@ running these, but never auto-fire them.
 | battery-ok | battery ≥ ~20% | defer heavy; allow light (cos brief, lint). |
 | idle | `ioreg`/`HIDIdleTime` over threshold | enhance only; pause if the user is active. |
 | not-already-done | ledger: `now ≥ last_run + period` | skip if recently run. |
-| no-overlap | `flock` on the ledger | at most one dispatcher run; one enhance instance. |
+| no-overlap | `flock` on the ledger | At most one dispatcher run. Manual `brain-wiki enhance` processes do not acquire this host lock and can overlap scheduled enhancement; do not run them during the nightly window. |
 
 ### Behavior in the three named scenarios
 

@@ -508,7 +508,8 @@ def _project_runner_header(slugs: list[str], now: datetime) -> str:
     ]
     for slug in slugs:
         snap = SNAPSHOT_DIR / f"{now:%Y-%m-%d}" / slug
-        lines.append(f"- `{slug}`: `cp -c -R {snap} {ROOT / 'projects' / slug}`")
+        destination = ROOT / "projects" / slug
+        lines.append(f"- `{slug}`: `cp -c -R {_q(str(snap))} {_q(str(destination))}`")
     lines.append("")
     lines.append(
         "Once reviewed, resume a project's nightly runs with "
@@ -1564,6 +1565,7 @@ def _run_steps(
         if not invocations:
             log(f"{step.name}: nothing to do; marking done")
             _record(ledger, step.name, now, "noop")
+            save_ledger(ledger)
             continue
         if dry_run:
             log(f"WOULD RUN {step.name} ({len(invocations)} invocation(s))")
@@ -1657,6 +1659,7 @@ def _run_steps(
                     f"{step.name}: failed {FAIL_STREAK_ALERT} runs in a row "
                     f"({outcome}); see wiki/reports/schedule-status.md",
                 )
+        save_ledger(ledger)
 
 
 def _running_brain_containers(log) -> set[str]:

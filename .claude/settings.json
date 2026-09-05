@@ -3,7 +3,6 @@
     "allow": [
       "Read",
       "Bash(ls *)",
-      "Bash(find *)",
       "Bash(grep *)",
       "Bash(cat *)",
       "Bash(head *)",
@@ -35,5 +34,7 @@
       "Bash(qmd collection show*)"
     ]
   },
-  "enabledMcpjsonServers": ["qmd"]
+  "enabledMcpjsonServers": [
+    "qmd"
+  ]
 }

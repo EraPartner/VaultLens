@@ -54,13 +54,41 @@ def main() -> int:
     bash_rules = [t for t in sh if t.startswith("Bash(")]
     check("shell agent gets Bash rules", len(bash_rules) > 0)
     check(
-        "Bash rules use the space prefix-form, not colon (B1 verified)",
-        all(t.endswith(" *)") for t in bash_rules)
+        "Bash rules use valid exact or space-prefix forms, not colon",
+        all(t.endswith(")") for t in bash_rules)
         and not any(":*" in t for t in bash_rules),
     )
     check(
         "read-only shell agent cannot Edit/Write",
         not any(t in sh for t in ("Edit", "Write")),
+    )
+    check(
+        "read-only shell agent has no arbitrary Python rule",
+        "Bash(python3 *)" not in bash_rules,
+    )
+    check(
+        "read-only shell agent has no find or compound-set rule",
+        "Bash(find *)" not in bash_rules and "Bash(set *)" not in bash_rules,
+    )
+    check(
+        "read-only shell agent scopes Python to non-mutating wiki commands",
+        "Bash(python3 tools/wiki.py *)" not in bash_rules
+        and "Bash(python3 tools/wiki.py search *)" in bash_rules
+        and "Bash(python3 tools/wiki.py inventory list *)" in bash_rules,
+    )
+    check(
+        "read-only shell agent has no mutating wiki command rules",
+        not any(
+            fragment in rule
+            for rule in bash_rules
+            for fragment in (
+                "append-log",
+                "archive page",
+                "inventory new",
+                "links --fix",
+                "project new",
+            )
+        ),
     )
 
     wr = wa._build_allowed_tools({"shell": True, "write": True})
@@ -72,6 +100,10 @@ def main() -> int:
     check(
         "write agent gets more Bash rules than a read-only one",
         len([t for t in wr if t.startswith("Bash(")]) > len(bash_rules),
+    )
+    check(
+        "write agent retains the full wiki CLI",
+        "Bash(python3 tools/wiki.py *)" in wr,
     )
 
     print("config integrity:")
@@ -163,7 +195,9 @@ def main() -> int:
             parsed_agents.append(tomllib.loads(path.read_text(encoding="utf-8")))
         except tomllib.TOMLDecodeError as error:
             parse_errors.append(f"{path.name}: {error}")
-    check("all Codex manifests parse as TOML", not parse_errors, "; ".join(parse_errors))
+    check(
+        "all Codex manifests parse as TOML", not parse_errors, "; ".join(parse_errors)
+    )
     check(
         "Codex manifests contain required identity and instructions",
         all(
@@ -193,8 +227,7 @@ def main() -> int:
 
     print("project provider parity:")
     projects = sorted(
-        project_md.parent
-        for project_md in (wa.ROOT / "projects").glob("*/project.md")
+        project_md.parent for project_md in (wa.ROOT / "projects").glob("*/project.md")
     )
     expected_claude_adapter = (
         "@AGENTS.md\n"
@@ -254,10 +287,17 @@ def main() -> int:
         for name in sorted(claude_servers):
             claude_server = claude_servers[name]
             codex_server = codex_servers[name]
-            if not isinstance(claude_server, dict) or not isinstance(codex_server, dict):
-                mcp_errors.append(f"{project.name}/{name}: server config must be an object")
+            if not isinstance(claude_server, dict) or not isinstance(
+                codex_server, dict
+            ):
+                mcp_errors.append(
+                    f"{project.name}/{name}: server config must be an object"
+                )
                 continue
-            claude_launch = (claude_server.get("command"), claude_server.get("args", []))
+            claude_launch = (
+                claude_server.get("command"),
+                claude_server.get("args", []),
+            )
             codex_launch = (codex_server.get("command"), codex_server.get("args", []))
             if claude_launch != codex_launch:
                 mcp_errors.append(f"{project.name}/{name}: launch command differs")

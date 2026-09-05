@@ -267,6 +267,77 @@ class ContextTests(unittest.TestCase):
 
 
 class TimeoutTests(unittest.TestCase):
+    def test_direct_agent_invocation_is_bounded(self):
+        agent = load_agent()
+        expired = subprocess.TimeoutExpired(["claude"], 7)
+        with patch.object(agent.subprocess, "run", side_effect=expired) as run:
+            rc = agent.invoke_agent(
+                "quality", "claude", "", "low", "TASK", "", [], timeout=7
+            )
+        self.assertEqual(rc, 124)
+        self.assertEqual(run.call_args.kwargs["timeout"], 7)
+
+    def test_completed_step_is_persisted_before_later_crash(self):
+        now = dt.datetime(2026, 9, 5, 2, tzinfo=dt.timezone.utc)
+        ledger = {"jobs": {}, "accounts": {}}
+        steps = [
+            dispatch.Step(
+                name,
+                "host",
+                "daily",
+                (0, 23),
+                [],
+                lambda command=command: [command],
+            )
+            for name, command in (("first", ["first"]), ("later", ["later"]))
+        ]
+
+        class Gates:
+            def check(self, gates):
+                return True, ""
+
+        def runner(command, timeout):
+            if command == ["later"]:
+                raise RuntimeError("fixture crash")
+            return 0, "ok"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            state_dir = Path(temporary)
+            state_file = state_dir / "ledger.json"
+            with (
+                patch.object(dispatch, "STATE_DIR", state_dir),
+                patch.object(dispatch, "STATE_FILE", state_file),
+                patch.object(dispatch, "run_host", side_effect=runner),
+                self.assertRaisesRegex(RuntimeError, "fixture crash"),
+            ):
+                dispatch._run_steps(steps, ledger, Gates(), now, False, lambda _: None)
+            with (
+                patch.object(dispatch, "STATE_DIR", state_dir),
+                patch.object(dispatch, "STATE_FILE", state_file),
+            ):
+                persisted = dispatch.load_ledger()
+        self.assertEqual(persisted["jobs"]["first"]["last_result"], "ok")
+        self.assertIn("last_ok", persisted["jobs"]["first"])
+        self.assertNotIn("later", persisted["jobs"])
+
+    def test_restore_header_shell_quotes_paths(self):
+        now = dt.datetime(2026, 9, 5, 2, tzinfo=dt.timezone.utc)
+        with tempfile.TemporaryDirectory(prefix="vault with spaces ") as temporary:
+            root = Path(temporary) / "Brain Vault"
+            snapshots = Path(temporary) / "state snapshots"
+            with (
+                patch.object(dispatch, "ROOT", root),
+                patch.object(dispatch, "SNAPSHOT_DIR", snapshots),
+            ):
+                header = dispatch._project_runner_header(["my project"], now)
+                expected_source = dispatch._q(
+                    str(snapshots / "2026-09-05" / "my project")
+                )
+                expected_destination = dispatch._q(
+                    str(root / "projects" / "my project")
+                )
+        self.assertIn(f"cp -c -R {expected_source} {expected_destination}", header)
+
     def test_signal_terminated_wrapper_keeps_recovery_block(self):
         with tempfile.TemporaryDirectory() as temporary:
             rc, output = dispatch._run_agent_process(

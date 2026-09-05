@@ -142,14 +142,13 @@ AGENT_PERMISSIONS: dict[str, dict] = {
     "discover": {"shell": True, "write": False, "writable_dirs": []},
 }
 
-# Shell commands granted to any agent with shell access. Strictly read-only;
-# helper utilities for navigation, text inspection, search, and wiki tooling.
-# `set` stays so multi-line scripts prefixed with `set -euo pipefail` match
-# the allowlist on their first command identifier.
+# Shell command prefixes granted to agents with shell access. This is a
+# best-effort usability allowlist, not the security boundary: shell syntax and
+# command options can still have side effects. The container mount profile is
+# the enforced read/write boundary. Keep each rule as narrow as practical for
+# host-override and profile-misassignment cases.
 READ_ONLY_SHELL_COMMANDS = (
-    "set",
     "ls",
-    "find",
     "grep",
     "cat",
     "head",
@@ -160,9 +159,32 @@ READ_ONLY_SHELL_COMMANDS = (
     "cut",
     "tr",
     "date",
-    "python3",
     "qmd",
 )
+READ_ONLY_SHELL_RULES = (
+    "python3 tools/wiki.py lint",
+    "python3 tools/wiki.py lint --strict",
+    "python3 tools/wiki.py lint --json",
+    "python3 tools/wiki.py lint --strict --json",
+    "python3 tools/wiki.py search *",
+    "python3 tools/wiki.py coverage *",
+    "python3 tools/wiki.py tags *",
+    "python3 tools/wiki.py next-id",
+    "python3 tools/wiki.py stats",
+    "python3 tools/wiki.py sample *",
+    "python3 tools/wiki.py validate-log",
+    "python3 tools/wiki.py archive list *",
+    "python3 tools/wiki.py inventory list *",
+    "python3 tools/wiki.py inventory show *",
+    "python3 tools/wiki.py project list *",
+    "python3 tools/wiki.py project show *",
+    "python3 tools/wiki.py project agenda status *",
+    "python3 tools/wiki.py project agenda due *",
+    "python3 tools/wiki.py project agenda clarifications *",
+    "python3 tools/wiki.py project agenda lint *",
+    "python3 tools/wiki.py project agenda new-id *",
+)
+WRITE_SHELL_RULES = ("python3 tools/wiki.py *",)
 
 # Shell commands granted only to write-capable agents. Filesystem mutators
 # (mkdir/touch/mv/cp) and text editors used in scripted edits (sed/awk in-place).
@@ -191,7 +213,8 @@ STRATEGY_HINTS = {
     ),
     "random": (
         "Selection strategy: use **Strategy B — Random page** from "
-        "your wiki-enhancer instructions. Pick a random concept page; first glance "
+        "your wiki-enhancer instructions. Run `python3 tools/wiki.py sample concept` "
+        "to pick a random concept page; first glance "
         "at `tail -20 wiki/log.md` to avoid repeating recent work."
     ),
     "stub": (
@@ -203,7 +226,7 @@ STRATEGY_HINTS = {
         "from your wiki-enhancer instructions. This is SOURCE-FIRST: do NOT start by "
         "picking a shallow concept page. Instead: (1) pick a source document "
         "from wiki/sources/ — either random "
-        "(`python3 -c \"import random, glob; print(random.choice(glob.glob('wiki/sources/src-*.md')))\"`) "
+        "(`python3 tools/wiki.py sample source`) "
         "or a reasoned choice (least-recently-enhanced per `tail -40 wiki/log.md`, "
         "or one whose Coverage Notes admit untouched chapters); "
         "(2) read its raw text at raw/sources-text/<stem>.md and enumerate "
@@ -585,6 +608,12 @@ Examples:
         action="store_true",
         help="Print the full command without executing",
     )
+    parser.add_argument(
+        "--timeout",
+        type=_positive_int,
+        default=3600,
+        help="Maximum seconds for one direct model CLI invocation (default: 3600)",
+    )
 
     # CoS-specific args
     parser.add_argument(
@@ -602,6 +631,13 @@ Examples:
     )
 
     return parser
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return parsed
 
 
 def get_default_model(cli: str) -> str:
@@ -728,8 +764,10 @@ def _build_allowed_tools(perms: dict) -> list[str]:
     tools = ["Read", "Grep", "Glob"]
     if perms["shell"]:
         tools.extend(f"Bash({c} *)" for c in READ_ONLY_SHELL_COMMANDS)
+        tools.extend(f"Bash({rule})" for rule in READ_ONLY_SHELL_RULES)
         if perms["write"]:
             tools.extend(f"Bash({c} *)" for c in WRITE_SHELL_COMMANDS)
+            tools.extend(f"Bash({rule})" for rule in WRITE_SHELL_RULES)
     if perms["write"]:
         tools.extend(["Edit", "Write"])
     return tools
@@ -745,6 +783,7 @@ def invoke_agent(
     extra_args: list,
     debug: bool = False,
     live_context: str = "",
+    timeout: int = 3600,
 ) -> int:
     """Invoke the AI agent."""
     agent_file = AGENTS_DIR / AGENT_FILES[agent]
@@ -788,7 +827,10 @@ def invoke_agent(
         return 0
 
     try:
-        result = subprocess.run(cmd)
+        result = subprocess.run(cmd, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        print(f"Error: {cli} timed out after {timeout} seconds")
+        return 124
     except OSError as exc:
         # e.g. the CLI binary was removed after validate_cli() passed (TOCTOU),
         # or exec failed. Return a non-zero rc so the --forever loop's error
@@ -975,6 +1017,7 @@ def run_agent(args, strategy: str | None = None) -> int:
         extra_args,
         debug=args.debug,
         live_context=cos_ctx,
+        timeout=args.timeout,
     )
 
     if args.agent == "ingest" and rc == 0 and args.source:
