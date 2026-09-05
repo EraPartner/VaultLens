@@ -25,9 +25,12 @@ lives in the maintainer's head, so review catches issues automatically (see `AGE
 ## Tests & validation
 - [ ] `ruff check tools/` clean (config `tools/ruff.toml`, pinned `ruff==0.15.17` in CI).
 - [ ] `python3 -m compileall -q tools` passes (syntax gate).
-- [ ] Tooling tests pass — run each `python3 tools/tests/test_*.py`
-      (CI runs all five; the git hooks run `test_wiki.py` + `test_schedule.py`).
-- [ ] CI (the `CI` workflow, required check `CI Complete`: secrets-scan + lint + test) expected green;
+- [ ] Tooling tests pass — run each `python3 tools/tests/test_*.py` with Python 3.12 as in CI
+      (CI discovers every suite; the git hooks run `test_wiki.py` + `test_schedule.py`).
+- [ ] Cloud shell syntax and `.codex/cloud/tests/*.test.sh` pass; the CI test job runs both.
+- [ ] Context baseline matches (`python3 tools/context_evaluation.py --check`); no model-quality
+      claim is inferred from fixture character counts.
+- [ ] CI (the `CI` workflow, required check `CI Complete`: secrets-scan + lint + test) expected green on every tracked path;
       weekly `codeql.yml` Python scan also runs.
 
 ## Hygiene

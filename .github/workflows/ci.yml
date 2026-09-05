@@ -2,23 +2,15 @@ name: CI
 
 # Harmonised with the Vision/Watchman pipelines, scaled to this repo: the testable
 # surface is the Python wiki tooling in tools/ (stdlib-only — no dependency
-# manifest, so there is nothing for pip-audit/Trivy to scan). Vault content
-# (wiki/, raw/, projects/) is excluded — most of it is gitignored, and the local
-# .githooks already gate wiki health on commit.
+# manifest, so there is nothing for pip-audit/Trivy to scan). All tracked paths
+# trigger CI, including content and nested instructions, so the secrets scan and
+# required completion check always run. Private gitignored vault content stays local.
 
 on:
   push:
     branches: ["master"]
-    paths-ignore:
-      - "wiki/**"
-      - "raw/**"
-      - "projects/**"
   pull_request:
     branches: ["master"]
-    paths-ignore:
-      - "wiki/**"
-      - "raw/**"
-      - "projects/**"
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -91,6 +83,18 @@ jobs:
 
       - name: Compile all tooling (syntax gate)
         run: python -m compileall -q tools
+
+      - name: Check cloud shell syntax and regression suites
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .codex/cloud/check-instructions.py
+          while IFS= read -r -d '' script; do
+            bash -n "$script"
+          done < <(find .codex/cloud -name '*.sh' -print0)
+          for suite in .codex/cloud/tests/*.test.sh; do
+            bash "$suite"
+          done
 
       - name: Run tooling test suite (stdlib unittest)
         # Each suite sets up its own sys.path and is run directly (they are not
