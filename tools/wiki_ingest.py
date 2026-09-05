@@ -22,6 +22,7 @@ from wiki import ROOT
 RAW_SOURCES_DIR = ROOT / "raw" / "sources"
 RAW_SOURCES_TEXT_DIR = ROOT / "raw" / "sources-text"
 RAW_INBOX_DIR = ROOT / "raw" / "inbox"
+PDF_TOOL_TIMEOUT = 300
 
 
 class ExtractStatus(Enum):
@@ -73,6 +74,7 @@ def extract_pdf_to_markdown(
             ["pdftotext", "-layout", "-enc", "UTF-8", str(pdf_path), str(raw_txt)],
             capture_output=True,
             text=True,
+            timeout=PDF_TOOL_TIMEOUT,
         )
         PERMISSION_ERROR = "Copying of text from this document is not allowed"
         if result.returncode != 0 and PERMISSION_ERROR in result.stderr:
@@ -87,15 +89,24 @@ def extract_pdf_to_markdown(
                 ["qpdf", "--decrypt", str(pdf_path), str(decrypted_pdf)],
                 capture_output=True,
                 text=True,
+                timeout=PDF_TOOL_TIMEOUT,
             )
             if qpdf_result.returncode != 0:
                 raise RuntimeError(
                     f"qpdf decrypt failed for {pdf_path.name}: {qpdf_result.stderr.strip()}"
                 )
             result = subprocess.run(
-                ["pdftotext", "-layout", "-enc", "UTF-8", str(decrypted_pdf), str(raw_txt)],
+                [
+                    "pdftotext",
+                    "-layout",
+                    "-enc",
+                    "UTF-8",
+                    str(decrypted_pdf),
+                    str(raw_txt),
+                ],
                 capture_output=True,
                 text=True,
+                timeout=PDF_TOOL_TIMEOUT,
             )
         if result.returncode != 0:
             raise RuntimeError(
@@ -103,6 +114,11 @@ def extract_pdf_to_markdown(
             )
 
         body = raw_txt.read_text(encoding="utf-8", errors="replace")
+    except subprocess.TimeoutExpired as exc:
+        tool = Path(str(exc.cmd[0])).name if exc.cmd else "PDF tool"
+        raise RuntimeError(
+            f"{tool} timed out after {PDF_TOOL_TIMEOUT} seconds for {pdf_path.name}"
+        ) from exc
     finally:
         raw_txt.unlink(missing_ok=True)
         if decrypted_pdf is not None:
@@ -110,7 +126,9 @@ def extract_pdf_to_markdown(
 
     today = dt.datetime.now().strftime("%Y-%m-%d")
     status = (
-        ExtractStatus.DECRYPTED if decrypted_pdf is not None else ExtractStatus.EXTRACTED
+        ExtractStatus.DECRYPTED
+        if decrypted_pdf is not None
+        else ExtractStatus.EXTRACTED
     )
     extractor = (
         "qpdf --decrypt | pdftotext -layout"

@@ -11,6 +11,7 @@ and asserts the lint/links/index behaviour. Run with:
 from __future__ import annotations
 
 import contextlib
+import datetime as dt
 import io
 import sys
 import tempfile
@@ -24,6 +25,7 @@ import wiki_lint  # noqa: E402
 import wiki_links  # noqa: E402
 import wiki_log  # noqa: E402
 import wiki_projects  # noqa: E402
+import wiki_query  # noqa: E402
 
 PASSED = 0
 FAILED = 0
@@ -512,18 +514,146 @@ def test_frontmatter_list_parsing() -> None:
     check("empty list", wiki._parse_frontmatter_value("[]") == [])
 
 
+def test_frontmatter_eof_and_round_trip() -> None:
+    text = "---\ntitle: Original\nstatus: active\n---"
+    fm, body = wiki.parse_frontmatter(text)
+    check("frontmatter closing delimiter at EOF parses", fm["title"] == "Original")
+    check("frontmatter at EOF has an empty body", body == "")
+
+    changed = wiki._set_frontmatter_field(text, "title", "Changed")
+    changed = wiki._set_frontmatter_field(changed, "tags", ["one", "two"])
+    round_trip, round_body = wiki.parse_frontmatter(changed)
+    check(
+        "frontmatter setter round-trips updated and appended fields",
+        round_trip["title"] == "Changed"
+        and round_trip["status"] == "active"
+        and round_trip["tags"] == ["one", "two"],
+        str(round_trip),
+    )
+    check("frontmatter setter preserves the empty body", round_body == "")
+
+
+def test_search_uses_body_words() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "wiki"
+        write_page(
+            root,
+            "concepts/category-only.md",
+            "A category is not the requested word.",
+            **base_fields(title="Category Only", tags="[cat]"),
+        )
+        write_page(
+            root,
+            "concepts/exact.md",
+            "The cat appears once.",
+            **base_fields(title="Exact"),
+        )
+        use_wiki(root)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            rc = wiki_query.search("cat", 10)
+        rendered = output.getvalue()
+        check("exact body search succeeds", rc == 0 and "concepts/exact.md" in rendered)
+        check(
+            "search ignores frontmatter and substring matches",
+            "concepts/category-only.md" not in rendered,
+            rendered,
+        )
+
+
+def test_source_id_stats_and_sampling() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "wiki"
+        sources = root / "sources"
+        sources.mkdir(parents=True)
+        for name in (
+            "src-2026-09-05-001.md",
+            "src-2026-09-05-003.md",
+            "src-2026-09-05-x.md",
+        ):
+            (sources / name).write_text("", encoding="utf-8")
+        write_page(
+            root,
+            "concepts/a.md",
+            "one two three",
+            **base_fields(title="A"),
+        )
+        use_wiki(root)
+        check(
+            "source ID advances beyond the maximum suffix",
+            wiki.generate_source_id(dt.date(2026, 9, 5)) == "src-2026-09-05-004",
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            words, pages = wiki.wiki_stats()
+        check(
+            "stats use content page bodies",
+            words == 3 and pages == 4,
+            output.getvalue(),
+        )
+        with contextlib.redirect_stdout(output):
+            sampled = wiki.sample_page("concept")
+        check("safe concept sampler finds a concept", sampled == 0)
+
+
+def test_bounded_cli_output_defaults() -> None:
+    parsed_lint = wiki.build_parser().parse_args(["lint"])
+    parsed_tags = wiki.build_parser().parse_args(["tags"])
+    check("lint uses a bounded human-output default", parsed_lint.limit is None)
+    check("tags selects its output-aware default at runtime", parsed_tags.limit is None)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "wiki"
+        for index in range(4):
+            write_page(
+                root,
+                f"concepts/{index}.md",
+                "Body.",
+                title=f"Page {index}",
+            )
+        use_wiki(root)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            rc = wiki_lint.run_lint(False, False, False, limit=2)
+        rendered = output.getvalue()
+        check("lint retains failure status when output is capped", rc == 1)
+        check(
+            "lint reports omitted findings and the uncapped command",
+            "Findings omitted:" in rendered and "--limit 0" in rendered,
+            rendered,
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "wiki"
+        for index in range(55):
+            write_page(
+                root,
+                f"concepts/{index}.md",
+                "Body.",
+                **base_fields(title=f"Page {index}", tags=f"[tag-{index}]"),
+            )
+        use_wiki(root)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            rc = wiki_query.tags_command([], "", True, None)
+        check(
+            "tags JSON remains complete by default",
+            rc == 0 and len(__import__("json").loads(output.getvalue())) == 55,
+        )
+
+
 def test_log_frontmatter_is_stdlib_and_yaml_safe() -> None:
     rendered = wiki_log._render_frontmatter(
         {
             "date": "2026-08-17",
             "title": "Codex: migration",
-            "pages": ["concepts/a", "topics/quoted \"item\""],
+            "pages": ["concepts/a", 'topics/quoted "item"'],
         }
     )
     check("log frontmatter quotes punctuation", 'title: "Codex: migration"' in rendered)
     check(
         "log frontmatter renders arrays",
-        'pages: ["concepts/a", "topics/quoted \\"item\\\""]' in rendered,
+        'pages: ["concepts/a", "topics/quoted \\"item\\""]' in rendered,
         rendered,
     )
 
@@ -542,6 +672,10 @@ def main() -> int:
     test_project_provider_scaffold()
     test_project_freeze()
     test_frontmatter_list_parsing()
+    test_frontmatter_eof_and_round_trip()
+    test_search_uses_body_words()
+    test_source_id_stats_and_sampling()
+    test_bounded_cli_output_defaults()
     test_log_frontmatter_is_stdlib_and_yaml_safe()
     print(f"\n{PASSED} passed, {FAILED} failed")
     return 1 if FAILED else 0

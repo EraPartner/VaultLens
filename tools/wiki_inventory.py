@@ -63,7 +63,11 @@ sources: []
 def _records() -> list:
     if not INVENTORY_DIR.exists():
         return []
-    return [load_page(p) for p in sorted(INVENTORY_DIR.rglob("*.md")) if p.name != "_index.md"]
+    return [
+        load_page(p)
+        for p in sorted(INVENTORY_DIR.rglob("*.md"))
+        if p.name != "_index.md"
+    ]
 
 
 def _kind_of(page) -> str:
@@ -86,7 +90,9 @@ def inventory_new(
         print(f"Unknown status {status!r}. Choose from: {', '.join(sorted(STATUSES))}")
         return 1
     if priority not in PRIORITIES:
-        print(f"Unknown priority {priority!r}. Choose from: {', '.join(sorted(PRIORITIES))}")
+        print(
+            f"Unknown priority {priority!r}. Choose from: {', '.join(sorted(PRIORITIES))}"
+        )
         return 1
     cleaned = slug.strip().strip("/")
     if not cleaned or "/" in cleaned or cleaned.startswith("."):
@@ -160,7 +166,13 @@ def inventory_list(kind: str, status: str, as_json: bool) -> int:
 
 
 def inventory_show(ref: str, as_json: bool) -> int:
-    path = INVENTORY_DIR / (ref if ref.endswith(".md") else f"{ref}.md")
+    raw_ref = ref if ref.endswith(".md") else f"{ref}.md"
+    path = INVENTORY_DIR / raw_ref
+    try:
+        path.resolve().relative_to(INVENTORY_DIR.resolve())
+    except ValueError:
+        print(f"Invalid inventory reference: {ref!r}")
+        return 1
     if not path.exists():
         print(f"Inventory record not found: {ref}")
         return 1

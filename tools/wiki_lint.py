@@ -321,14 +321,17 @@ def build_report(pages: list[Page], strict: bool) -> dict:
     }
 
 
-def _print_section(label: str, rows: list[str]) -> None:
+def _print_section(label: str, rows: list[str], remaining: int | None) -> int:
     if rows:
         print(f"\n{label}:")
-        for row in rows:
+        shown = rows if remaining is None else rows[:remaining]
+        for row in shown:
             print(f"- {row}")
+        return len(shown)
+    return 0
 
 
-def run_lint(strict: bool, as_json: bool, fix: bool) -> int:
+def run_lint(strict: bool, as_json: bool, fix: bool, limit: int | None = None) -> int:
     pages = list_content_pages()
     fixes: list[str] = []
     if fix:
@@ -337,6 +340,12 @@ def run_lint(strict: bool, as_json: bool, fix: bool) -> int:
 
     report = build_report(pages, strict)
     report["fixes_applied"] = fixes
+
+    effective_limit = (
+        0 if as_json and limit is None else (50 if limit is None else limit)
+    )
+    finding_total = report["error_count"] + report["warning_count"]
+    omitted = max(0, finding_total - effective_limit) if effective_limit > 0 else 0
 
     if as_json:
         print(json.dumps(report, indent=2))
@@ -364,9 +373,14 @@ def run_lint(strict: bool, as_json: bool, fix: bool) -> int:
         "empty_required": "Blank required fields",
         "updated_before_created": "updated before created",
     }
+    remaining = None if effective_limit <= 0 else effective_limit
     for key, rows in {**report["errors"], **report["warnings"]}.items():
-        _print_section(labels.get(key, key), rows)
-    _print_section("Auto-fixes applied", fixes)
+        shown = _print_section(labels.get(key, key), rows, remaining)
+        if remaining is not None:
+            remaining -= shown
+    _print_section("Auto-fixes applied", fixes, None)
+    if omitted:
+        print(f"\nFindings omitted: {omitted} (rerun with --limit 0 for all findings).")
 
     print("\nNote: contradiction and semantic quality checks require agent review.")
     print("Run: python3 tools/agents/wiki-agent.py contradict")

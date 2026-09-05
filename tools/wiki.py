@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
+import random
 import re
 import sys
 from collections import defaultdict
@@ -204,15 +206,24 @@ def _parse_frontmatter_value(raw: str) -> str | list[str]:
     return value
 
 
+def _split_frontmatter(text: str) -> tuple[str, str] | None:
+    """Split a leading YAML block, accepting its closing delimiter at EOF."""
+    if not text.startswith("---\n"):
+        return None
+    closing = re.search(r"^---(?:\n|$)", text[4:], flags=re.MULTILINE)
+    if closing is None:
+        return None
+    end = 4 + closing.start()
+    body_start = 4 + closing.end()
+    return text[4:end], text[body_start:]
+
+
 def parse_frontmatter(text: str) -> tuple[dict[str, str | list[str]], str]:
     normalized = text.replace("\r\n", "\n")
-    if not normalized.startswith("---\n"):
+    split = _split_frontmatter(normalized)
+    if split is None:
         return {}, text
-    end = normalized.find("\n---\n", 4)
-    if end == -1:
-        return {}, text
-    block = normalized[4:end]
-    body = normalized[end + 5 :]
+    block, body = split
     result: dict[str, str | list[str]] = {}
     for line in block.splitlines():
         stripped = line.strip()
@@ -395,12 +406,10 @@ def _render_frontmatter_value(value: str | list[str]) -> str:
 
 def _set_frontmatter_field(text: str, key: str, value: str | list[str]) -> str:
     """Update or append `key: value` inside the frontmatter block of `text`."""
-    if not text.startswith("---\n"):
+    split = _split_frontmatter(text)
+    if split is None:
         return text
-    end = text.find("\n---\n", 4)
-    if end == -1:
-        return text
-    block = text[4:end]
+    block, body = split
     rendered = _render_frontmatter_value(value)
     pattern = re.compile(rf"^{re.escape(key)}\s*:")
     new_lines: list[str] = []
@@ -413,7 +422,40 @@ def _set_frontmatter_field(text: str, key: str, value: str | list[str]) -> str:
             new_lines.append(line)
     if not found:
         new_lines.append(f"{key}: {rendered}")
-    return "---\n" + "\n".join(new_lines) + f"\n---\n{text[end + 5 :]}"
+    return "---\n" + "\n".join(new_lines) + f"\n---\n{body}"
+
+
+def generate_source_id(today: dt.date | None = None) -> str:
+    """Return the next unused source ID for a date without reusing gaps."""
+    day = (today or dt.date.today()).isoformat()
+    pattern = re.compile(rf"^src-{re.escape(day)}-(\d+)\.md$")
+    suffixes = [
+        int(match.group(1))
+        for path in (WIKI_DIR / "sources").glob(f"src-{day}-*.md")
+        if (match := pattern.match(path.name))
+    ]
+    return f"src-{day}-{max(suffixes, default=0) + 1:03d}"
+
+
+def wiki_stats() -> tuple[int, int]:
+    """Print and return totals for knowledge pages and their body words."""
+    pages = list_content_pages()
+    words = sum(len(page.body.split()) for page in pages)
+    print(f"Total words in wiki: {words:,}")
+    print(f"Total pages: {len(pages)}")
+    return words, len(pages)
+
+
+def sample_page(kind: str) -> int:
+    """Print a random concept or source page from a fixed safe directory."""
+    directory = WIKI_DIR / ("concepts" if kind == "concept" else "sources")
+    pattern = "*.md" if kind == "concept" else "src-*.md"
+    pages = sorted(directory.glob(pattern))
+    if not pages:
+        print(f"No {kind} pages found.")
+        return 1
+    print(random.choice(pages).relative_to(WIKI_DIR.parent).as_posix())
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -433,6 +475,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--fix",
         action="store_true",
         help="Apply unambiguous repairs (case-normalise confidence/volatility/status)",
+    )
+    lint_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Maximum text findings to print (default: 50; 0 = all)",
     )
 
     search_parser = sub.add_parser("search", help="Search wiki content")
@@ -474,9 +522,16 @@ def build_parser() -> argparse.ArgumentParser:
     tags_parser.add_argument(
         "--limit",
         type=int,
-        default=0,
-        help="Max rows (0 = all). Default 0 for filter, 0 for tally.",
+        default=None,
+        help="Max rows (human default: 50; JSON default: all; 0 = all).",
     )
+
+    sub.add_parser("next-id", help="Print the next unused source ID for today")
+    sub.add_parser("stats", help="Print wiki page and body-word totals")
+    sample_parser = sub.add_parser(
+        "sample", help="Print one random page from a fixed wiki category"
+    )
+    sample_parser.add_argument("kind", choices=["concept", "source"])
 
     sub.add_parser("validate-log", help="Check log.md entry format")
 
@@ -639,7 +694,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "lint":
         from wiki_lint import run_lint
 
-        return run_lint(strict=args.strict, as_json=args.json, fix=args.fix)
+        return run_lint(
+            strict=args.strict,
+            as_json=args.json,
+            fix=args.fix,
+            limit=args.limit,
+        )
     if args.command == "search":
         from wiki_query import search
 
@@ -657,6 +717,14 @@ def main(argv: list[str] | None = None) -> int:
             as_json=args.json,
             limit=args.limit,
         )
+    if args.command == "next-id":
+        print(generate_source_id())
+        return 0
+    if args.command == "stats":
+        wiki_stats()
+        return 0
+    if args.command == "sample":
+        return sample_page(args.kind)
     if args.command == "validate-log":
         from wiki_log import validate_log
 

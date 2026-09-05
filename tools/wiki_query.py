@@ -229,12 +229,13 @@ def search(query: str, limit: int, include_archived: bool = False) -> int:
         pages = [page for page in pages if not page.is_archived]
     scored: list[tuple[int, Page]] = []
     for page in pages:
-        text = page.text.lower()
+        text = page.body.lower()
         title = page.title.lower()
         score = 0
         for term in terms:
-            score += text.count(term)
-            score += 5 * title.count(term)
+            pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(term)}(?![A-Za-z0-9_])")
+            score += len(pattern.findall(text))
+            score += 5 * len(pattern.findall(title))
         if score > 0:
             scored.append((score, page))
 
@@ -248,16 +249,22 @@ def search(query: str, limit: int, include_archived: bool = False) -> int:
     return 0
 
 
-def tags_command(queries: list[str], domain: str, as_json: bool, limit: int) -> int:
+def tags_command(
+    queries: list[str], domain: str, as_json: bool, limit: int | None
+) -> int:
     """List all tags or filter pages by tag.
 
     With no `queries`, prints `tag\tcount` for every tag in the wiki.
     With one or more `queries`, prints pages whose tags contain ALL queries
     (case-insensitive). `domain` further restricts results to pages whose
-    `domain` frontmatter matches (case-insensitive). `--limit 0` disables truncation.
+    `domain` frontmatter matches (case-insensitive). Human output defaults to 50
+    rows; JSON defaults to all rows. `--limit 0` always disables truncation.
     """
     pages = list_content_pages()
     domain_norm = domain.strip().lower() if domain else ""
+    effective_limit = (
+        0 if as_json and limit is None else (50 if limit is None else limit)
+    )
 
     if not queries:
         counts: dict[str, int] = defaultdict(int)
@@ -268,8 +275,9 @@ def tags_command(queries: list[str], domain: str, as_json: bool, limit: int) -> 
                 counts[tag] += 1
 
         rows = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
-        if limit > 0:
-            rows = rows[:limit]
+        total = len(rows)
+        if effective_limit > 0:
+            rows = rows[:effective_limit]
 
         if as_json:
             print(json.dumps([{"tag": tag, "count": n} for tag, n in rows], indent=2))
@@ -282,6 +290,10 @@ def tags_command(queries: list[str], domain: str, as_json: bool, limit: int) -> 
         width = max(len(tag) for tag, _ in rows)
         for tag, count in rows:
             print(f"{tag:<{width}}  {count}")
+        if len(rows) < total:
+            print(
+                f"\nTags omitted: {total - len(rows)} (rerun with --limit 0 for all)."
+            )
         return 0
 
     wanted = {q.lower() for q in queries if q.strip()}
@@ -298,8 +310,9 @@ def tags_command(queries: list[str], domain: str, as_json: bool, limit: int) -> 
             matched.append(page)
 
     matched.sort(key=lambda p: p.rel.as_posix())
-    if limit > 0:
-        matched = matched[:limit]
+    total = len(matched)
+    if effective_limit > 0:
+        matched = matched[:effective_limit]
 
     if as_json:
         payload = [
@@ -318,8 +331,15 @@ def tags_command(queries: list[str], domain: str, as_json: bool, limit: int) -> 
         print(f"No pages match tags: {', '.join(sorted(wanted))}")
         return 0
 
-    print(f"Pages matching tags [{', '.join(sorted(wanted))}]: {len(matched)}\n")
+    print(
+        f"Pages matching tags [{', '.join(sorted(wanted))}]: "
+        f"showing {len(matched)} of {total}\n"
+    )
     for page in matched:
         tag_str = ", ".join(page.tags)
         print(f"{page.rel.as_posix()}  ({tag_str})")
+    if len(matched) < total:
+        print(
+            f"\nPages omitted: {total - len(matched)} (rerun with --limit 0 for all)."
+        )
     return 0
