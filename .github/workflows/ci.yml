@@ -109,6 +109,19 @@ jobs:
           done
           exit "$rc"
 
+      - name: Check LockBox vendored files against canonical main
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4
+        with:
+          repository: EraPartner/Lockbox
+          ref: main
+          path: .lockbox-canonical
+          persist-credentials: false
+
+      - name: Reject LockBox fleet drift
+        run: |
+          CODE_ROOT="${GITHUB_WORKSPACE%/*}" \
+            .lockbox-canonical/sync.sh --check --target="$GITHUB_WORKSPACE/.devcontainer"
+
   # ─────────────────────────────────────────────────────────────────────────────
   # Quality Gate — all checks must pass. Single fan-in before CI Complete.
   # ─────────────────────────────────────────────────────────────────────────────

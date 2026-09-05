@@ -135,17 +135,18 @@ sandbox_stage_claude_config() {
 # /proc/<pid>/cmdline the way `-e KEY=VALUE` would be. Prefers the named macOS
 # Keychain item; falls back to the host env vars.
 sandbox_forward_llm_creds() {
-  local kc_service="$1" tok var a have_claude=0
+  local kc_service="$1" tok var
   if command -v security >/dev/null 2>&1; then
     tok="$(security find-generic-password -s "$kc_service" -w 2>/dev/null || true)"
-    [[ -n "$tok" ]] && { export CLAUDE_CODE_OAUTH_TOKEN="$tok"; EXEC_ENV+=(-e CLAUDE_CODE_OAUTH_TOKEN); }
+    if [[ -n "$tok" ]]; then
+      export CLAUDE_CODE_OAUTH_TOKEN="$tok"
+      EXEC_ENV+=(-e CLAUDE_CODE_OAUTH_TOKEN)
+      return 0
+    fi
   fi
-  for a in ${EXEC_ENV[@]+"${EXEC_ENV[@]}"}; do [[ "$a" == "CLAUDE_CODE_OAUTH_TOKEN" ]] && have_claude=1; done
-  if (( ! have_claude )); then
-    for var in CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; do
-      [[ -n "${!var:-}" ]] && { export "${var?}"; EXEC_ENV+=(-e "$var"); }
-    done
-  fi
+  for var in CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; do
+    [[ -n "${!var:-}" ]] && { export "${var?}"; EXEC_ENV+=(-e "$var"); }
+  done
   # Explicit success: the final `[[ -n ... ]] &&` above can leave $? = 1 (e.g. when
   # no keychain token exists and the last env var is unset), which would otherwise
   # abort a `set -e` launcher that calls this as a bare statement.
@@ -306,6 +307,6 @@ sandbox_git_ro_mounts() {
   GIT_RO_MOUNTS+=(-v "$src:$ws/${hp}:ro")
 }
 
-# ─── vendored by LockBox v0.1.0 · canonical sha256:8057e37bc1ca4a0ebb74286e08843d299417ebe18af4df1ac4735293bc98c80d ───
+# ─── vendored by LockBox v0.1.0 · canonical sha256:56c501b4179022022df756ff919ff80ed2a34eef9bfbb9a0db8cf5131ef6fdd3 ───
 # Generated from the canonical source by LockBox/sync.sh — DO NOT EDIT HERE.
 # Edit LockBox/launcher-common.sh and re-run ./sync.sh.
