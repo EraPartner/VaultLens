@@ -46,7 +46,7 @@ as a search fallback; request environment preparation when semantic search is ne
 - `--coverage` mode with no specific target — scan the wiki for sparse areas and pick the weakest one. Use `python3 tools/wiki.py coverage --json` for the ranked list.
 - **Iterative loop mode** with no specific target and a "keep going" / "next stub" / "random page" intent — pick a page using one of the **Selection Strategies** below, enhance it, log, then loop until told to stop.
 
-Whenever a source PDF is referenced, treat its pre-extracted markdown sibling at `raw/sources-text/<stem>.md` as the ground-truth source. Re-parse it; don't trust the existing wiki page blindly.
+When a pre-extracted markdown sibling at `raw/sources-text/<stem>.md` is available, re-read it rather than trusting the existing wiki page. Otherwise follow the PDF fallback in step 2.
 
 ## Selection strategies (iterative loop mode)
 
@@ -130,12 +130,13 @@ Before changing anything, understand what already exists:
 
 ### 2. Re-read the source
 
-**Source material is always pre-extracted to markdown.** You will never see a raw PDF.
-For every PDF in `raw/sources/`, a sibling exists at `raw/sources-text/<same-stem>.md` containing the full text extracted via `pdftotext -layout`.
+**Prefer pre-extracted markdown for PDF sources.** A prepared PDF has a sibling at
+`raw/sources-text/<same-stem>.md` containing text extracted via `pdftotext -layout`.
+Extraction can be missing or fail; the launcher may attach the original PDF instead.
 
 - Read the attached `raw/sources-text/*.md` with the Read tool. Treat it as ground truth.
-- Do NOT attempt to Read any `.pdf` file — most models cannot parse PDF input directly, and the sandbox blocks shelling out to `pdftotext`.
-- If a source you need is not yet preprocessed, read its PDF (`raw/sources/<file>.pdf`) directly with the Read tool — the launcher attaches it, and you cannot materialize `raw/sources-text/` yourself (your write scope is `wiki/` only; `raw/` is read-only in the sandbox). Pre-extraction to `raw/sources-text/` is a host/ingest-time step (`python3 tools/wiki.py preprocess --pdf …`); if a missing extraction is blocking, flag it rather than attempting the write.
+- If extraction is unavailable and the current tools support PDF input, read the original PDF directly. Otherwise report the missing extraction and request preprocessing for source-dependent work.
+- Do not materialize `raw/sources-text/` yourself: your write scope is `wiki/` only, and `raw/` is read-only in the sandbox. Pre-extraction is an operator or authorized ingest-setup step (`python3 tools/wiki.py preprocess --pdf …`).
 - Layout artifacts (page-number lines, broken paragraphs, table noise) are expected — read past them. Do not write extracts, scratch files, or outputs anywhere outside the project tree — the one sanctioned exception is the transient log-entry JSON written under `/tmp/` in step 7 (Maintenance).
 
 **Source identification when the page lists none** (`requires: []`, no `## Sources`): infer from the page title and tags. Then search across all raw sources:

@@ -43,8 +43,8 @@ as a search fallback; request environment preparation when semantic search is ne
 ## Ingest workflow
 
 ### 1. Analyze Source
-- Read the source material via the Read tool. **For PDFs, always read the pre-extracted markdown sibling at `raw/sources-text/<same-stem>.md`, never the `.pdf` itself** — most models cannot parse PDF input directly.
-- The wiki-agent launcher auto-extracts PDFs with `pdftotext -layout` (falling back to `qpdf --decrypt` for copy-protected files) before invoking you, regardless of whether the PDF sits in `raw/sources/` or `raw/inbox/`. The sibling is keyed by stem, so `raw/inbox/foo.pdf` and `raw/sources/foo.pdf` both extract to `raw/sources-text/foo.md`. If a needed source has not been preprocessed yet, run `python3 tools/wiki.py preprocess --pdf <path>.pdf` from the Bash tool.
+- Read the source material via the Read tool. **For PDFs, prefer the pre-extracted markdown sibling at `raw/sources-text/<same-stem>.md`.** If extraction is unavailable and the current tools support PDF input, read the original PDF directly. Otherwise report the missing extraction and request preprocessing before continuing source-dependent work.
+- The wiki-agent launcher auto-extracts PDFs with `pdftotext -layout` (falling back to `qpdf --decrypt` for copy-protected files) before invoking you, regardless of whether the PDF sits in `raw/sources/` or `raw/inbox/`. The sibling is keyed by stem, so `raw/inbox/foo.pdf` and `raw/sources/foo.pdf` both extract to `raw/sources-text/foo.md`. If a needed source has not been preprocessed yet and direct PDF reading is unavailable, ask the operator or authorized ingest setup to run `python3 tools/wiki.py preprocess --pdf <path>.pdf`. Do not run preprocessing yourself: it writes `raw/sources-text/`, outside your `wiki/` write scope.
 - Layout artifacts (page numbers, broken paragraphs, table noise) are expected in extracted text — read past them.
 - Extract key claims (make them falsifiable)
 - Identify entity/concept mentions
