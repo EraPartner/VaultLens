@@ -36,6 +36,14 @@ read it first (it is qmd-indexed and surfaces on a `qmd search "operator profile
 priorities. It is gitignored (personal), so it ships only in this operator's vault, not the public
 template. The Chief of Staff launcher injects it automatically into its live context.
 
+Read `.agents/context-policy.md` when using live document context. The headless launcher applies
+that shared policy to both providers and supplies live documents as task data, separately from
+trusted role instructions. `VAULTLENS_COS_CONTEXT_CHARS` enables an experimental character budget
+for Chief of Staff live context; it is unset by default pending model quality evaluation. It keeps
+the complete profile, consent gate, project/desk overview and review-queue names. It scans all open
+tasks before fair priority selection, reports source paths and omissions, and fails explicitly if
+mandatory context cannot fit. See `tools/evals/README.md` for the fixture baseline and limitations.
+
 ## Directory contract
 
 - `raw/sources/` immutable source docs · `raw/sources-text/` preprocessed PDF text (`preprocess` output) ·
@@ -92,8 +100,9 @@ Reads are auto-approved; writes require explicit confirmation. Enforcement is la
   capability for both backends.
 - The egress-locked devcontainer mount (see `## Devcontainer sandbox`) is the kernel-level backstop.
 
-`raw/` may contain symlinks to files/dirs outside the vault; they're followed automatically by the
-model and the wiki tools, so existing data need not be duplicated.
+`raw/` may contain symlinks to files/dirs outside the vault, so existing data need not be duplicated.
+Headless inbox previews never follow directory or file links, because those links could bypass
+the review-inbox consent gate. Other authorized reads still follow the normal source workflow.
 
 ## Projects layer
 

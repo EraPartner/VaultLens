@@ -26,7 +26,7 @@ def project_status(project_dir: str | Path) -> str:
     project_md = Path(project_dir) / "project.md"
     try:
         text = project_md.read_text(encoding="utf-8").replace("\r\n", "\n")
-    except OSError:
+    except (OSError, UnicodeError):
         return ""
     if not text.startswith("---\n"):
         return ""

@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "measurement": "Unicode characters and UTF-8 bytes of live context only",
+  "date": "2026-09-05",
+  "model_calls": 0,
+  "answer_quality": "NOT EVALUATED; bounded mode remains opt-in",
+  "token_cost_and_latency": "NOT MEASURED; character reduction is not a token or cost estimate",
+  "cases": [
+    {
+      "fixture": "1-projects-8-ordinary-tasks-each",
+      "budget_characters": 3000,
+      "baseline_characters": 2457,
+      "selected_characters": 2857,
+      "baseline_utf8_bytes": 2462,
+      "selected_utf8_bytes": 2862,
+      "all_late_urgent_tasks_selected": true,
+      "profile_and_consent_preserved": true,
+      "review_body_absent": true,
+      "within_budget": true
+    },
+    {
+      "fixture": "4-projects-80-ordinary-tasks-each",
+      "budget_characters": 6000,
+      "baseline_characters": 22881,
+      "selected_characters": 5445,
+      "baseline_utf8_bytes": 22881,
+      "selected_utf8_bytes": 5465,
+      "all_late_urgent_tasks_selected": true,
+      "profile_and_consent_preserved": true,
+      "review_body_absent": true,
+      "within_budget": true
+    },
+    {
+      "fixture": "12-projects-80-ordinary-tasks-each",
+      "budget_characters": 12000,
+      "baseline_characters": 65997,
+      "selected_characters": 10422,
+      "baseline_utf8_bytes": 65997,
+      "selected_utf8_bytes": 10482,
+      "all_late_urgent_tasks_selected": true,
+      "profile_and_consent_preserved": true,
+      "review_body_absent": true,
+      "within_budget": true
+    }
+  ]
+}
