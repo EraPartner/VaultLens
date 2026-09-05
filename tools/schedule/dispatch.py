@@ -25,8 +25,10 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -171,15 +173,50 @@ def in_window(now: datetime, window: tuple[int, int]) -> bool:
 
 
 def load_ledger() -> dict:
-    if STATE_FILE.exists():
-        try:
-            data = json.loads(STATE_FILE.read_text())
-        except (json.JSONDecodeError, OSError):
-            data = {}
-    else:
+    try:
+        data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        if STATE_FILE.is_symlink():
+            raise RuntimeError(
+                "Schedule ledger is a broken link; refusing unattended work."
+            )
         data = {}
+    except (json.JSONDecodeError, OSError, UnicodeError) as exc:
+        raise RuntimeError(
+            "Schedule ledger is unreadable or corrupt; refusing unattended work. Inspect and recover it explicitly."
+        ) from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(
+            "Schedule ledger must be an object; refusing unattended work."
+        )
     data.setdefault("jobs", {})
     data.setdefault("accounts", {})
+    for key in ("jobs", "accounts"):
+        if not isinstance(data[key], dict) or any(
+            not isinstance(value, dict) for value in data[key].values()
+        ):
+            raise RuntimeError(
+                f"Schedule ledger {key} is malformed; refusing unattended work."
+            )
+    for key in ("agent_in_flight", "cancellation_pending"):
+        if key in data and not isinstance(data[key], dict):
+            raise RuntimeError(
+                f"Schedule ledger {key} is malformed; refusing unattended work."
+            )
+    if "cancellation_pending" in data and not data["cancellation_pending"].get(
+        "detail"
+    ):
+        data["cancellation_pending"]["detail"] = (
+            "An unresolved cancellation marker exists; operator recovery is required."
+        )
+    if "agent_in_flight" in data:
+        data.setdefault(
+            "cancellation_pending",
+            {
+                "since": data["agent_in_flight"].get("since", "unknown"),
+                "detail": "A prior model invocation has no confirmed normal completion. Inner termination is unconfirmed; inspect agent logs and workload before acknowledging recovery.",
+            },
+        )
     for acct in ACCOUNTS:
         data["accounts"].setdefault(
             acct, {"limited_until": None, "last_error": None, "backoff": 0}
@@ -190,8 +227,16 @@ def load_ledger() -> dict:
 def save_ledger(ledger: dict) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = STATE_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(ledger, indent=2, sort_keys=True))
+    with tmp.open("w", encoding="utf-8") as output:
+        output.write(json.dumps(ledger, indent=2, sort_keys=True))
+        output.flush()
+        os.fsync(output.fileno())
     tmp.replace(STATE_FILE)
+    directory = os.open(STATE_DIR, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 # --------------------------------------------------------------------------- #
@@ -754,17 +799,98 @@ def exec_brain_wiki(
     env["BRAIN_KEEP_WARM"] = "1"
     # `acct` is the cooldown-ledger identity. Each CLI authenticates through its
     # own login, so no secret or per-exec credential steering happens here.
-    try:
-        p = subprocess.run(
-            [FISH, "-lc", inner],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=env,
+    return _run_agent_process([FISH, "-lc", inner], timeout, env, LOG_DIR)
+
+
+def _run_agent_process(
+    command: list[str], timeout: float, env: dict, log_dir: Path
+) -> tuple[int, str]:
+    """Cancel the wrapper process group and retain output without pipe deadlocks.
+
+    A stopped host wrapper does not prove that detached container work stopped.
+    Return 125 on timeout or signal death so callers latch a persistent stop.
+    Never stop a potentially shared container based on its name prefix.
+    """
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with (
+        tempfile.NamedTemporaryFile(
+            mode="w+",
+            encoding="utf-8",
+            prefix="agent-",
+            suffix=".stdout.log",
+            dir=log_dir,
+            delete=False,
+        ) as stdout,
+        tempfile.NamedTemporaryFile(
+            mode="w+",
+            encoding="utf-8",
+            prefix="agent-",
+            suffix=".stderr.log",
+            dir=log_dir,
+            delete=False,
+        ) as stderr,
+    ):
+        process = subprocess.Popen(
+            command, stdout=stdout, stderr=stderr, env=env, start_new_session=True
         )
-        return p.returncode, _agent_output(p.returncode, p.stdout, p.stderr)
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            cancellation = _cancel_agent_group(process)
+            return 125, (
+                f"Agent timed out; {cancellation}. "
+                "Inner container termination is UNCONFIRMED; unattended LLM work is blocked. "
+                f"Partial stdout: {stdout.name}; stderr: {stderr.name}."
+            )
+        except BaseException as exc:
+            try:
+                cancellation = _cancel_agent_group(process)
+            except BaseException as cleanup_error:
+                cancellation = (
+                    f"Local cleanup also failed: {type(cleanup_error).__name__}"
+                )
+            exc.add_note(
+                f"{cancellation}. Partial stdout: {stdout.name}; stderr: {stderr.name}. Inner termination is unconfirmed."
+            )
+            raise
+        if process.returncode < 0:
+            cancellation = _cancel_agent_group(process)
+            return 125, (
+                f"Agent wrapper terminated by signal {-process.returncode}; {cancellation}. "
+                "Inner container termination is UNCONFIRMED; unattended LLM work is blocked. "
+                f"Partial stdout: {stdout.name}; stderr: {stderr.name}."
+            )
+        stdout.seek(0)
+        stderr.seek(0)
+        output = _agent_output(process.returncode, stdout.read(), stderr.read())
+        if process.returncode == 0:
+            Path(stdout.name).unlink()
+            Path(stderr.name).unlink()
+        return process.returncode, output
+
+
+def _cancel_agent_group(process) -> str:
+    """Best-effort local cleanup; do not claim anything about detached work."""
+    issues = []
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            break
+        except OSError as exc:
+            issues.append(f"{sig.name}: {exc}")
+        if sig == signal.SIGTERM:
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                pass
+    try:
+        process.wait(timeout=3)
     except subprocess.TimeoutExpired:
-        return 124, "timeout"
+        issues.append("local leader did not exit after cancellation")
+    return "host process group cancellation attempted" + (
+        f" ({'; '.join(issues)})" if issues else ""
+    )
 
 
 def _agent_output(returncode: int, stdout: str | None, stderr: str | None) -> str:
@@ -839,10 +965,45 @@ def run_llm(
     batch this tick (see _run_steps).
     """
     acct = ACCOUNTS[0]
+    if ledger.get("cancellation_pending") or "agent_in_flight" in ledger:
+        return (
+            "cancelled-unconfirmed",
+            acct,
+            "Prior cancellation needs operator acknowledgement.",
+        )
     if not backend_available(ledger, now):
         return "deferred", acct, ""  # cooldown from an earlier usage-limit
     log(f"    -> backend {acct}")
-    rc, out = exec_brain_wiki(args, acct, effort, timeout)
+    ledger["agent_in_flight"] = {
+        "since": iso(now),
+        "backend": acct,
+        "task": args[0] if args else "unknown",
+    }
+    # Persist before launch. A hard kill can bypass every exception/finally path.
+    save_ledger(ledger)
+    try:
+        rc, out = exec_brain_wiki(args, acct, effort, timeout)
+    except BaseException as exc:
+        detail = (
+            f"Model invocation interrupted ({type(exc).__name__}); inner termination unconfirmed. "
+            + " ".join(getattr(exc, "__notes__", []))
+        )
+        ledger["cancellation_pending"] = {"since": iso(now), "detail": detail}
+        try:
+            save_ledger(ledger)
+        except Exception as save_error:
+            exc.add_note(
+                f"Could not persist cancellation detail: {save_error}; the pre-launch in-flight marker remains the recovery boundary."
+            )
+        raise
+    if rc == 125:
+        ledger["cancellation_pending"] = {"since": iso(now), "detail": out}
+        # Persist before another step or a later exception can lose this latch.
+        save_ledger(ledger)
+        log(out)
+        return "cancelled-unconfirmed", acct, out
+    ledger.pop("agent_in_flight", None)
+    save_ledger(ledger)
     cls = classify_failure(rc, out)
     if cls == "ok":
         clear_account(ledger, acct)
@@ -957,6 +1118,14 @@ def write_schedule_status(ledger: dict, steps: list["Step"], now: datetime) -> P
         [(s.name, s.period) for s in steps],
         now,
     )
+    if ledger.get("cancellation_pending") or "agent_in_flight" in ledger:
+        detail = ledger.get("cancellation_pending", {}).get(
+            "detail", "A model invocation has no confirmed completion."
+        )
+        body = (
+            f"WARNING: unattended LLM work blocked; inner termination unconfirmed. {detail}\n\n"
+            + body
+        )
     header = (
         "---\n"
         "type: report\n"
@@ -1374,7 +1543,7 @@ def _run_steps(
 ) -> None:
     """Run every due step in order, honoring gates, account failover, and reports."""
     llm_blocked = (
-        False  # set once the backend is usage-limited; skip remaining LLM steps
+        bool(ledger.get("cancellation_pending")) or "agent_in_flight" in ledger
     )
     # One routing guard per tick: its cap + cycle-blocks span project-runner
     # handoffs produced during this dispatcher run.
@@ -1383,7 +1552,9 @@ def _run_steps(
         if not step_due(step, ledger, now):
             continue
         if step.kind == "llm" and llm_blocked:
-            log(f"skip {step.name}: LLM jobs blocked this tick (accounts limited)")
+            log(
+                f"skip {step.name}: LLM jobs blocked (quota or unresolved cancellation)"
+            )
             continue
         ok, missing = gates.check(step.gates)
         if not ok:
@@ -1445,6 +1616,14 @@ def _run_steps(
                     # cross-project bus. Chief of Staff advice stays advisory.
                     if slug:
                         route_handoffs(out, slug, now, log, routing_guard)
+                elif status == "cancelled-unconfirmed":
+                    all_ok = False
+                    outcome = "cancelled-unconfirmed"
+                    llm_blocked = True
+                    log(
+                        f"  {step.name}: inner termination unconfirmed; aborting LLM batch"
+                    )
+                    break
                 elif status == "deferred":
                     all_ok = False
                     outcome = "deferred"
@@ -1523,6 +1702,12 @@ def cmd_run(dry_run: bool = False) -> int:
     if lock is None:
         log("another dispatcher run holds the lock; exiting")
         return 0
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+
+    def interrupted(_signum, _frame):
+        raise InterruptedError("Dispatcher interrupted by SIGTERM")
+
+    signal.signal(signal.SIGTERM, interrupted)
     try:
         ledger = load_ledger()
         now = now_local()
@@ -1540,7 +1725,9 @@ def cmd_run(dry_run: bool = False) -> int:
         # only if LLM work is actually due and runnable (online + container).
         on_ac = gates.get("ac")
         lid = lid_closed()
-        any_llm_due = any(step_due(s, ledger, now) for s in steps if s.kind == "llm")
+        any_llm_due = not ledger.get("cancellation_pending") and any(
+            step_due(s, ledger, now) for s in steps if s.kind == "llm"
+        )
         if dry_run:
             log(
                 f"keep-awake check: on_ac={on_ac} lid_closed={lid} llm_due={any_llm_due}"
@@ -1590,6 +1777,7 @@ def cmd_run(dry_run: bool = False) -> int:
                 _stop_new_brain_containers(pre_running, log)
         return 0
     finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)
         try:
             fcntl.flock(lock, fcntl.LOCK_UN)
             lock.close()
@@ -1618,6 +1806,9 @@ def cmd_status() -> int:
     steps = build_steps()
     print(f"Brain schedule status  ({now:%Y-%m-%d %H:%M %Z})")
     print(f"ledger: {STATE_FILE}\n")
+    if ledger.get("cancellation_pending"):
+        print("UNATTENDED LLM WORK BLOCKED: inner cancellation is unconfirmed.")
+        print(ledger["cancellation_pending"]["detail"])
     print(
         "nightly wiki enhancement: "
         + (
@@ -1657,6 +1848,27 @@ def cmd_status() -> int:
     return 0
 
 
+def acknowledge_cancellation() -> int:
+    """Operator-only recovery after verifying the timed-out inner work stopped."""
+    lock = acquire_lock()
+    if lock is None:
+        print(
+            "Dispatcher is running; cancellation cannot be acknowledged.",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        ledger = load_ledger()
+        ledger.pop("cancellation_pending", None)
+        ledger.pop("agent_in_flight", None)
+        save_ledger(ledger)
+        print("Cancellation acknowledged. Due LLM work may resume on the next tick.")
+        return 0
+    finally:
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Brain scheduled-agent dispatcher")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1665,11 +1877,23 @@ def main(argv: list[str] | None = None) -> int:
         "--dry-run", action="store_true", help="evaluate gates/due-ness, run nothing"
     )
     sub.add_parser("status", help="human-readable ledger view")
+    acknowledge = sub.add_parser(
+        "acknowledge-cancellation",
+        help="clear timeout latch only after verifying inner agent work has stopped",
+    )
+    acknowledge.add_argument(
+        "--confirmed-inner-stopped",
+        action="store_true",
+        required=True,
+        help="operator attestation that the timed-out inner workload has stopped",
+    )
     args = p.parse_args(argv)
     if args.cmd == "run":
         return cmd_run(dry_run=args.dry_run)
     if args.cmd == "status":
         return cmd_status()
+    if args.cmd == "acknowledge-cancellation":
+        return acknowledge_cancellation()
     return 1
 
 

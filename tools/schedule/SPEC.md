@@ -122,17 +122,45 @@ hardcode a number. Two facts drive the design:
 - **Each agentic run is many model turns** (tool calls), so one `cos brief` or
   `contradict` can consume many requests, not one. Budget accordingly.
 
-The dispatcher classifies CLI exit output into three failure modes:
+The dispatcher classifies CLI exit output and recovery state as follows:
 
 | Class | Signal | Behavior |
 |---|---|---|
-| Transient / network | timeout, 5xx | retry next tick (ledger not advanced) |
+| Transient / network | 5xx or ordinary CLI failure | retry next tick (ledger not advanced) |
+| **Unconfirmed cancellation** | deadline, signal death, interruption, or unresolved prior invocation | cancel the host process group when possible; preserve logs; persist a latch blocking remaining and later LLM work |
 | Short rate-limit | 429 / "rate limit" | mark backend identity `limited_until` (backoff 30m -> 1h -> 2h); defer |
 | **Quota exhausted** | "quota" / "premium request" / "upgrade" | mark backend identity `limited_until` (probe again in ~24h; do not compute an exact reset); defer |
 | **Backend limited** | selected identity is cooling down | defer the job and rest of the LLM batch; notify |
 
 There is one configured backend identity. The dispatcher never switches provider
 or credentials automatically.
+
+On a dispatcher deadline, the fish wrapper and local descendants receive SIGTERM, then SIGKILL.
+Output goes to private temporary log files under the schedule log directory, so descendants cannot
+hold a captured pipe open indefinitely. Partial stdout/stderr paths are recorded in the persistent
+`cancellation_pending` ledger entry. Successful invocations remove these extra capture files;
+failure/timeout captures remain available for operator review.
+
+An in-flight marker is persisted before every model launch and cleared only after normal wrapper
+completion. A dispatcher interruption or restart with that marker blocks unattended model work;
+a signal-terminated wrapper also retains the block. An existing unreadable or corrupt ledger
+fails closed instead of resetting scheduler state. Recover that ledger explicitly before resuming.
+
+Host process exit does not establish that detached container work stopped. The dispatcher therefore
+blocks the remaining LLM batch and future unattended LLM invocations. It does not stop a reused
+interactive container merely because its name starts with `brain-`. Normal non-LLM health steps
+may still run. Existing end-of-tick cleanup remains separate and does not clear the latch.
+
+Recovery requires the operator to inspect the partial logs, verify that the timed-out inner
+workload has stopped (and inspect any partial project edits), then run:
+
+```sh
+python3 tools/schedule/dispatch.py acknowledge-cancellation --confirmed-inner-stopped
+```
+
+This command is an explicit operator attestation, not a runtime verification. Agents must not
+invoke it to unblock their own work. It takes the dispatcher lock and refuses to clear the latch
+while another tick holds the lock. `dispatch.py status` displays unresolved cancellation details.
 
 Budget-shaping (build into the job table):
 - `enhance` is **off by default**. When explicitly enabled, it is capped at
