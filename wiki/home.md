@@ -3,7 +3,7 @@ title: Home
 type: page
 status: active
 created: 2026-04-11
-updated: 2026-08-30
+updated: 2026-09-05
 summary: Start page for wiki, project, review-queue, and scheduled-agent workflows.
 ---
 
@@ -155,8 +155,7 @@ Second Brain/
 │   ├── index.md           # Dataview-powered catalog
 │   └── log.md             # Append-only activity log
 └── tools/                  # Wiki maintenance utilities
-    ├── wiki.py            # Core CLI (index, lint, search, log)
-    ├── wiki_extra.py      # Extra utilities (qmd, stats, IDs)
+    ├── wiki.py            # Core CLI (index, lint, search, log, stats, IDs)
     ├── agents/            # Agent definitions + wrapper
     ├── schedule/          # Host catch-up dispatcher for scheduled agents
     └── scripts/           # Setup scripts
@@ -174,12 +173,12 @@ python3 tools/wiki.py validate-log         # Check log format
 python3 tools/wiki.py append-log ...       # Add log entry
 ```
 
-### Extra Utilities
+### Additional Utilities
 
 ```bash
-python3 tools/wiki_extra.py next-id         # Generate next source ID
-python3 tools/wiki_extra.py qmd-search "q"  # Search with QMD
-python3 tools/wiki_extra.py stats           # Wiki statistics
+python3 tools/wiki.py next-id               # Generate next source ID
+python3 tools/wiki.py stats                 # Wiki statistics
+qmd search "keywords"                       # Search with QMD
 ```
 
 ### QMD Search (optional)

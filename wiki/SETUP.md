@@ -3,7 +3,7 @@ title: Setup Guide
 type: page
 status: active
 created: 2026-04-11
-updated: 2026-08-30
+updated: 2026-09-05
 summary: How to set up the public wiki template, projects, search index, and scheduled agents safely.
 ---
 
@@ -175,7 +175,6 @@ Second Brain/
 │   └── log.md
 └── tools/
     ├── wiki.py
-    ├── wiki_extra.py
     ├── agents/
     ├── schedule/
     └── scripts/

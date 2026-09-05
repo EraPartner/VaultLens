@@ -3,159 +3,41 @@ title: Schema
 type: page
 status: active
 created: 2026-04-11
-updated: 2026-08-15
-summary: Operating conventions and schema for this wiki.
+updated: 2026-09-05
+summary: Reader-facing content standards with pointers to the canonical wiki schema.
 ---
 
-# Operating Schema
+# Wiki Content Standard
 
-The authoritative schema is at vault root: `../AGENTS.md`. `../CLAUDE.md` is a
-compatibility import for Claude Code.
+This page is a reader-facing guide to content quality. It does not duplicate the
+machine-checked metadata schema.
 
-## Quick Reference
+- Required frontmatter, source fields, page types, links, citations, archiving,
+  and index rules are canonical in `wiki/AGENTS.md`.
+- The vault architecture and agent operating rules are canonical in `AGENTS.md`
+  at the repository root.
+- Ready-to-copy page shapes live in `wiki/_templates/`.
 
-### Required Frontmatter
+Keeping those contracts in one place prevents identifier and enum drift. In
+particular, source IDs use `src-YYYY-MM-DD-NNN`, and `pdf` is a valid
+`source_type`, as defined in `wiki/AGENTS.md`.
 
-All content pages need:
+## Page Content Standard
 
-```
----
-title: ...
-type: page
-status: active|superseded|archived|draft
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
-summary: One sentence.
----
-```
+Wiki pages are a **knowledge map and dense reference**, not a study guide:
 
-### Source Pages
+- Use at most one worked example per page. One concrete example may illustrate
+  the mechanism. Cover further variation in prose under `How It Works` or
+  `Variants`.
+- Favour encyclopedic density: definitions, properties, mechanisms, nuances,
+  citations, and cross-links.
+- Preserve validated content. Mark superseded claims instead of silently
+  deleting their history.
 
-Additional required fields:
+The `wiki-enhancer` role applies this standard to pages it creates or rewrites.
+Older pages with surplus examples remain a deliberate manual cleanup task; they
+are not bulk-rewritten automatically.
 
-```
-source_id: src-YYYY-MM-NNN
-source_type: article|paper|book|video|podcast|dataset|note|other
-origin: URL or publication
-ingested_on: YYYY-MM-DD
-```
-
-### Categories
-
-| Directory | Purpose | Example |
-|-----------|---------|---------|
-| `sources/` | Per-source summaries | `src-2026-04-11-001.md` |
-| `entities/` | People, orgs, tools, places | `entities/openai.md` |
-| `concepts/` | Methods, theories, ideas | `concepts/attention.md` |
-| `topics/` | Thematic syntheses | `topics/llm-architecture.md` |
-| `syntheses/` | Cross-topic analyses | `syntheses/ai-safety-frameworks.md` |
-| `comparisons/` | Side-by-side analyses | `comparisons/gpt-vs-claude.md` |
-| `queries/` | Preserved Q&A | `queries/transformer-training.md` |
-| `reports/` | Lint outputs, audits | `reports/lint-2026-04-11.md` |
-| `inventory/` | Tracked intentions by kind (ingest-candidate / question / task / watch / corpus / artifact / item) | `inventory/question/...md` |
-| `system/` | Schema & operating docs | `system/schema.md` |
-
-### Link Conventions
-
-- Use wikilinks: `[[sources/my-source]]` or `[[entities/openai]]`
-- Prefer explicit path-based links when ambiguous
-- Source citations in `## Sources` section
-- Template examples in `wiki/_templates/` are placeholders - copy and customize
-
-### Page Content Standard
-
-Wiki pages are a **knowledge map / dense reference**, not a study guide or learning tool:
-
-- **At most one worked example per page.** One concrete example (numbers, trace, code, or proof sketch)
-  illustrates the mechanism; cover further variation in prose under `How It Works` / `Variants`, not as
-  a second example. One is enough.
-- Favour encyclopedic density (definition, properties, mechanism, nuances, cross-links) over repeated
-  illustration.
-
-Going forward, the `wiki-enhancer` agent caps any page it creates or rewrites at one worked example and
-never adds a second. Pages that predate this standard and still carry surplus examples are listed in
-`reports/worked-example-backlog-2026-06-29.md` — a **manual cleanup checklist** to work through
-deliberately. Nothing trims them automatically (the enhancer rarely revisits already-dense pages and is
-told to preserve, not cut), and there is no bulk rewrite.
-
-See [[system/enhancement-strategies]] ([Enhancement Strategies](enhancement-strategies.md)) for the companion standard on *which* pages get created in the
-first place (the source-first vs topic-first axis).
-
-### Additional Types
-
-#### Topics
-Synthesize multiple concepts and sources into thematic pages.
-
-```
----
-title: ...
-type: topic
-status: active|draft
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
-summary: One sentence synthesis.
----
-```
-
-#### Syntheses
-Cross-topic analyses with thesis and evidence structure.
-
-```
----
-title: ...
-type: synthesis
-status: draft
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
-summary: One sentence thesis.
----
-```
-
-#### Comparisons
-Side-by-side analyses with dimension tables.
-
-```
----
-title: ...
-type: comparison
-status: draft
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
-summary: One sentence comparison.
-comparisons:
-  - item_a
-  - item_b
----
-```
-
-#### Reports
-Lint outputs and audit results.
-
-```
----
-title: Report Name
-type: report
-status: active
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
-summary: One sentence description.
-report_type: lint|audit|other
----
-```
-
-#### Inventory
-Tracked intentions, filed under `inventory/<kind>/` where kind is one of
-ingest-candidate / question / task / watch / corpus / artifact / item. Managed
-with `python3 tools/wiki.py inventory` (list/new/show). See `../AGENTS.md` for
-the full field set.
-
-```
----
-title: ...
-type: inventory
-status: active|superseded|archived|draft
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
-summary: One sentence.
----
-```
+See [[system/enhancement-strategies]] ([Enhancement Strategies](enhancement-strategies.md))
+for the companion standard that governs which pages should be created or
+expanded.

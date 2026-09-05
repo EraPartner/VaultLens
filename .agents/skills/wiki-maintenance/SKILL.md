@@ -16,7 +16,7 @@ python3 tools/tests/test_wiki.py                 # tooling test suite (golden + 
 
 # Coverage / stats
 python3 tools/wiki.py coverage                   # rank sparse / underlinked pages
-python3 tools/wiki_extra.py stats                # wiki statistics
+python3 tools/wiki.py stats                      # wiki statistics
 
 # Indexes & links (generated files — never hand-edit _index.md)
 python3 tools/wiki.py index                      # report stale _index.md mirrors

@@ -59,9 +59,8 @@ mandatory context cannot fit. See `tools/evals/README.md` for the fixture baseli
 - `projects/<slug>/` one folder per project · `project.md` metadata · `notes/` scratch · `queries/` durable Q&A · `AGENDA.md` dormant autonomous-runner agenda (opt-in via its `enabled` frontmatter flag)
 - `tools/wiki.py` CLI dispatcher → focused modules (`wiki_ingest`, `wiki_lint`, `wiki_query`,
   `wiki_projects`, `wiki_index`, `wiki_links`, `wiki_log`, `wiki_inventory`, `wiki_archive`) ·
-  `tools/wiki_extra.py` extras · `tools/scripts/` setup helpers · `tools/tests/` tooling test suite ·
-  `tools/agents/wiki-agent.py` headless agent launcher · `tools/schedule/` host catch-up dispatcher
-  for scheduled agents
+  `tools/scripts/` setup helpers · `tools/tests/` tooling test suite · `tools/agents/wiki-agent.py`
+  headless agent launcher · `tools/schedule/` host catch-up dispatcher for scheduled agents
 - `.agents/roles/` canonical wiki-agent roles · `.agents/skills/` operational runbooks ·
   `.claude/` and `.codex/` provider-specific discovery and configuration adapters
 
@@ -80,25 +79,10 @@ PDFs, `python3 tools/wiki.py preprocess` pre-extracts `raw/sources/*.pdf` → `r
 
 ## Tool permissions
 
-Reads are auto-approved; writes require explicit confirmation. Enforcement is layered:
-
-| Operation | Policy |
-|---|---|
-| Read files anywhere in the vault | auto-approved |
-| Read-only shell (`ls`, `find`, `grep`, `cat`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut`, `tr`, `date`, `python3`, `qmd`) | auto-approved |
-| Write shell (`touch`, `mkdir`, `mv`, `cp`, `sed`, `awk`) | auto-approved for write-access agents only |
-| Write or edit files | requires confirmation |
-
-- Interactive Claude sessions use `.claude/settings.json`; interactive Codex sessions use the
-  active Codex sandbox and approval policy. Provider adapters under `.claude/agents/` and
-  `.codex/agents/` map the neutral role permission profile to each client's controls. A Codex
-  role's file scope is an instruction boundary, not proof of hard isolation: the parent session can
-  override a custom agent's sandbox default. Use `wiki-agent.py` through the matching container
-  profile when hard isolation is required.
-- Headless runs use `wiki-agent.py`, which maps the same role profile to Claude tool allowlists or
-  Codex sandbox settings. A wiki agent must never spawn another agent; the launcher disables that
-  capability for both backends.
-- The egress-locked devcontainer mount (see `## Devcontainer sandbox`) is the kernel-level backstop.
+Reads are auto-approved; writes require confirmation and the role's write profile. Interactive
+clients apply their own controls. Headless roles are mapped by `wiki-agent.py`, and may never spawn
+another agent. Tool allowlists are best-effort; the matching egress-locked container mount is the
+hard read/write boundary. See `.devcontainer/README.md` and `.agents/skills/wiki-agents/SKILL.md`.
 
 `raw/` may contain symlinks to files/dirs outside the vault, so existing data need not be duplicated.
 Headless inbox previews never follow directory or file links, because those links could bypass
@@ -111,18 +95,10 @@ its structure. The scaffold (`project new`) creates `project.md`, `AGENTS.md`, `
 `TODO.md`, `AGENDA.md`, and `queries/`. `AGENTS.md` is the provider-neutral project entrypoint;
 `CLAUDE.md` imports it for Claude Code.
 
-**Autonomous runner:** every project carries a dormant `AGENDA.md` (loose `## Inbox` + groomed
-`## Tasks`). Flip its frontmatter `enabled: true` to opt the project into the nightly `project-runner`
-agent, which grooms loose tasks into a clear structured form, executes the ones that are 100% clear
-and due (writing only inside `projects/<slug>/`, applied-not-committed with a pre-run snapshot for
-undo), and files clarifications for anything ambiguous. Resolve those interactively with the
-`wiki-project-clarify` skill or an equivalent plain-language request. See `## Scheduled agents`
-and the runbook below.
-
-**Runbook:** scaffolded structure, the `project.md` page schema, `project new/link/show` usage,
-keeping `project.md` current, the TODO.md format/aggregators, and the `AGENDA.md` schema +
-`project agenda` subcommands live in `.agents/skills/wiki-projects/SKILL.md` — read it before
-creating or restructuring a project.
+Every project includes a dormant `AGENDA.md`. When enabled, the nightly runner executes only clear,
+due work inside that project and snapshots it for review or undo. Ambiguous tasks go to the
+interactive `wiki-project-clarify` flow. The complete project and agenda contract lives in
+`.agents/skills/wiki-projects/SKILL.md`; read it before creating or restructuring a project.
 
 Always-needed facts: `project.md` is the per-project source of truth — `wiki_refs` and `tags`
 in its frontmatter are load-bearing (they scope which wiki pages agents pull into context; add refs
@@ -130,11 +106,9 @@ with `project link`, never hand-edit). Its `## Rules` section **overrides the de
 `## Working inside a project` when they conflict**. After any session that establishes new
 information, update the changed `project.md` sections and bump `updated`.
 
-`status: frozen` removes a project from current-work surfaces without deleting it. Default project
-lists, TODO/deadline aggregators, Chief of Staff briefs, thinking-agent open-work scans, agent desk
-status, runner selection, clarifications, and routed proposals/handoffs must exclude frozen
-projects. Direct inspection remains available; `project list --include-frozen` is the audit view.
-Use `project freeze <slug>` and `project unfreeze <slug>` so generated views stay synchronized.
+`status: frozen` removes a project from current-work and routing surfaces without deleting it. Use
+`project freeze <slug>` and `project unfreeze <slug>` so generated views stay synchronized;
+`project list --include-frozen` is the audit view.
 
 ### Working inside a project (instructions for agents)
 
@@ -149,62 +123,23 @@ loads the root and project `AGENTS.md` chain. Claude Code reaches the same conte
 
 ## Agent integration
 
-For complex wiki tasks use the custom roles in `.agents/roles/`: `wiki-ingest`,
-`wiki-enhancer`, `wiki-source-verifier`, `wiki-quality-reviewer`, `wiki-contradiction-detector`,
-`wiki-search`, plus the read-only thinking agents `wiki-challenge` / `wiki-connect` / `wiki-emerge` /
-`wiki-idea-discovery` — and two more with their own operating modes described elsewhere in this file:
-`wiki-cos` (Chief of Staff — see `## Canonical operations`) and `wiki-project-runner` (nightly
-autonomous task execution — see `## Scheduled agents`). Claude and Codex discover generated native
-adapters for these roles; headless and batch runs go through `tools/agents/wiki-agent.py`
-(host: `brain-wiki`), which adds the enhance loops, CoS live-context gathering, PDF pre-extraction,
-and auto-logging.
-
-Role bodies and neutral metadata are edited only in `.agents/roles/`. After changing them, run
-`python3 tools/agents/generate-adapters.py`; CI uses `--check` to reject stale Claude/Codex adapters.
-
-**Runbook:** the what-agent-for-what table, reads/writes + handoffs, thinking-agent flags,
-`wiki-agent.py` invocations, and model/effort options live in
-`.agents/skills/wiki-agents/SKILL.md` — read it before picking or launching an agent.
+Canonical custom roles live in `.agents/roles/`; provider adapters are generated. After a role
+change, run `python3 tools/agents/generate-adapters.py`. Role selection, read/write behavior,
+handoffs, models, effort, and launcher commands live in `.agents/skills/wiki-agents/SKILL.md`.
 
 ## Devcontainer sandbox
 
-The agents run in a hardened devcontainer (`.devcontainer/`, see its `README.md`): egress is locked
-to an allowlist proxy. Interactive sessions (`brain-claude`/`brain-shell`) run the CLI as a non-root
-user with `--dangerously-skip-permissions`; headless `wiki-agent.py` runs instead pass an explicit
-`--allowedTools` allowlist with `--permission-mode acceptEdits`/`default` and `--disallowedTools Task`
-(see `## Tool permissions`).
-Launch from the host with the `brain-*` wrappers
-(`brain-cos`, `brain-wiki <agent> …`, `brain-claude`, `brain-shell`).
-`tools/agents/wiki-agent.py` refuses to run on the host — invoke wiki agents via `brain-wiki`
-and the Chief of Staff via `brain-cos`.
-
-The LockBox-derived container image and host wrappers support both Claude and Codex. Codex uses
-private per-profile container state and must be logged in once for every scheduled capability
-profile before `brain-wiki` uses it unattended.
-
-**Inside the devcontainer (`$DEVCONTAINER=true`):** `~/.claude/` and `~/.claude.json` are an isolated
-copy, host-pulled on start but **not** pushed back automatically. If you change in-container Claude
-config (agents, plugins, slash commands, hooks, MCP servers, rules, settings), tell the user before
-ending your turn to run on the host: `brain-claude-sync push` (it backs up `~/.claude.json` before a
-newer-wins merge). Without it the change is lost on the next container rebuild. Repo-level config —
-  this file, `.agents/`, `.claude/`, `.codex/` — lives in the mounted
-workspace and needs no sync. Outside the devcontainer this does not apply.
+Agents run in the hardened, egress-locked devcontainer. Launch them from the host with `brain-wiki`
+or `brain-cos`; `wiki-agent.py` refuses host execution. Provider state, mount profiles, configuration
+sync, and troubleshooting are documented in `.devcontainer/README.md`. Repository configuration in
+this file, `.agents/`, `.claude/`, and `.codex/` lives in the mounted workspace.
 
 ## Scheduled agents
 
-A host-side **catch-up dispatcher** (`tools/schedule/`) runs the maintenance/thinking agents on a
-~30-minute launchd tick; each tick is a gate-checker, not an LLM trigger — all LLM work runs in one
-nightly batch (AC-only, defer-until-online) on the configured CLI. Codex is the default; Claude can
-still be selected explicitly. Every provider uses isolated credentials and no mid-batch fallback.
-Read-only agents stay read-only:
-outputs are filed as dated reports under `wiki/reports/`. The scheduled writer enabled by default is
-`project-runner`: for each opted-in project it executes due `AGENDA.md` tasks inside
-`projects/<slug>/` (applied-not-committed; the dispatcher clones the project first, so the roll-up's
-restore command is the undo since `projects/` is gitignored). Broad nightly wiki enhancement is
-paused unless the operator installs with `VAULTLENS_SCHEDULE_ENHANCE=1`; when enabled, it runs five
-alternating enhancement iterations across the whole wiki each night. Manual enhancement remains
-available. Design rationale and operational detail: `tools/schedule/SPEC.md`; install with
-`tools/schedule/install.sh`.
+The host catch-up dispatcher runs one gated nightly batch and records dated reports. It applies
+project-runner edits without committing and keeps pre-run snapshots. Broad wiki enhancement is
+opt-in. Scheduling, recovery, gates, provider selection, and installation are defined in
+`tools/schedule/SPEC.md` and `tools/schedule/install.sh`.
 
 ## Canonical operations
 

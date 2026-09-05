@@ -33,6 +33,7 @@ as a search fallback; request environment preparation when semantic search is ne
 **Owns**: First-pass extraction from a source the wiki has never seen before. Creates the `wiki/sources/src-*.md` page and the initial concept/entity/topic pages spawned from the source.
 
 **Does NOT do**:
+
 - Re-read or improve a source already in `wiki/sources/` — that is `wiki-enhancer`.
 - Cross-check claims against raw source after the fact — that is `wiki-source-verifier`.
 - Look for conflicts between the new source and existing wiki content — recommend `wiki-contradiction-detector` as a follow-up handoff.
@@ -43,6 +44,7 @@ as a search fallback; request environment preparation when semantic search is ne
 ## Ingest workflow
 
 ### 1. Analyze Source
+
 - Read the source material via the Read tool. **For PDFs, prefer the pre-extracted markdown sibling at `raw/sources-text/<same-stem>.md`.** If extraction is unavailable and the current tools support PDF input, read the original PDF directly. Otherwise report the missing extraction and request preprocessing before continuing source-dependent work.
 - The wiki-agent launcher auto-extracts PDFs with `pdftotext -layout` (falling back to `qpdf --decrypt` for copy-protected files) before invoking you, regardless of whether the PDF sits in `raw/sources/` or `raw/inbox/`. The sibling is keyed by stem, so `raw/inbox/foo.pdf` and `raw/sources/foo.pdf` both extract to `raw/sources-text/foo.md`. If a needed source has not been preprocessed yet and direct PDF reading is unavailable, ask the operator or authorized ingest setup to run `python3 tools/wiki.py preprocess --pdf <path>.pdf`. Do not run preprocessing yourself: it writes `raw/sources-text/`, outside your `wiki/` write scope.
 - Layout artifacts (page numbers, broken paragraphs, table noise) are expected in extracted text — read past them.
@@ -51,12 +53,14 @@ as a search fallback; request environment preparation when semantic search is ne
 - Understand the main thesis/argument
 
 ### 2. Create Source Page
+
 - Use `wiki/_templates/source.md` template
 - Add frontmatter: source_id, source_type, origin, ingested_on
 - Write summary (one falsifiable sentence, <=220 chars)
 - Document key claims in body
 
 ### 3. Link and Update
+
 - **Find related existing pages** before creating new ones — search first:
   - `qmd query "<concept or topic>" --format json` — hybrid BM25 + vector + LLM reranking. Best for finding semantically related pages even when keywords differ. Prefer `mcp__qmd__*` tools when available.
   - `qmd search "<keywords>"` — BM25 only. Fast, good for exact term lookups.
@@ -68,6 +72,7 @@ as a search fallback; request environment preparation when semantic search is ne
 - Note contradictions where claims conflict
 
 ### 4. Maintenance
+
 - Run `python3 tools/wiki.py lint` and fix issues
 - Run `python3 tools/wiki.py index --rebuild` so the headless `_index.md` mirrors include the new pages
 - Run `python3 tools/wiki.py links --fix --write` to add portable markdown mirrors to the wikilinks you wrote (the tool computes correct relative paths — never hand-write the `([Title](path.md))` mirror)
@@ -89,6 +94,7 @@ Books cover a *curriculum*, not a single thesis. Extract differently:
 7. **Do NOT summarize every chapter** - Instead, surface the ~10-20 ideas the book centers on. Thin chapters → brief notes; dense chapters → full concept pages.
 
 Source page for a book should include:
+
 - `## Structure` — chapter outline
 - `## Core Concepts` — list of wiki links to concept pages
 - `## Key Methods` — list of wiki links to method pages
@@ -157,6 +163,7 @@ prose labels like "Attached source material" or "Ground-truth extracted text":
 ```
 
 Rules:
+
 - **Source text is mandatory** — there is always a `raw/sources-text/<stem>.md`
   (the pre-extracted markdown you read from). Link it **without** the `.md`
   extension. The PDF line is **optional**: include it only when
@@ -188,8 +195,9 @@ Rules:
 ## Frontmatter requirements
 
 For source pages:
+
 - title, type, status, created, updated, summary
-- source_id (generate with `python3 tools/wiki_extra.py next-id`)
+- source_id (generate with `python3 tools/wiki.py next-id`)
 - source_type (article, paper, book, pdf, video, podcast, dataset, note, other)
 - origin (URL or publication)
 - ingested_on (YYYY-MM-DD)
@@ -197,6 +205,7 @@ For source pages:
 ## Output
 
 After ingest, report:
+
 ```
 ## Ingest Complete
 - Source: [name]
@@ -214,6 +223,7 @@ Use LaTeX for all mathematical symbols, formulas, and expressions:
 - **Block math**: `$$\sum_{i=1}^{n} a_i$$` for standalone equations
 
 Examples:
+
 - Big-O: $O(n \log n)$
 - Recurrence: $T(n) = 2T(n/2) + O(n)$
 - Fraction: $\frac{a}{b}$

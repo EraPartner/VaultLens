@@ -3,7 +3,7 @@ title: Enhancement Strategies
 type: page
 status: active
 created: 2026-06-29
-updated: 2026-08-15
+updated: 2026-09-05
 summary: Names the source-first vs topic-first axis that governs how the wiki grows, so coverage decisions are auditable rather than implicit.
 tags: [system, enhancement, coverage]
 ---
@@ -53,4 +53,3 @@ catalog of its bookshelf; one built only topic-first leaves ingested sources hal
 ## Sources
 
 - `../../.agents/roles/wiki-enhancer.md` — the strategy definitions (A–E) this page names.
-- `../reports/scheduled-emerge-2026-06-29.md` — the emerge run that surfaced the unnamed source-sweep pattern.

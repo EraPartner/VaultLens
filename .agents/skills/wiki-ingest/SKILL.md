@@ -19,7 +19,7 @@ description: Add source material to the wiki — ingest a PDF, article, paper, v
    — on the host invoke via `brain-wiki ingest …` (wiki-agent.py refuses to run on the host directly).
    It does extraction, source-page creation, concept/topic updates, lint, and the log entry.
 4. **Manual flow** (when doing it inline): create `wiki/sources/src-YYYY-MM-DD-NNN.md`
-   (`python3 tools/wiki_extra.py next-id` for the ID) with required frontmatter — the base set
+   (`python3 tools/wiki.py next-id` for the ID) with required frontmatter — the base set
    (`title`, `type: source`, `status`, `created`, `updated`, `summary`) **plus** `source_id`,
    `source_type` (article/paper/book/pdf/video/podcast/dataset/note/other), `origin`, `ingested_on`.
    Cite the raw material from the source page: `- Source text: [[raw/sources-text/<stem>]]` (always)

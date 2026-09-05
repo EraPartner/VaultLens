@@ -1,6 +1,6 @@
 ---
 name: wiki-agents
-description: Choose and run the vault's custom wiki agents — ingest, enhance, verify, quality-audit, contradiction-detect, search, challenge (red-team), connect, emerge, discover, and the Chief of Staff. Use when the user wants to improve/audit/verify wiki pages, red-team a decision, bridge domains, surface patterns, rank next steps, get a daily brief, or asks which agent fits a task.
+description: Choose and launch a custom wiki agent when the user asks which agent fits, names a wiki agent, or needs launcher, model, or effort guidance. This skill routes work; operation procedures remain in their dedicated skills.
 ---
 
 # Wiki agents — picking and running
