@@ -22,35 +22,56 @@
 # reaches the box out-of-band via the root-owned managed-settings.json bind).
 sandbox_stage_claude_config() {
   local profile="$1"
-  local src dst item jf f
+  local src dst item jf f items_file item_count
+  items_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/claude-stage-items.txt"
+  if [[ ! -r "$items_file" ]]; then
+    echo "sandbox: refusing Claude stage without curated item list: $items_file" >&2
+    return 1
+  fi
+  item_count=0
+  while IFS= read -r item || [[ -n "$item" ]]; do
+    case "$item" in
+      ''|\#*) continue ;;
+      *[!A-Za-z0-9._-]*|.|..)
+        echo "sandbox: refusing invalid Claude stage item: $item" >&2
+        return 1
+        ;;
+    esac
+    item_count=$((item_count + 1))
+  done < "$items_file"
+  if (( item_count == 0 )); then
+    echo "sandbox: refusing empty Claude stage item list: $items_file" >&2
+    return 1
+  fi
   src="$(cd "$HOME/.claude" 2>/dev/null && pwd -P || true)"
   dst="$HOME/.claude-sandbox/stage/$profile"
   rm -rf "$dst/dot-claude"
   mkdir -p "$dst/dot-claude"
   chmod 0700 "$dst" "$dst/dot-claude"
   if [[ -n "$src" && -d "$src" ]]; then
-    for item in settings.json keybindings.json CLAUDE.md agents rules commands skills status-line.sh; do
+    while IFS= read -r item || [[ -n "$item" ]]; do
+      case "$item" in ''|\#*) continue ;; esac
       [[ -e "$src/$item" ]] || continue
-      if ! cp -a "$src/$item" "$dst/dot-claude/"; then
-        echo "sandbox: refusing incomplete Claude stage after copy failure: $item" >&2
-        rm -rf "$dst/dot-claude" "$dst/claude.json"
-        return 1
-      fi
-    done
-    # statusline/ and plugins/ hold git CLONES (plugin/marketplace checkouts) whose
-    # .git dirs can be many MB — exclude them AT COPY TIME rather than cp -a then
-    # delete, which paid full copy I/O for data immediately discarded, on the
-    # interactive sandbox-start path. tar --exclude skips the whole .git subtree at
-    # any depth; works with both bsdtar (macOS) and GNU tar, bash-3.2 safe.
-    for item in statusline plugins; do
-      [[ -e "$src/$item" ]] || continue
-      if ! tar -C "$src" --exclude .git -cf - "$item" \
-        | tar -C "$dst/dot-claude" -xf -; then
-        echo "sandbox: refusing incomplete Claude stage after archive failure: $item" >&2
-        rm -rf "$dst/dot-claude" "$dst/claude.json"
-        return 1
-      fi
-    done
+      case "$item" in
+        statusline|plugins)
+          # These entries can hold multi-megabyte Git clones. Exclude nested
+          # repositories at copy time instead of copying and deleting them.
+          if ! tar -C "$src" --exclude .git -cf - "$item" \
+            | tar -C "$dst/dot-claude" -xf -; then
+            echo "sandbox: refusing incomplete Claude stage after archive failure: $item" >&2
+            rm -rf "$dst/dot-claude" "$dst/claude.json"
+            return 1
+          fi
+          ;;
+        *)
+          if ! cp -a "$src/$item" "$dst/dot-claude/"; then
+            echo "sandbox: refusing incomplete Claude stage after copy failure: $item" >&2
+            rm -rf "$dst/dot-claude" "$dst/claude.json"
+            return 1
+          fi
+          ;;
+      esac
+    done < "$items_file"
     # Rewrite host plugin paths to the container path. Escape the interpolated
     # values for BRE + the `#` sed delimiter first: a host $HOME/$src containing a
     # sed metacharacter (or a literal `#`) would otherwise produce a malformed
@@ -182,6 +203,150 @@ sandbox_ensure_codex_login() {
   fi
 }
 
+# --- Verify baked tool pins once per running container boot ------------------
+# Usage: sandbox_verify_pins_cached CONTAINER USER VERIFIER PINFILE PIN_ENV TAG
+#
+# A successful full verification is cached under /run, which is root-owned and
+# unavailable to the sandbox user. The record is content-bound to the current
+# boot, verifier, pin manifest, service identity, and protocol version. Any
+# missing, malformed, stale, or insecure record is a cache miss, never success.
+# The full checker still runs as the service user with startup hooks and pinfile
+# overrides disabled. Cache publication failure only loses the optimization: the
+# current launch was fully verified and may continue.
+sandbox_verify_pins_cached() {
+  local cname="$1" service_user="$2" verifier="$3" pinfile="$4" pin_env="$5" tag="$6"
+  local clean_path sentinel cache_script
+
+  case "$service_user" in ''|*[!A-Za-z0-9_.-]*) return 64 ;; esac
+  case "$verifier:$pinfile" in *[!A-Za-z0-9_./:-]*|*:*:*) return 64 ;; esac
+  case "$verifier:$pinfile" in /*:/*) ;; *) return 64 ;; esac
+  case "$pin_env" in [A-Za-z_]* ) ;; *) return 64 ;; esac
+  case "$pin_env" in *[!A-Za-z0-9_]*) return 64 ;; esac
+  case "$tag" in ''|*[!A-Za-z0-9_.-]*) return 64 ;; esac
+
+  clean_path='/usr/local/share/npm-global/bin:/opt/python/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/home/dev/.npm-global/bin'
+  sentinel="/run/lockbox-verify-pins/$tag.ok"
+  # The single-quoted program is intentionally expanded only by the container's
+  # Bash after its positional arguments have been supplied.
+  # shellcheck disable=SC2016
+  cache_script='set -eu
+mode=$1
+sentinel=$2
+verifier=$3
+pinfile=$4
+service_user=$5
+clean_path=$6
+tag=$7
+parent=${sentinel%/*}
+
+secure_node() {
+  node=$1
+  [ ! -L "$node" ] || return 1
+  [ "$(stat -c %u "$node")" = 0 ] || return 1
+  perms=$(stat -c %a "$node")
+  [ $((0$perms & 022)) -eq 0 ]
+}
+
+secure_chain() {
+  original=$1
+  case "$original" in /*) ;; *) return 1 ;; esac
+  resolved=$(readlink -f -- "$original") || return 1
+  for start in "$original" "$resolved"; do
+    current=$start
+    while :; do
+      [ "$(stat -c %u -- "$current")" = 0 ] || return 1
+      if [ ! -L "$current" ]; then
+        perms=$(stat -c %a -- "$current") || return 1
+        [ $((0$perms & 022)) -eq 0 ] || return 1
+      fi
+      [ "$current" = / ] && break
+      current=${current%/*}
+      [ -n "$current" ] || current=/
+    done
+  done
+}
+
+expected_key() {
+  boot_id=$(cat /proc/sys/kernel/random/boot_id)
+  verifier_hash=$(sha256sum "$verifier" | awk "{print \$1}")
+  pinfile_hash=$(sha256sum "$pinfile" | awk "{print \$1}")
+  printf "%s\n" \
+    lockbox-verify-pins-cache-v1 "$boot_id" "$verifier" "$verifier_hash" \
+    "$pinfile" "$pinfile_hash" "$service_user" "$clean_path" \
+    | sha256sum | awk "{print \$1}"
+}
+
+case "$mode" in
+  probe)
+    [ -x "$verifier" ] && [ -r "$pinfile" ] || exit 1
+    secure_chain "$verifier" && secure_chain "$pinfile" || exit 1
+    secure_node "$parent" || exit 1
+    [ -f "$sentinel" ] && [ ! -L "$sentinel" ] || exit 1
+    secure_node "$sentinel" || exit 1
+    expected=$(expected_key) || exit 1
+    actual=$(cat "$sentinel") || exit 1
+    [ "$actual" = "$expected" ]
+    ;;
+  commit)
+    [ -x "$verifier" ] && [ -r "$pinfile" ] || exit 1
+    secure_chain "$verifier" && secure_chain "$pinfile" || exit 1
+    if [ -e "$parent" ]; then
+      secure_node "$parent" || exit 1
+    else
+      install -d -o root -g root -m 0755 "$parent"
+    fi
+    expected=$(expected_key) || exit 1
+    tmp="$parent/.$tag.tmp.$$"
+    trap '\''rm -f "$tmp"'\'' EXIT HUP INT TERM
+    umask 077
+    printf "%s\n" "$expected" > "$tmp"
+    chown root:root "$tmp"
+    chmod 0444 "$tmp"
+    mv -fT "$tmp" "$sentinel"
+    trap - EXIT HUP INT TERM
+    ;;
+  invalidate)
+    if [ -d "$parent" ] && [ ! -L "$parent" ]; then
+      rm -f "$sentinel"
+    fi
+    ;;
+  *) exit 64 ;;
+esac'
+
+  if container exec --user root -e BASH_ENV= "$cname" \
+      /usr/bin/env -u "$pin_env" PATH="$clean_path" /bin/bash -c "$cache_script" bash \
+      probe "$sentinel" "$verifier" "$pinfile" "$service_user" "$clean_path" "$tag"; then
+    return 0
+  fi
+
+  if ! container exec --user "$service_user" -e BASH_ENV= "$cname" \
+      /usr/bin/env -u "$pin_env" PATH="$clean_path" "$verifier" --quiet; then
+    container exec --user root -e BASH_ENV= "$cname" \
+      /usr/bin/env -u "$pin_env" PATH="$clean_path" /bin/bash -c "$cache_script" bash \
+      invalidate "$sentinel" "$verifier" "$pinfile" "$service_user" "$clean_path" "$tag" \
+      >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  # Old images have a valid full checker but lack the ancestry and manifest
+  # validation required for safe reuse. Keep their per-launch full check and do
+  # not publish a cache record until the baked verifier declares this protocol.
+  local cache_protocol
+  cache_protocol="$(container exec --user "$service_user" -e BASH_ENV= "$cname" \
+    /usr/bin/env -u "$pin_env" PATH="$clean_path" "$verifier" --print-cache-protocol \
+    2>/dev/null || true)"
+  if [[ "$cache_protocol" != lockbox-verify-pins-cache-v1 ]]; then
+    echo "launcher: WARN — image verifier lacks cache protocol; full verification will repeat until rebuild." >&2
+    return 0
+  fi
+
+  if ! container exec --user root -e BASH_ENV= "$cname" \
+      /usr/bin/env -u "$pin_env" PATH="$clean_path" /bin/bash -c "$cache_script" bash \
+      commit "$sentinel" "$verifier" "$pinfile" "$service_user" "$clean_path" "$tag"; then
+    echo "launcher: WARN — pin verification passed, but its root-owned cache could not be written." >&2
+  fi
+}
+
 # --- Install an exit trap: push config back, then optionally power down --------
 # Usage: sandbox_install_autosync_trap <profile> <container-id> <autosync:0|1> [stop_on_exit:0|1]
 # On shell exit the trap runs, at most once:
@@ -307,6 +472,6 @@ sandbox_git_ro_mounts() {
   GIT_RO_MOUNTS+=(-v "$src:$ws/${hp}:ro")
 }
 
-# ─── vendored by LockBox v0.1.0 · canonical sha256:56c501b4179022022df756ff919ff80ed2a34eef9bfbb9a0db8cf5131ef6fdd3 ───
+# ─── vendored by LockBox v0.1.0 · canonical sha256:131528c1d266e295dad5b1fc0aa1a8f04c915b1890e0f366e2193e5c70ce6daa ───
 # Generated from the canonical source by LockBox/sync.sh — DO NOT EDIT HERE.
 # Edit LockBox/launcher-common.sh and re-run ./sync.sh.

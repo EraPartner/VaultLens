@@ -1,0 +1,16 @@
+# Declarative host ~/.claude entries allowed into a sandbox staging directory.
+# One basename per line. Consumers reject paths, whitespace, and an empty list.
+settings.json
+keybindings.json
+CLAUDE.md
+agents
+rules
+commands
+skills
+status-line.sh
+statusline
+plugins
+
+# ─── vendored by LockBox v0.1.0 · canonical sha256:dee2fdf47f10c76108fe82d033df567f64d889cb2a0b0ca9f27d31d7b4c2d380 ───
+# Generated from the canonical source by LockBox/sync.sh — DO NOT EDIT HERE.
+# Edit LockBox/claude-stage-items.txt and re-run ./sync.sh.
