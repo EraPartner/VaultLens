@@ -81,10 +81,9 @@ at the overview altitude.
 git clone https://github.com/EraPartner/VaultLens.git my-wiki
 cd my-wiki
 
-# Initialize the data skeleton (canonical set — AGENTS.md "Directory contract" is authoritative)
-mkdir -p raw/sources raw/sources-text raw/assets raw/inbox raw/review-inbox
-mkdir -p wiki/system wiki/sources wiki/entities wiki/concepts wiki/topics \
-         wiki/syntheses wiki/comparisons wiki/queries wiki/reports wiki/inventory wiki/_templates
+# Repair the fixed scaffold and create local navigation files.
+# This is idempotent and never overwrites existing files.
+python3 tools/wiki.py init
 
 # Open in Obsidian
 open .

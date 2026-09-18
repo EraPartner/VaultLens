@@ -3,7 +3,7 @@ title: Setup Guide
 type: page
 status: active
 created: 2026-04-11
-updated: 2026-09-05
+updated: 2026-09-18
 summary: How to set up the public wiki template, projects, search index, and scheduled agents safely.
 ---
 
@@ -21,8 +21,9 @@ Based on [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf5
 ## Quick Setup
 
 ```bash
-# Initialize directories for your data
-mkdir -p raw/sources raw/assets raw/inbox raw/review-inbox
+# Repair the fixed scaffold and create local navigation files.
+# This is idempotent and never overwrites existing files.
+python3 tools/wiki.py init
 
 # Verify tools inside the Brain LockBox container
 brain-wiki lint
@@ -155,6 +156,7 @@ Second Brain/
 ├── AGENTS.md              # Operating schema
 ├── raw/                   # YOUR source material (immutable)
 │   ├── sources/
+│   ├── sources-text/
 │   ├── assets/
 │   ├── inbox/             # approved pending ingestion
 │   └── review-inbox/      # explicit approval required

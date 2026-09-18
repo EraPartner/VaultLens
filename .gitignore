@@ -49,9 +49,24 @@ __pycache__
 !.obsidian/plugins/templater-obsidian/data.json
 
 # Raw material belongs to the local Brain, not the public skeleton. Ignore every
-# present and future raw category while retaining the scaffold placeholder.
+# present and future raw payload while retaining the fixed directory scaffold.
 raw/*
 !raw/.gitkeep
+!raw/sources/
+raw/sources/*
+!raw/sources/.gitkeep
+!raw/sources-text/
+raw/sources-text/*
+!raw/sources-text/.gitkeep
+!raw/assets/
+raw/assets/*
+!raw/assets/.gitkeep
+!raw/inbox/
+raw/inbox/*
+!raw/inbox/.gitkeep
+!raw/review-inbox/
+raw/review-inbox/*
+!raw/review-inbox/.gitkeep
 wiki/comparisons/*
 wiki/concepts/*
 wiki/entities/*
@@ -62,7 +77,8 @@ wiki/sources/*
 wiki/syntheses/*
 wiki/topics/*
 wiki/log.md
-wiki/log/
+wiki/log/*
+!wiki/log/.gitkeep
 wiki/index.md
 
 # Derived CLI-readable indexes (`wiki.py index --rebuild`). Per-category

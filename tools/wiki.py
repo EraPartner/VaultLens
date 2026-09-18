@@ -31,7 +31,19 @@ IGNORE_FILES = {
     "AGENTS.md",
     "AGENTS.override.md",
 }
-SPECIAL_LINK_TARGETS = {"index", "log", "home", "category", "page-name", "path", "to"}
+SPECIAL_LINK_TARGETS = {
+    "index",
+    "log",
+    "home",
+    "category",
+    "page-name",
+    "path",
+    "to",
+    # This operator-specific page is intentionally absent from the public
+    # skeleton. When a local Brain supplies it, normal resolution above counts
+    # the link and prevents the private page from becoming an orphan.
+    "entities/user-background",
+}
 
 
 @dataclass
@@ -462,6 +474,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Markdown wiki maintenance tools")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    sub.add_parser(
+        "init",
+        help="Create missing fixed directories and local navigation files",
+    )
+
     lint_parser = sub.add_parser("lint", help="Validate links and metadata")
     lint_parser.add_argument(
         "--strict",
@@ -691,6 +708,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    if args.command == "init":
+        from wiki_init import run_init
+
+        return run_init(ROOT)
     if args.command == "lint":
         from wiki_lint import run_lint
 

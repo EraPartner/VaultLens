@@ -102,6 +102,7 @@ vaultlens_cloud_prepare() {
   vaultlens_ensure_qmd
 
   cd "$repo_root" || exit 1
+  python3 tools/wiki.py init
   vaultlens_ensure_collection wiki "$repo_root/wiki"
   vaultlens_ensure_collection raw "$repo_root/raw"
   vaultlens_package_env qmd update

@@ -3,7 +3,7 @@ title: Home
 type: page
 status: active
 created: 2026-04-11
-updated: 2026-09-05
+updated: 2026-09-18
 summary: Start page for wiki, project, review-queue, and scheduled-agent workflows.
 ---
 
@@ -23,7 +23,7 @@ This wiki implements the [LLM Wiki pattern](https://gist.github.com/karpathy/442
 
 - [[index|Catalog]] - All wiki pages
 - [[log|Activity Log]] - Chronological history
-- [[entities/user-background|Operator Profile]] ([Operator Profile](entities/user-background.md)) - Who this Brain serves; read first to calibrate tone and priorities
+- [[entities/user-background|Operator Profile]] ([Operator Profile](entities/user-background.md)) - Optional local page describing who this Brain serves
 - [[system/schema|Schema]] ([Schema](system/schema.md)) - Operating conventions
 - [[system/enhancement-strategies|Enhancement Strategies]] ([Enhancement Strategies](system/enhancement-strategies.md)) - Source-first vs topic-first coverage axis
 - [[SETUP|Setup Guide]] ([Setup Guide](SETUP.md)) - Installation and configuration
