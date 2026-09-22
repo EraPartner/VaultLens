@@ -2,7 +2,7 @@
 
 This vault implements the "LLM Wiki" pattern (after Karpathy's llm-wiki) as a persistent,
 compounding knowledge base. This file is the provider-neutral source of truth for how AI agents
-operate here. Claude Code loads it through `CLAUDE.md`; ChatGPT and Codex load it directly.
+operate here. Claude Code, ChatGPT, and Codex load it directly.
 
 Multi-step **runbooks** (ingest, maintenance, projects, agents) live in `.agents/skills/*/SKILL.md`
 and load automatically when relevant. Canonical custom-agent role bodies live in `.agents/roles/`;
@@ -91,9 +91,8 @@ the review-inbox consent gate. Other authorized reads still follow the normal so
 ## Projects layer
 
 `projects/` consumes the wiki as a knowledge base. Each subfolder is one project workspace that owns
-its structure. The scaffold (`project new`) creates `project.md`, `AGENTS.md`, `CLAUDE.md`,
-`TODO.md`, `AGENDA.md`, and `queries/`. `AGENTS.md` is the provider-neutral project entrypoint;
-`CLAUDE.md` imports it for Claude Code.
+its structure. The scaffold (`project new`) creates `project.md`, `AGENTS.md`,
+`TODO.md`, `AGENDA.md`, and `queries/`. `AGENTS.md` is the project entrypoint.
 
 Every project includes a dormant `AGENDA.md`. When enabled, the nightly runner executes only clear,
 due work inside that project and snapshots it for review or undo. Ambiguous tasks go to the
@@ -118,8 +117,7 @@ a project loads them automatically. A root-launched task must read that file bef
 project. Project `## Rules` in `project.md` override them on conflict.
 
 There is no dedicated project agent: launch a supported agent from inside `projects/<slug>/` and it
-loads the root and project `AGENTS.md` chain. Claude Code reaches the same context through the local
-`CLAUDE.md` compatibility import.
+loads the root and project `AGENTS.md` chain, including Claude Code.
 
 ## Agent integration
 

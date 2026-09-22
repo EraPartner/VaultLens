@@ -2,9 +2,7 @@
 """Project workspaces that consume the wiki KB.
 
 A project lives under `projects/<slug>/` with its own `project.md` (the source of
-truth), provider-neutral AGENTS.md instructions, a CLAUDE.md compatibility shim,
-and a TODO.md that feeds
-the aggregated `projects/TODO.md`. This module scaffolds new projects from
+truth), AGENTS.md instructions, and a TODO.md that feeds the aggregated `projects/TODO.md`. This module scaffolds new projects from
 templates and manages their `wiki_refs`. The `Project` dataclass and
 `list_projects` loader live in `wiki.py` (shared with the linter).
 """
@@ -107,7 +105,7 @@ python3 tools/wiki.py project link {slug} concepts/some-page
 """
 
 
-# Project AGENTS.md: Codex discovers this file from the directory hierarchy.
+# Project AGENTS.md: supported agents discover this file from the directory hierarchy.
 # It explicitly requires reading project.md because AGENTS.md has no import syntax.
 AGENTS_MD_TEMPLATE = """\
 # Project Agent Context
@@ -129,18 +127,6 @@ Write only inside this project directory. Never modify `wiki/` or `raw/`.
   - a referenced concept page is shallow → recommend `wiki-enhancer`
   - a needed source isn't in the wiki yet → recommend `wiki-ingest` with the candidate path
   - the question turns out to need no project context → suggest `wiki-search` instead
-"""
-
-
-# Claude Code imports the neutral project instructions and project.md. The root
-# CLAUDE.md imports the provider-neutral root AGENTS.md separately.
-CLAUDE_MD_TEMPLATE = """\
-@AGENTS.md
-@project.md
-
-# Claude Code compatibility
-
-`AGENTS.md` is the provider-neutral project instruction source.
 """
 
 
@@ -278,7 +264,6 @@ def _project_new(slug: str) -> int:
         encoding="utf-8",
     )
     (project_dir / "AGENTS.md").write_text(AGENTS_MD_TEMPLATE, encoding="utf-8")
-    (project_dir / "CLAUDE.md").write_text(CLAUDE_MD_TEMPLATE, encoding="utf-8")
     (project_dir / "TODO.md").write_text(
         TODO_TEMPLATE.format(slug=cleaned), encoding="utf-8"
     )
@@ -288,9 +273,6 @@ def _project_new(slug: str) -> int:
     print("  - project.md")
     print(
         "  - AGENTS.md      (provider-neutral project instructions; read project.md first)"
-    )
-    print(
-        "  - CLAUDE.md      (Claude Code compatibility imports AGENTS.md + project.md)"
     )
     print(
         "  - TODO.md        (per-project todo; embedded into projects/TODO.md, P1 items surface in projects/TODO-widget.md)"

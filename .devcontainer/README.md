@@ -219,7 +219,7 @@ race a live host-side claude on `~/.claude.json`. Disable per session with
 `VAULTLENS_AUTOSYNC=0`; `vaultlens-claude-sync push` remains the manual fallback (e.g.
 after a crash, or to retry a failed auto-push).
 
-Repo-level config (`CLAUDE.md`, `.claude/skills/`, `.claude/agents/`) lives in the
+Repo-level config (`AGENTS.md`, `.claude/skills/`, `.claude/agents/`) lives in the
 mounted workspace and needs **no** sync.
 
 **Files excluded from sync** (volatile runtime state, not portable):

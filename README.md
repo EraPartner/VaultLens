@@ -9,7 +9,7 @@ workspaces. You drop sources into `raw/`; agents distil them into a curated `wik
 `projects/` read from the wiki without ever writing back to it.
 
 Clone it, point Obsidian at it, and start a ChatGPT/Codex or Claude Code session.
-`AGENTS.md` is the provider-neutral operating schema; `CLAUDE.md` is a compatibility import.
+`AGENTS.md` is the shared operating schema for these agents.
 
 ## Architecture — four layers
 
@@ -99,8 +99,8 @@ The `projects/` directory is an application layer on top of the wiki. Each subfo
 workspace that consumes the wiki as a knowledge base **without ever writing to it**.
 
 Each project has a `project.md` declaring its description, layout, rules, and linked wiki pages. The
-scaffold also drops a project `AGENTS.md` plus a thin `CLAUDE.md` compatibility entrypoint, so either
-provider picks up the project's context and the root schema (`## Working inside a project`).
+scaffold also drops a project `AGENTS.md`, so each agent picks up the project's context
+and the root schema (`## Working inside a project`).
 
 ### Scaffold a project
 
@@ -117,8 +117,7 @@ python3 tools/wiki.py project unfreeze my-project                        # resto
 ### Work inside a project
 
 `cd` into `projects/<slug>/` and start ChatGPT/Codex or Claude Code. The project's `AGENTS.md`
-requires reading `project.md`; Claude reaches the same instructions through `CLAUDE.md`. The root
-`## Working inside a project` section defines the wiki search ladder, citation discipline, and the
+requires reading `project.md`. The root `## Working inside a project` section defines the wiki search ladder, citation discipline, and the
 Q&A artifact convention. Durable Q&A lands in `projects/<slug>/queries/` by default, redirectable
 via `## Rules` in `project.md`.
 
@@ -143,7 +142,6 @@ wiki_refs:
 projects/my-project/
   project.md     ← metadata, description, layout, rules, wiki refs
   AGENTS.md      ← provider-neutral project instructions (auto-generated)
-  CLAUDE.md      ← Claude compatibility import (auto-generated)
   TODO.md        ← per-project todo; embedded into projects/TODO.md (auto-generated)
   queries/       ← Q&A artifacts
   papers/        ← relevant PDFs

@@ -229,12 +229,6 @@ def main() -> int:
     projects = sorted(
         project_md.parent for project_md in (wa.ROOT / "projects").glob("*/project.md")
     )
-    expected_claude_adapter = (
-        "@AGENTS.md\n"
-        "@project.md\n\n"
-        "# Claude Code compatibility\n\n"
-        "`AGENTS.md` is the provider-neutral project instruction source.\n"
-    )
     missing_neutral_sources = [
         project.name for project in projects if not (project / "AGENTS.md").is_file()
     ]
@@ -243,19 +237,6 @@ def main() -> int:
         not missing_neutral_sources,
         ", ".join(missing_neutral_sources),
     )
-    stale_claude_adapters = [
-        project.name
-        for project in projects
-        if not (project / "CLAUDE.md").is_file()
-        or (project / "CLAUDE.md").read_text(encoding="utf-8")
-        != expected_claude_adapter
-    ]
-    check(
-        "every project Claude adapter is thin and canonical",
-        not stale_claude_adapters,
-        ", ".join(stale_claude_adapters),
-    )
-
     mcp_projects = [
         project
         for project in projects

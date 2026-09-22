@@ -389,17 +389,11 @@ def test_project_provider_scaffold() -> None:
             rc = wiki_projects._project_new("model-agnostic")
             project = projects / "model-agnostic"
             agents_text = (project / "AGENTS.md").read_text(encoding="utf-8")
-            claude_text = (project / "CLAUDE.md").read_text(encoding="utf-8")
             check("project scaffold succeeds", rc == 0)
             check("project gets neutral AGENTS.md", "read\n`project.md`" in agents_text)
             check(
-                "Claude shim imports neutral context",
-                claude_text.startswith("@AGENTS.md\n@project.md\n"),
-                claude_text,
-            )
-            check(
-                "Claude shim does not duplicate project rules",
-                "Project context wins ties" not in claude_text,
+                "project scaffold needs no Claude shim",
+                not (project / "CLAUDE.md").exists(),
             )
         finally:
             wiki_projects.ROOT = saved_root

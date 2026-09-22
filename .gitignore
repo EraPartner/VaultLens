@@ -31,7 +31,7 @@ wiki-log-*.json
 .devcontainer/bin/agent
 
 # Agent config: track canonical AGENTS.md/.agents/, generated provider adapters,
-# CLAUDE.md, and shared settings; only machine-local Claude state stays ignored.
+# and shared settings. Only machine-local Claude state stays ignored.
 .claude/settings.local.json
 .claude/worktrees/
 .ruff_cache

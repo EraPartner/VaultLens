@@ -16,15 +16,6 @@ CLAUDE_DIR = ROOT / ".claude" / "agents"
 CODEX_DIR = ROOT / ".codex" / "agents"
 PROJECTS_DIR = ROOT / "projects"
 
-PROJECT_CLAUDE_ADAPTER = """\
-@AGENTS.md
-@project.md
-
-# Claude Code compatibility
-
-`AGENTS.md` is the provider-neutral project instruction source.
-"""
-
 CLAUDE_TOOLS = {
     "read": "Read, Glob, Grep",
     "read-shell": "Read, Glob, Grep, Bash",
@@ -202,8 +193,7 @@ def main(argv: list[str] | None = None) -> int:
     for role in roles:
         ok &= _sync(CLAUDE_DIR / f"{role.name}.md", claude_manifest(role), args.check)
         ok &= _sync(CODEX_DIR / f"{role.name}.toml", codex_manifest(role), args.check)
-    for project in load_projects():
-        ok &= _sync(project / "CLAUDE.md", PROJECT_CLAUDE_ADAPTER, args.check)
+    load_projects()
     return 0 if ok else 1
 
 
