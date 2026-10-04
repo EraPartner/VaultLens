@@ -20,96 +20,6 @@
                 }
             }
         ],
-        "./agents/wiki-agent.py": [
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 57,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 20,
-                    "endColumn": 71,
-                    "lineCount": 4
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 68,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 75,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 16,
-                    "endColumn": 72,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 62,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 39,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 16,
-                    "endColumn": 44,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 28,
-                    "endColumn": 94,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 20,
-                    "endColumn": 71,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 80,
-                    "lineCount": 2
-                }
-            }
-        ],
         "./brain_launch.py": [
             {
                 "code": "reportDeprecated",
@@ -117,16 +27,6 @@
                     "startColumn": 19,
                     "endColumn": 26,
                     "lineCount": 1
-                }
-            }
-        ],
-        "./context_budget.py": [
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 84,
-                    "lineCount": 2
                 }
             }
         ],
@@ -172,14 +72,6 @@
                 "range": {
                     "startColumn": 13,
                     "endColumn": 19,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 17,
                     "lineCount": 1
                 }
             }
@@ -650,25 +542,7 @@
                 }
             }
         ],
-        "./runtime/maintain.py": [
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 20,
-                    "endColumn": 82,
-                    "lineCount": 2
-                }
-            }
-        ],
         "./runtime/probe.py": [
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 28,
-                    "lineCount": 1
-                }
-            },
             {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
@@ -701,22 +575,6 @@
                     "startColumn": 19,
                     "endColumn": 22,
                     "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 48,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 60,
-                    "lineCount": 2
                 }
             },
             {
@@ -760,43 +618,11 @@
                 }
             },
             {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 16,
-                    "endColumn": 52,
-                    "lineCount": 2
-                }
-            },
-            {
                 "code": "reportUnusedParameter",
                 "range": {
                     "startColumn": 18,
                     "endColumn": 21,
                     "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 20,
-                    "endColumn": 71,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 24,
-                    "endColumn": 51,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 24,
-                    "endColumn": 54,
-                    "lineCount": 2
                 }
             }
         ],
@@ -807,24 +633,6 @@
                     "startColumn": 19,
                     "endColumn": 26,
                     "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 87,
-                    "lineCount": 2
-                }
-            }
-        ],
-        "./schedule/restore_project.py": [
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 20,
-                    "endColumn": 68,
-                    "lineCount": 2
                 }
             }
         ],
@@ -866,14 +674,6 @@
         ],
         "./scripts/repair-provider-host.py": [
             {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 31,
-                    "endColumn": 15,
-                    "lineCount": 33
-                }
-            },
-            {
                 "code": "reportUnusedParameter",
                 "range": {
                     "startColumn": 24,
@@ -892,14 +692,6 @@
                 }
             },
             {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 19,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportInvalidCast",
                 "range": {
                     "startColumn": 11,
@@ -910,14 +702,6 @@
         ],
         "./tests/test_agent.py": [
             {
-                "code": "reportImplicitRelativeImport",
-                "range": {
-                    "startColumn": 5,
-                    "endColumn": 12,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportExplicitAny",
                 "range": {
                     "startColumn": 25,
@@ -927,22 +711,6 @@
             }
         ],
         "./tests/test_agent_profiles.py": [
-            {
-                "code": "reportImplicitRelativeImport",
-                "range": {
-                    "startColumn": 5,
-                    "endColumn": 12,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
-                    "lineCount": 1
-                }
-            },
             {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
@@ -994,14 +762,6 @@
         ],
         "./tests/test_agent_safety.py": [
             {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportExplicitAny",
                 "range": {
                     "startColumn": 28,
@@ -1015,30 +775,6 @@
                     "startColumn": 53,
                     "endColumn": 55,
                     "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 40,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 14,
-                    "endColumn": 36,
-                    "lineCount": 4
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 60,
-                    "lineCount": 2
                 }
             },
             {
@@ -1092,26 +828,10 @@
         ],
         "./tests/test_brain_launch.py": [
             {
-                "code": "reportImplicitRelativeImport",
-                "range": {
-                    "startColumn": 5,
-                    "endColumn": 12,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportExplicitAny",
                 "range": {
                     "startColumn": 21,
                     "endColumn": 24,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
                     "lineCount": 1
                 }
             },
@@ -1156,14 +876,6 @@
                 }
             },
             {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
                     "startColumn": 13,
@@ -1225,53 +937,11 @@
                     "startColumn": 13,
                     "endColumn": 20,
                     "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 109,
-                    "lineCount": 8
-                }
-            }
-        ],
-        "./tests/test_host_repairs.py": [
-            {
-                "code": "reportImplicitRelativeImport",
-                "range": {
-                    "startColumn": 5,
-                    "endColumn": 12,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 20,
-                    "endColumn": 160,
-                    "lineCount": 12
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 20,
-                    "endColumn": 62,
-                    "lineCount": 3
                 }
             }
         ],
         "./tests/test_llm_provider.py": [
             {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
                     "startColumn": 13,
@@ -1300,29 +970,11 @@
                 "range": {
                     "startColumn": 13,
                     "endColumn": 19,
-                    "lineCount": 1
-                }
-            }
-        ],
-        "./tests/test_loader.py": [
-            {
-                "code": "reportImplicitRelativeImport",
-                "range": {
-                    "startColumn": 5,
-                    "endColumn": 12,
                     "lineCount": 1
                 }
             }
         ],
         "./tests/test_local_access.py": [
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
-                    "lineCount": 1
-                }
-            },
             {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
@@ -1357,14 +1009,6 @@
             }
         ],
         "./tests/test_local_runtime.py": [
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
-                    "lineCount": 1
-                }
-            },
             {
                 "code": "reportUnusedParameter",
                 "range": {
@@ -1856,14 +1500,6 @@
                 }
             },
             {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
                     "startColumn": 13,
@@ -1884,14 +1520,6 @@
                 "range": {
                     "startColumn": 43,
                     "endColumn": 47,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
                     "lineCount": 1
                 }
             },
@@ -2050,14 +1678,6 @@
         ],
         "./tests/test_provider_commands.py": [
             {
-                "code": "reportImplicitRelativeImport",
-                "range": {
-                    "startColumn": 5,
-                    "endColumn": 12,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportExplicitAny",
                 "range": {
                     "startColumn": 22,
@@ -2070,14 +1690,6 @@
                 "range": {
                     "startColumn": 12,
                     "endColumn": 16,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
                     "lineCount": 1
                 }
             },
@@ -2204,22 +1816,6 @@
         ],
         "./tests/test_provider_regressions.py": [
             {
-                "code": "reportImplicitRelativeImport",
-                "range": {
-                    "startColumn": 5,
-                    "endColumn": 12,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
                     "startColumn": 13,
@@ -2334,14 +1930,6 @@
         ],
         "./tests/test_provider_smoke.py": [
             {
-                "code": "reportImplicitRelativeImport",
-                "range": {
-                    "startColumn": 5,
-                    "endColumn": 12,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportExplicitAny",
                 "range": {
                     "startColumn": 0,
@@ -2354,14 +1942,6 @@
                 "range": {
                     "startColumn": 11,
                     "endColumn": 14,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
                     "lineCount": 1
                 }
             },
@@ -2423,14 +2003,6 @@
             }
         ],
         "./tests/test_root_discovery.py": [
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
-                    "lineCount": 1
-                }
-            },
             {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
@@ -2497,14 +2069,6 @@
             }
         ],
         "./tests/test_run_reports.py": [
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
-                    "lineCount": 1
-                }
-            },
             {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
@@ -2579,22 +2143,6 @@
             }
         ],
         "./tests/test_runtime_deploy.py": [
-            {
-                "code": "reportImplicitRelativeImport",
-                "range": {
-                    "startColumn": 5,
-                    "endColumn": 12,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
-                    "lineCount": 1
-                }
-            },
             {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
@@ -2710,22 +2258,6 @@
         ],
         "./tests/test_runtime_maintenance.py": [
             {
-                "code": "reportImplicitRelativeImport",
-                "range": {
-                    "startColumn": 5,
-                    "endColumn": 12,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
                     "startColumn": 13,
@@ -2759,22 +2291,6 @@
             }
         ],
         "./tests/test_runtime_probe.py": [
-            {
-                "code": "reportImplicitRelativeImport",
-                "range": {
-                    "startColumn": 5,
-                    "endColumn": 12,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
-                    "lineCount": 1
-                }
-            },
             {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
@@ -2862,14 +2378,6 @@
                     "endColumn": 50,
                     "lineCount": 1
                 }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 16,
-                    "endColumn": 71,
-                    "lineCount": 2
-                }
             }
         ],
         "./tests/test_runtime_verification.py": [
@@ -2886,14 +2394,6 @@
                 "range": {
                     "startColumn": 4,
                     "endColumn": 10,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
                     "lineCount": 1
                 }
             },
@@ -3070,22 +2570,6 @@
         ],
         "./tests/test_schedule_recovery.py": [
             {
-                "code": "reportImplicitRelativeImport",
-                "range": {
-                    "startColumn": 5,
-                    "endColumn": 12,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
                     "startColumn": 13,
@@ -3174,14 +2658,6 @@
                 }
             },
             {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 20,
-                    "endColumn": 42,
-                    "lineCount": 4
-                }
-            },
-            {
                 "code": "reportPrivateLocalImportUsage",
                 "range": {
                     "startColumn": 29,
@@ -3223,14 +2699,6 @@
             }
         ],
         "./tests/test_scoped_search.py": [
-            {
-                "code": "reportImplicitOverride",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 13,
-                    "lineCount": 1
-                }
-            },
             {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
@@ -3346,27 +2814,11 @@
         ],
         "./tests/test_wiki.py": [
             {
-                "code": "reportImplicitRelativeImport",
-                "range": {
-                    "startColumn": 5,
-                    "endColumn": 12,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportPrivateLocalImportUsage",
                 "range": {
                     "startColumn": 15,
                     "endColumn": 23,
                     "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 16,
-                    "endColumn": 75,
-                    "lineCount": 2
                 }
             },
             {
@@ -3418,30 +2870,6 @@
                 }
             },
             {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 16,
-                    "endColumn": 56,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 16,
-                    "endColumn": 100,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 16,
-                    "endColumn": 103,
-                    "lineCount": 2
-                }
-            },
-            {
                 "code": "reportPrivateLocalImportUsage",
                 "range": {
                     "startColumn": 31,
@@ -3455,14 +2883,6 @@
                     "startColumn": 35,
                     "endColumn": 47,
                     "lineCount": 1
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 19,
-                    "lineCount": 11
                 }
             },
             {
@@ -3499,14 +2919,6 @@
             }
         ],
         "./tests/test_wiki_modules.py": [
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 24,
-                    "lineCount": 8
-                }
-            },
             {
                 "code": "reportPrivateLocalImportUsage",
                 "range": {
@@ -3595,176 +3007,6 @@
                     "startColumn": 4,
                     "endColumn": 23,
                     "lineCount": 4
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 53,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 16,
-                    "endColumn": 58,
-                    "lineCount": 2
-                }
-            }
-        ],
-        "./wiki_index.py": [
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 68,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 77,
-                    "lineCount": 3
-                }
-            }
-        ],
-        "./wiki_ingest.py": [
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 38,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 20,
-                    "endColumn": 79,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 77,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 66,
-                    "lineCount": 3
-                }
-            }
-        ],
-        "./wiki_lint.py": [
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 16,
-                    "endColumn": 63,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 16,
-                    "endColumn": 46,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 16,
-                    "endColumn": 46,
-                    "lineCount": 2
-                }
-            }
-        ],
-        "./wiki_projects.py": [
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 56,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 97,
-                    "lineCount": 4
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 16,
-                    "endColumn": 73,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 84,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 67,
-                    "lineCount": 2
-                }
-            }
-        ],
-        "./wiki_query.py": [
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 47,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 16,
-                    "endColumn": 81,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 12,
-                    "endColumn": 65,
-                    "lineCount": 2
-                }
-            },
-            {
-                "code": "reportImplicitStringConcatenation",
-                "range": {
-                    "startColumn": 8,
-                    "endColumn": 46,
-                    "lineCount": 2
                 }
             }
         ]

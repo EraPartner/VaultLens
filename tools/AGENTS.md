@@ -75,7 +75,8 @@ Do not claim isolation is verified from a cloud run.
 - Lint is `ruff check` (`E4`, `E7`, `E9`, `F`, `ANN`; rules in `tools/ruff.toml`). Formatting is
   not enforced. Do not reformat unrelated code.
 - Typing is `basedpyright` in `all` mode (`tools/pyrightconfig.json`), with
-  `reportAny` and `reportUnusedCallResult` switched off, checked against
+  `reportAny`, `reportUnusedCallResult`, `reportImplicitOverride`, `reportImplicitRelativeImport`
+  and `reportImplicitStringConcatenation` switched off, checked against
   `tools/typing-baseline.json`. The baseline holds the findings that predate the switch from
   `strict`; any new finding fails CI. Shrink the baseline as you fix code
   (`basedpyright --project tools/pyrightconfig.json --writebaseline` after fixing, never to admit
