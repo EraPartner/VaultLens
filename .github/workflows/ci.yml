@@ -104,6 +104,30 @@ jobs:
           exit "$rc"
 
   # ─────────────────────────────────────────────────────────────────────────────
+  # Typing — basedpyright strict against tools/typing-baseline.json (new errors fail;
+  # shrink the baseline as files are fixed). Dev-only tool, pinned here. ruff ANN runs in Lint.
+  # ─────────────────────────────────────────────────────────────────────────────
+  typing:
+    name: Typing (basedpyright)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4
+
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install type tools (pinned)
+        run: pip install basedpyright==1.40.2
+
+      - name: basedpyright (strict, baselined)
+        run: basedpyright --project tools/pyrightconfig.json
+
+  # ─────────────────────────────────────────────────────────────────────────────
   # Quality Gate — all checks must pass. Single fan-in before CI Complete.
   # ─────────────────────────────────────────────────────────────────────────────
   quality-gate:
@@ -113,6 +137,7 @@ jobs:
     needs:
       - secrets-scan
       - lint
+      - typing
       - test
     if: always()
     steps:

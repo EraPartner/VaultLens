@@ -44,12 +44,13 @@ resolve conflicts explicitly.
 
 ## Commands
 
-Run from the repository root. CI uses Python 3.12 and `ruff==0.15.17`. The runtime needs Python
+Run from the repository root. CI uses Python 3.12, `ruff==0.15.17` and `basedpyright==1.40.2`. The runtime needs Python
 3.11 or newer. CI installs `fish` for the provider wrapper tests.
 
 ```bash
 .githooks/install.sh                                 # enable local hooks (once per clone)
 ruff check tools/                                    # lint (rules in tools/ruff.toml)
+basedpyright --project tools/pyrightconfig.json     # strict typing gate (baselined)
 python3 -m compileall -q tools                       # syntax gate
 for t in tools/tests/test_*.py; do python3 "$t"; done  # all tooling suites
 python3 tools/tests/test_wiki.py                     # one suite
@@ -68,10 +69,17 @@ Do not claim isolation is verified from a cloud run.
 
 ## Conventions
 
-- Tooling is **stdlib-only** Python. Do not add third-party imports under `tools/`. CI has no
-  dependency install step and the hooks assume `git` and `python3` only.
-- Lint is `ruff check` only (`E4`, `E7`, `E9`, `F`). Formatting is not enforced. Do not reformat
-  unrelated code.
+- Tooling is **stdlib-only at runtime**. Do not add third-party imports under `tools/`. The only
+  non-stdlib dependencies are dev-only checkers (`ruff`, `basedpyright`), installed in CI's lint
+  and typing jobs and never imported by tooling. The hooks assume `git` and `python3` only.
+- Lint is `ruff check` (`E4`, `E7`, `E9`, `F`, `ANN`; rules in `tools/ruff.toml`). Formatting is
+  not enforced. Do not reformat unrelated code.
+- Typing is `basedpyright` in `strict` mode (`tools/pyrightconfig.json`) against the baseline
+  `tools/typing-baseline.json`. New or changed code must add no strict errors. The baseline and
+  the ANN `per-file-ignores` in `tools/ruff.toml` may only shrink: after fixing a file, run
+  `basedpyright --project tools/pyrightconfig.json --writebaseline`, commit the smaller baseline,
+  and delete that file's ANN ignore entry. Never grow either list. Do not add `# pyright: ignore`,
+  bare `Any` or `cast` without a one-line reason.
 - Conventional Commit subjects: `type(scope): summary`, at most 72 characters. The `commit-msg`
   hook accepts `feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert`.
 - Edit canonical roles in `.agents/roles/`, then regenerate adapters. Never hand-edit
@@ -100,11 +108,11 @@ ignored.
 
 ## Verification
 
-Scale checks to risk. CI runs lint, compile, all suites and a secrets scan behind the
+Scale checks to risk. CI runs lint, typing, compile, all suites and a secrets scan behind the
 `CI Complete` gate.
 
-- Isolated edit: the targeted suite and `ruff check tools/`.
-- Cross-module change: compileall, every suite, and `ruff check tools/`.
+- Isolated edit: the targeted suite, `ruff check tools/` and the basedpyright command above.
+- Cross-module change: compileall, every suite, `ruff check tools/` and basedpyright.
 - Agent launcher, access profile, runtime, scheduler, or context budgeting change: the full set
   above, plus `generate-adapters.py --check` and `context_evaluation.py --check`. Say which
   host-only checks (probe, native provider runs) were not run.
