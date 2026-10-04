@@ -23,8 +23,10 @@ import stat
 import subprocess
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Generator, Sequence
 from pathlib import Path
+from types import FrameType
+from typing import TYPE_CHECKING, NoReturn, TypedDict
 from process_control import (
     ProcessCleanupError,
     check_process_records,
@@ -45,6 +47,37 @@ from local_access import (
     resolve_scope,
 )
 
+if TYPE_CHECKING:
+    from run_reports import Recorder
+
+
+class FilesystemSettings(TypedDict):
+    denyRead: list[str]
+    allowRead: list[str]
+    allowWrite: list[str]
+    denyWrite: list[str]
+
+
+class NetworkSettings(TypedDict):
+    allowedDomains: list[str]
+    deniedDomains: list[str]
+    allowUnixSockets: list[str]
+    allowLocalBinding: bool
+    allowAllUnixSockets: bool
+    deniedResolvedAddresses: list[str]
+
+
+class RuntimeSettings(TypedDict):
+    """The reviewed SRT configuration schema compiled from a scope."""
+
+    filesystem: FilesystemSettings
+    network: NetworkSettings
+    enableWeakerNestedSandbox: bool
+    enableWeakerNetworkIsolation: bool
+    allowAppleEvents: bool
+
+
+SignalHandler = Callable[[int, FrameType | None], object] | int | signal.Handlers | None
 SRT_VERSION = "0.0.78"
 PROVIDER_DOMAINS = {
     "claude": ("api.anthropic.com:443", "claude.ai:443", "platform.claude.com:443"),
@@ -106,8 +139,8 @@ def _absent_provider_config_reads(cli: str | None) -> tuple[str, ...]:
     Existing host policy may contain credentials. Refuse it rather than importing
     it or skipping native management controls. Never grant parent directory data.
     """
-    allowed = []
-    for value in PROVIDER_CONFIG_PROBES.get(cli, ()):
+    allowed: list[str] = []
+    for value in () if cli is None else PROVIDER_CONFIG_PROBES.get(cli, ()):
         path = Path(value)
         aliases = [path]
         if sys.platform == "darwin" and path.is_relative_to("/etc"):
@@ -361,7 +394,7 @@ def _prepare_auth_store(root: Path, cli: str) -> Path:
 
 
 @contextlib.contextmanager
-def _auth_directory(path: Path):
+def _auth_directory(path: Path) -> Generator[int, None, None]:
     """Anchor every directory component without following agent-created links."""
     path = path.absolute()
     if ".." in path.parts:
@@ -469,7 +502,7 @@ def _transfer_auth(
 
 def compile_settings(
     scope: RunScope, run: Path, cli: str | None, *, executables: tuple[Path, ...] = ()
-) -> dict:
+) -> RuntimeSettings:
     """Compile a neutral scope into the reviewed SRT configuration schema."""
     trusted = [
         scope.root / "tools",
@@ -495,7 +528,7 @@ def compile_settings(
         *(str(path) for path in scope.denied_paths),
         str(Path.home()),
     ]
-    aliases = set()
+    aliases: set[str] = set()
     for grant in dict.fromkeys((*scope.read_paths, *scope.write_paths)):
         candidates = [grant]
         if grant.is_dir():
@@ -605,7 +638,10 @@ def compile_settings(
             "denyWrite": list(dict.fromkeys(protected)),
         },
         "network": {
-            "allowedDomains": [*PROVIDER_DOMAINS.get(cli, ()), *scope.research_domains],
+            "allowedDomains": [
+                *(() if cli is None else PROVIDER_DOMAINS.get(cli, ())),
+                *scope.research_domains,
+            ],
             "deniedDomains": [],
             "allowUnixSockets": [],
             "allowLocalBinding": False,
@@ -743,7 +779,7 @@ def _snapshot(scope: RunScope, run_id: str) -> Path | None:
 
 
 @contextlib.contextmanager
-def _disposable_run():
+def _disposable_run() -> Generator[Path, None, None]:
     """Keep failed cleanup evidence outside the vault and cloud folders."""
     directory = "/private/tmp" if sys.platform == "darwin" else "/tmp"
     run = Path(tempfile.mkdtemp(prefix="vaultlens-run-", dir=directory)).resolve()
@@ -767,7 +803,7 @@ def prepared_run(
     *,
     snapshot: bool = True,
     require_verification: bool = True,
-):
+) -> Generator[tuple[Path, Path, dict[str, str]], None, None]:
     """Prepare private per-run state, scope search, and recoverable writer changes."""
     check_process_records(scope.root)
     quarantine = scope.root / "tools/runtime-state/cancellation-unconfirmed.json"
@@ -788,7 +824,8 @@ def prepared_run(
             + "-"
             + run.name.rsplit("-", 1)[-1]
         )
-        manifest["review_queue"] = []
+        review_queue: list[dict[str, str | int]] = []
+        manifest["review_queue"] = review_queue
         if scope.review_queue_metadata:
             queue = scope.root / "raw/review-inbox"
             if any(
@@ -803,7 +840,7 @@ def prepared_run(
                             metadata = item.lstat()
                         except OSError:
                             continue
-                        manifest["review_queue"].append(
+                        review_queue.append(
                             {"name": item.name, "size": metadata.st_size}
                         )
         (run / "scope.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -851,6 +888,7 @@ def prepared_run(
         _private_directory(locks, scope.root)
         # All writers in one vault serialize, including manual and scheduled
         # runs; overlapping ancestor scopes cannot evade this lock.
+        transfer_back: tuple[Path, int, int] | None = None
         with contextlib.ExitStack() as stack:
             lock = stack.enter_context((locks / "writers.lock").open("a"))
             if scope.write_paths:
@@ -878,6 +916,7 @@ def prepared_run(
                     source_fd=store_fd,
                     destination_fd=run_provider_fd,
                 )
+                transfer_back = (auth_store, store_fd, run_provider_fd)
             backup = _snapshot(scope, manifest["run_id"]) if snapshot else None
             if backup:
                 print(f"Recovery snapshot: {backup}", file=sys.stderr)
@@ -898,7 +937,8 @@ def prepared_run(
                 )
                 quarantine.chmod(0o600)
                 raise
-            if cli:
+            if cli and transfer_back is not None:
+                auth_store, store_fd, run_provider_fd = transfer_back
                 _transfer_auth(
                     run / "provider",
                     auth_store,
@@ -917,7 +957,9 @@ def runtime_command(executable: Path, settings: Path, argv: Sequence[str]) -> li
         not arguments
         or not arguments[0]
         or any(
-            not isinstance(argument, str) or "\0" in argument for argument in arguments
+            not isinstance(argument, str)  # pyright: ignore[reportUnnecessaryIsInstance] -- runtime validation
+            or "\0" in argument
+            for argument in arguments
         )
     ):
         raise ValueError(
@@ -926,7 +968,9 @@ def runtime_command(executable: Path, settings: Path, argv: Sequence[str]) -> li
     return [str(executable), "--settings", str(settings), "--", *arguments]
 
 
-def _verify_preflight(executable: Path, run: Path, env: dict, root: Path) -> None:
+def _verify_preflight(
+    executable: Path, run: Path, env: dict[str, str], root: Path
+) -> None:
     """Test real OS denials with the exact settings, before reading any notes."""
     command = [
         str(Path(sys.executable).resolve()),
@@ -941,9 +985,9 @@ def _verify_preflight(executable: Path, run: Path, env: dict, root: Path) -> Non
         stderr=subprocess.PIPE,
         text=True,
     )
-    previous = {}
+    previous: dict[signal.Signals, SignalHandler] = {}
 
-    def stop(signum, _frame):
+    def stop(signum: int, _frame: FrameType | None) -> None:
         raise _StopRun(signum)
 
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -970,11 +1014,14 @@ def _verify_preflight(executable: Path, run: Path, env: dict, root: Path) -> Non
 
 
 class _StopRun(BaseException):
-    def __init__(self, signum):
+    def __init__(self, signum: int) -> None:
+        super().__init__()
         self.signum = signum
 
 
-def _finish_report(recorder, result: int, pending) -> None:
+def _finish_report(
+    recorder: Recorder, result: int, pending: BaseException | None
+) -> None:
     from run_reports import ReportCaptureError
 
     if isinstance(pending, ProcessCleanupError):
@@ -997,7 +1044,14 @@ def _finish_report(recorder, result: int, pending) -> None:
 
 
 def _execute_prepared(
-    command, executable, run, env, cwd, *, interactive=False, recorder=None
+    command: Sequence[str],
+    executable: Path,
+    run: Path,
+    env: dict[str, str],
+    cwd: Path,
+    *,
+    interactive: bool = False,
+    recorder: Recorder | None = None,
 ) -> int:
     """Own the wrapper's group, including tools that outlive its leader."""
     wrapped = runtime_command(executable, run / "settings.json", command)
@@ -1007,17 +1061,19 @@ def _execute_prepared(
         cwd=cwd,
         env=env,
         interactive=interactive,
-        **({"stdout": subprocess.PIPE} if recorder is not None else {}),
+        stdout=subprocess.PIPE if recorder is not None else None,
     )
-    previous = {}
-    terminal = None
-    foreground = None
+    previous: dict[signal.Signals, SignalHandler] = {}
+    terminal: int | None = None
+    foreground: int | None = None
     if (
         interactive
         and sys.stdin.isatty()
         and getattr(child, "handles_terminal", False) is not True
     ):
-        terminal = sys.stdin.fileno()
+        # Annotated so a stdin typed as Any cannot widen the narrowed type back to int | None.
+        stdin_fd: int = sys.stdin.fileno()
+        terminal = stdin_fd
         foreground = os.tcgetpgrp(terminal)
         previous[signal.SIGTTOU] = signal.signal(signal.SIGTTOU, signal.SIG_IGN)
         try:
@@ -1027,7 +1083,7 @@ def _execute_prepared(
             signal.signal(signal.SIGTTOU, previous[signal.SIGTTOU])
             raise
 
-    def stop(signum, _frame):
+    def stop(signum: int, _frame: FrameType | None) -> None:
         raise _StopRun(signum)
 
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -1036,6 +1092,8 @@ def _execute_prepared(
     try:
         try:
             if recorder is not None:
+                if child.stdout is None:
+                    raise ValueError("Report capture requires a stdout pipe")
                 recorder.pump_in_thread(child.stdout, sys.stdout)
             try:
                 result = child.wait()
@@ -1051,10 +1109,13 @@ def _execute_prepared(
             terminate_group(child, grace=6.0)
         if result == 125:
             evidence = run / "scratch/inner-cancellation.json"
-            data = json.loads(evidence.read_text()) if evidence.is_file() else {}
+            data: dict[str, object] = (
+                json.loads(evidence.read_text()) if evidence.is_file() else {}
+            )
+            group_id = data.get("group_id")
             raise ProcessCleanupError(
                 "Agent reported unconfirmed descendant cancellation",
-                group_id=data.get("group_id"),
+                group_id=group_id if isinstance(group_id, int) else None,
             )
         if result < 0 or result in (128 + signal.SIGTERM, 128 + signal.SIGINT):
             # Native providers may own separate tool groups. After an outer
@@ -1069,7 +1130,7 @@ def _execute_prepared(
             if recorder is not None:
                 _finish_report(recorder, result, sys.exc_info()[1])
         finally:
-            if terminal is not None:
+            if terminal is not None and foreground is not None:
                 os.tcsetpgrp(terminal, foreground)
             for sig, handler in previous.items():
                 signal.signal(sig, handler)
@@ -1087,10 +1148,12 @@ def _run(
 ) -> int:
     with prepared_run(scope, cli, snapshot=snapshot) as (executable, run, env):
         _verify_preflight(executable, run, env, scope.root)
-        recorder = None
+        recorder: Recorder | None = None
         if report_role:
             from run_reports import Recorder
 
+            if cli is None:
+                raise ValueError("Report capture requires a native provider")
             recorder = Recorder(scope, report_role, cli)
         if cli and command[0] == cli:
             command = [env["VAULTLENS_PROVIDER_EXECUTABLE"], *command[1:]]
@@ -1105,7 +1168,7 @@ def _run(
         )
 
 
-def launch_headless(root: Path, args, *, argv: list[str]) -> int:
+def launch_headless(root: Path, args: argparse.Namespace, *, argv: list[str]) -> int:
     from agent_profiles import AGENT_FILES, load_role
 
     role = load_role(root / ".agents/roles" / AGENT_FILES[args.agent])
@@ -1138,9 +1201,9 @@ def launch_interactive(
     provider: str,
     args: list[str],
     *,
-    profile=None,
-    project=None,
-    read_paths=(),
+    profile: str | None = None,
+    project: str | None = None,
+    read_paths: Sequence[str] = (),
 ) -> int:
     from provider_commands import ProviderCommandRequest, build_provider_command
 
@@ -1183,7 +1246,7 @@ def launch_interactive(
         )
 
     class NativeOptions(argparse.ArgumentParser):
-        def error(self, message):
+        def error(self, message: str) -> NoReturn:
             raise ValueError(
                 f"Native agent options: {message}; use --model, --effort and an optional prompt"
             )
@@ -1228,7 +1291,7 @@ def launch_interactive(
         return _execute_prepared(command, executable, run, env, cwd, interactive=True)
 
 
-def main(argv=None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("profiles", "plan", "doctor", "exec"))
     parser.add_argument("--root", type=Path, default=ROOT)
