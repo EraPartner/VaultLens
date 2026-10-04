@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import importlib.util
 import io
 from pathlib import Path
 import shutil
@@ -11,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+from collections.abc import Callable
 
 TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS))
@@ -22,17 +22,13 @@ from agent_capabilities import (  # noqa: E402
     profile_capabilities,
 )
 from agent_profiles import AGENT_FILES, load_role  # noqa: E402
+from _loader import load_module  # noqa: E402
 
-
-def load_module(name, filename):
-    spec = importlib.util.spec_from_file_location(name, TOOLS / "agents" / filename)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+IngestProvider = Callable[..., int]
 
 
 class ProviderRegressionTests(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         fixture = tempfile.TemporaryDirectory(prefix="vaultlens-provider-")
         self.addCleanup(fixture.cleanup)
         self.root = Path(fixture.name)
@@ -46,13 +42,13 @@ class ProviderRegressionTests(unittest.TestCase):
         for directory in (self.root, self.root / "wiki", self.root / "projects"):
             directory.mkdir(exist_ok=True)
             (directory / "AGENTS.md").write_text("Fixture instructions\n")
-        self.agent = load_module("regression_agent", "wiki-agent.py")
+        self.agent = load_module("regression_agent", TOOLS / "agents" / "wiki-agent.py")
         boundary = mock.patch.object(self.agent, "verify_active_boundary")
         boundary.start()
         self.addCleanup(boundary.stop)
-        self.generator = load_module("regression_generator", "generate-adapters.py")
+        self.generator = load_module("regression_generator", TOOLS / "agents" / "generate-adapters.py")
 
-    def generator_paths(self):
+    def generator_paths(self) -> contextlib.AbstractContextManager[object]:
         return mock.patch.multiple(
             self.generator,
             ROOT=self.root,
@@ -61,7 +57,7 @@ class ProviderRegressionTests(unittest.TestCase):
             CODEX_DIR=self.root / ".codex" / "agents",
         )
 
-    def test_every_role_shares_capabilities_and_grants_qmd(self):
+    def test_every_role_shares_capabilities_and_grants_qmd(self) -> None:
         for name, filename in AGENT_FILES.items():
             with self.subTest(role=name):
                 role = load_role(self.roles / filename)
@@ -83,7 +79,7 @@ class ProviderRegressionTests(unittest.TestCase):
                 self.assertIn(f"tools: {', '.join(native)}\n", manifest)
                 self.assertIn("disallowedTools: Agent, Task\n", manifest)
 
-    def test_headless_tool_availability_and_retention_for_every_profile(self):
+    def test_headless_tool_availability_and_retention_for_every_profile(self) -> None:
         for profile in CAPABILITIES:
             with self.subTest(profile=profile):
                 perms = profile_capabilities(profile)
@@ -116,7 +112,7 @@ class ProviderRegressionTests(unittest.TestCase):
                         profile == "project-write",
                     )
 
-    def test_debug_pdf_tasks_do_not_preprocess_or_promote(self):
+    def test_debug_pdf_tasks_do_not_preprocess_or_promote(self) -> None:
         inbox = self.root / "raw" / "inbox"
         inbox.mkdir(parents=True)
         pdf = inbox / "example.pdf"
@@ -148,7 +144,9 @@ class ProviderRegressionTests(unittest.TestCase):
                 self.assertEqual(pdf.read_bytes(), original)
                 self.assertFalse((self.root / "raw" / "sources").exists())
 
-    def source_page(self, pdf_name="example.pdf", *, summary="A source summary."):
+    def source_page(
+        self, pdf_name: str = "example.pdf", *, summary: str = "A source summary."
+    ) -> str:
         return (
             "---\n"
             "title: Example\ntype: source\nstatus: active\n"
@@ -160,7 +158,7 @@ class ProviderRegressionTests(unittest.TestCase):
             f"- Source PDF: [[raw/inbox/{pdf_name}]]\n"
         )
 
-    def run_ingest_fixture(self, provider):
+    def run_ingest_fixture(self, provider: IngestProvider) -> tuple[int, int, str]:
         inbox = self.root / "raw" / "inbox"
         inbox.mkdir(parents=True, exist_ok=True)
         (inbox / "example.pdf").write_bytes(b"fixture PDF")
@@ -182,7 +180,7 @@ class ProviderRegressionTests(unittest.TestCase):
         self.assertEqual((inbox / "example.pdf").read_bytes(), b"fixture PDF")
         return result, 0, error.getvalue()
 
-    def test_ingest_accepts_changed_valid_page_without_mutating_sources(self):
+    def test_ingest_accepts_changed_valid_page_without_mutating_sources(self) -> None:
         sources = self.root / "wiki" / "sources"
         sources.mkdir()
         page = sources / "src-2026-10-03-001.md"
@@ -193,14 +191,14 @@ class ProviderRegressionTests(unittest.TestCase):
                 else:
                     page.unlink(missing_ok=True)
 
-                def provider(*args, **kwargs):
+                def provider(*args: object, **kwargs: object) -> int:
                     page.write_text(self.source_page())
                     return 0
 
                 result, promotions, error = self.run_ingest_fixture(provider)
                 self.assertEqual((result, promotions, error), (0, 0, ""))
 
-    def test_ingest_rejects_absent_invalid_unrelated_and_unchanged_output(self):
+    def test_ingest_rejects_absent_invalid_unrelated_and_unchanged_output(self) -> None:
         sources = self.root / "wiki" / "sources"
         sources.mkdir()
         page = sources / "src-2026-10-03-001.md"
@@ -222,9 +220,9 @@ class ProviderRegressionTests(unittest.TestCase):
             with self.subTest(case=name):
                 page.unlink(missing_ok=True)
                 if name == "unchanged":
-                    page.write_text(output)
+                    page.write_text(output or "")
 
-                def provider(*args, **kwargs):
+                def provider(*args: object, **kwargs: object) -> int:
                     if output is not None:
                         page.write_text(output)
                     return 0
@@ -233,16 +231,16 @@ class ProviderRegressionTests(unittest.TestCase):
                 self.assertEqual((result, promotions), (2, 0))
                 self.assertIn("PDF remains in raw/inbox/", error)
 
-    def test_ingest_provider_failure_never_promotes(self):
-        result, promotions, error = self.run_ingest_fixture(lambda *a, **kw: 1)
+    def test_ingest_provider_failure_never_promotes(self) -> None:
+        result, promotions, error = self.run_ingest_fixture(lambda *_a, **_kw: 1)
         self.assertEqual((result, promotions, error), (1, 0, ""))
 
-    def test_ingest_accepts_relative_markdown_pdf_citation(self):
+    def test_ingest_accepts_relative_markdown_pdf_citation(self) -> None:
         sources = self.root / "wiki" / "sources"
         sources.mkdir()
         page = sources / "src-2026-10-03-001.md"
 
-        def provider(*args, **kwargs):
+        def provider(*args: object, **kwargs: object) -> int:
             page.write_text(
                 self.source_page().replace(
                     "[[raw/inbox/example.pdf]]",
@@ -253,7 +251,7 @@ class ProviderRegressionTests(unittest.TestCase):
 
         self.assertEqual(self.run_ingest_fixture(provider), (0, 0, ""))
 
-    def test_ingest_matches_special_pdf_names_and_large_source_ids(self):
+    def test_ingest_matches_special_pdf_names_and_large_source_ids(self) -> None:
         from urllib.parse import quote
 
         sources = self.root / "wiki" / "sources"
@@ -276,7 +274,7 @@ class ProviderRegressionTests(unittest.TestCase):
                 page.write_text(content)
                 self.assertTrue(self.agent._verify_ingest_result(self.root / "raw/inbox" / name, before))
 
-    def test_ingest_code_examples_do_not_certify_a_pdf_citation(self):
+    def test_ingest_code_examples_do_not_certify_a_pdf_citation(self) -> None:
         sources = self.root / "wiki" / "sources"
         sources.mkdir()
         page = sources / "src-2026-10-03-001.md"
@@ -295,7 +293,7 @@ class ProviderRegressionTests(unittest.TestCase):
                     self.agent._verify_ingest_result(self.root / "raw/inbox/example.pdf", {})
                 )
 
-    def test_export_roundtrip_checks_without_deployed_provider_access(self):
+    def test_export_roundtrip_checks_without_deployed_provider_access(self) -> None:
         output = self.root / "export"
         with self.generator_paths(), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(self.generator.main(["--output-dir", str(output)]), 0)
@@ -309,7 +307,7 @@ class ProviderRegressionTests(unittest.TestCase):
             self.assertFalse((self.root / provider).exists())
         self.assertEqual(list(output.rglob("CLAUDE.md")), [])
 
-    def test_provider_launches_from_nested_project_use_vault_root(self):
+    def test_provider_launches_from_nested_project_use_vault_root(self) -> None:
         project = self.root / "projects" / "nested-project"
         project.mkdir(parents=True)
         for provider in ("claude", "codex"):
@@ -343,7 +341,7 @@ class ProviderRegressionTests(unittest.TestCase):
                 )
                 self.assertEqual(Path.cwd(), project.resolve())
 
-    def test_generated_roles_resolve_from_repository_root_without_host_paths(self):
+    def test_generated_roles_resolve_from_repository_root_without_host_paths(self) -> None:
         import tomllib
 
         with self.generator_paths():
@@ -360,7 +358,7 @@ class ProviderRegressionTests(unittest.TestCase):
                     codex = tomllib.loads(self.generator.codex_manifest(role))
                     self.assertIn(instruction, codex["developer_instructions"])
 
-    def test_blocked_adapter_directory_reports_blocked_not_drift(self):
+    def test_blocked_adapter_directory_reports_blocked_not_drift(self) -> None:
         with (
             self.generator_paths(),
             mock.patch.object(
@@ -385,7 +383,7 @@ class ProviderRegressionTests(unittest.TestCase):
         self.assertIn("BLOCKED adapter verification", error.getvalue())
         self.assertNotIn("stale or missing", output.getvalue())
 
-    def test_unreadable_adapter_does_not_become_missing_drift(self):
+    def test_unreadable_adapter_does_not_become_missing_drift(self) -> None:
         with mock.patch.object(
             Path, "read_text", side_effect=PermissionError("fixture denial")
         ):
