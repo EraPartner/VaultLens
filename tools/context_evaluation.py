@@ -13,6 +13,8 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from types import ModuleType
+from typing import TypedDict
 from unittest.mock import patch
 
 from context_budget import CONSENT, gather_context
@@ -22,9 +24,34 @@ TODAY = dt.date(2026, 9, 5)
 BASELINE = Path(__file__).parent / "evals/context-baseline.json"
 
 
-def load_agent():
+class CaseReport(TypedDict):
+    fixture: str
+    budget_characters: int
+    baseline_characters: int
+    selected_characters: int
+    baseline_utf8_bytes: int
+    selected_utf8_bytes: int
+    all_late_urgent_tasks_selected: bool
+    profile_and_consent_preserved: bool
+    review_body_absent: bool
+    within_budget: bool
+
+
+class Report(TypedDict):
+    schema: int
+    measurement: str
+    date: str
+    model_calls: int
+    answer_quality: str
+    token_cost_and_latency: str
+    cases: list[CaseReport]
+
+
+def load_agent() -> ModuleType:
     path = Path(__file__).parent / "agents/wiki-agent.py"
     spec = importlib.util.spec_from_file_location("context_fixture_agent", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load agent module from {path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -52,9 +79,9 @@ def write_fixture(root: Path, project_count: int = 4, tasks: int = 80) -> None:
         (project / "TODO.md").write_text("\n".join(lines))
 
 
-def evaluate() -> dict:
+def evaluate() -> Report:
     agent = load_agent()
-    cases = []
+    cases: list[CaseReport] = []
     for project_count, tasks, budget in ((1, 8, 3000), (4, 80, 6000), (12, 80, 12000)):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -66,7 +93,7 @@ def evaluate() -> dict:
                 os.environ.pop("VAULTLENS_COS_CONTEXT_CHARS", None)
                 with patch.object(agent._dt, "date") as date:
                     date.today.return_value = TODAY
-                    original = agent._gather_cos_context("brief", None)
+                    original: str = agent._gather_cos_context("brief", None)
             bounded = gather_context(root, "brief", None, budget, TODAY)
             cases.append(
                 {
