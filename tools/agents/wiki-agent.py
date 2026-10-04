@@ -727,7 +727,7 @@ def _prepare_system_prompt(agent_file: Path, system_addon: str) -> str:
     return f"{agent_instructions}\n\nAdditional context:\n{system_addon}"
 
 
-def _build_allowed_tools(perms: dict) -> list[str]:
+def _build_allowed_tools(perms: dict[str, object]) -> list[str]:
     """Return explicit permission grants for an unattended Claude launch."""
     return claude_tools(perms)
 

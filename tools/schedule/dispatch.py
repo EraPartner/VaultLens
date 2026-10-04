@@ -53,6 +53,8 @@ REPORTS_DIR = ROOT / "wiki" / "reports"
 sys.path.insert(0, str(ROOT / "tools"))
 from llm_provider import (  # noqa: E402, F401
     BACKENDS,
+    LlmConfig,
+    RoleModels,
     load_config,
     load_profile_models,
     resolve_provider,
@@ -74,7 +76,12 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 def freeze_role_models(
-    cli: str, *, root: Path = ROOT, environ: dict, config: dict, profile_models: dict
+    cli: str,
+    *,
+    root: Path = ROOT,
+    environ: dict,
+    config: LlmConfig,
+    profile_models: RoleModels,
 ) -> dict[str, str]:
     """Resolve every role against one batch's provider configuration snapshot."""
     return {
