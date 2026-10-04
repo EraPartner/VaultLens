@@ -50,7 +50,7 @@ Run from the repository root. CI uses Python 3.12, `ruff==0.15.17` and `basedpyr
 ```bash
 .githooks/install.sh                                 # enable local hooks (once per clone)
 ruff check tools/                                    # lint (rules in tools/ruff.toml)
-basedpyright --project tools/pyrightconfig.json     # strict typing gate (no baseline)
+basedpyright --project tools/pyrightconfig.json     # typing gate ("all" mode, baselined)
 python3 -m compileall -q tools                       # syntax gate
 for t in tools/tests/test_*.py; do python3 "$t"; done  # all tooling suites
 python3 tools/tests/test_wiki.py                     # one suite
@@ -74,10 +74,13 @@ Do not claim isolation is verified from a cloud run.
   and typing jobs and never imported by tooling. The hooks assume `git` and `python3` only.
 - Lint is `ruff check` (`E4`, `E7`, `E9`, `F`, `ANN`; rules in `tools/ruff.toml`). Formatting is
   not enforced. Do not reformat unrelated code.
-- Typing is `basedpyright` in `strict` mode (`tools/pyrightconfig.json`) with no baseline: every
-  file, tests included, must report zero errors, and CI fails on any. There is no baseline file and
-  no ANN `per-file-ignores`; do not add either back. Fix the code instead. Do not add
-  `# pyright: ignore`, bare `Any` or `cast` without a one-line reason.
+- Typing is `basedpyright` in `all` mode (`tools/pyrightconfig.json`), with
+  `reportAny` and `reportUnusedCallResult` switched off, checked against
+  `tools/typing-baseline.json`. The baseline holds the findings that predate the switch from
+  `strict`; any new finding fails CI. Shrink the baseline as you fix code
+  (`basedpyright --project tools/pyrightconfig.json --writebaseline` after fixing, never to admit
+  new findings). Do not disable further rules, add `# pyright: ignore`, bare `Any` or `cast` without a
+  one-line reason. Ruff `ANN` has no `per-file-ignores`; do not add any.
 - Conventional Commit subjects: `type(scope): summary`, at most 72 characters. The `commit-msg`
   hook accepts `feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert`.
 - Edit canonical roles in `.agents/roles/`, then regenerate adapters. Never hand-edit

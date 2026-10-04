@@ -3,5 +3,8 @@
   "exclude": ["**/__pycache__"],
   "pythonVersion": "3.11",
   "extraPaths": [".", "schedule", "runtime", "scripts"],
-  "typeCheckingMode": "strict"
+  "typeCheckingMode": "all",
+  "reportAny": false,
+  "reportUnusedCallResult": false,
+  "baselineFile": "typing-baseline.json"
 }

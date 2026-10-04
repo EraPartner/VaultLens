@@ -1,0 +1,3772 @@
+{
+    "files": {
+        "./agenda.py": [
+            {
+                "code": "reportUnusedParameter",
+                "range": {
+                    "startColumn": 19,
+                    "endColumn": 27,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./agent_profiles.py": [
+            {
+                "code": "reportDeprecated",
+                "range": {
+                    "startColumn": 19,
+                    "endColumn": 26,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./agents/wiki-agent.py": [
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 57,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 20,
+                    "endColumn": 71,
+                    "lineCount": 4
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 68,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 75,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 16,
+                    "endColumn": 72,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 62,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 39,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 16,
+                    "endColumn": 44,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 28,
+                    "endColumn": 94,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 20,
+                    "endColumn": 71,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 80,
+                    "lineCount": 2
+                }
+            }
+        ],
+        "./brain_launch.py": [
+            {
+                "code": "reportDeprecated",
+                "range": {
+                    "startColumn": 19,
+                    "endColumn": 26,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./context_budget.py": [
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 84,
+                    "lineCount": 2
+                }
+            }
+        ],
+        "./llm_provider.py": [
+            {
+                "code": "reportDeprecated",
+                "range": {
+                    "startColumn": 24,
+                    "endColumn": 31,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnreachable",
+                "range": {
+                    "startColumn": 4,
+                    "endColumn": 23,
+                    "lineCount": 4
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 22,
+                    "endColumn": 25,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./local_access.py": [
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 23,
+                    "endColumn": 26,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./local_runtime.py": [
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./macos_processes.py": [
+            {
+                "code": "reportImportCycles",
+                "range": {
+                    "startColumn": 0,
+                    "endColumn": 0,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 21,
+                    "endColumn": 24,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 17,
+                    "endColumn": 28,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 4,
+                    "endColumn": 23,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 4,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 16,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 24,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 16,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 31,
+                    "endColumn": 34,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 23,
+                    "endColumn": 26,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 24,
+                    "endColumn": 27,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 24,
+                    "endColumn": 27,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 25,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 17,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 37,
+                    "endColumn": 40,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 19,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 34,
+                    "endColumn": 37,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 15,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 20,
+                    "endColumn": 23,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 24,
+                    "endColumn": 27,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 43,
+                    "endColumn": 46,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./process_control.py": [
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 27,
+                    "endColumn": 30,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 27,
+                    "endColumn": 30,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 15,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 20,
+                    "endColumn": 23,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./provider_commands.py": [
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 4,
+                    "endColumn": 8,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 4,
+                    "endColumn": 8,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./run_reports.py": [
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 24,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 32,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 24,
+                    "endColumn": 32,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 39,
+                    "endColumn": 46,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 16,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 32,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./runtime/deploy.py": [
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 23,
+                    "endColumn": 26,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./runtime/maintain.py": [
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 20,
+                    "endColumn": 82,
+                    "lineCount": 2
+                }
+            }
+        ],
+        "./runtime/probe.py": [
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 28,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 16,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 16,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 16,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./schedule/dispatch.py": [
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 19,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 48,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 60,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 16,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnusedParameter",
+                "range": {
+                    "startColumn": 21,
+                    "endColumn": 25,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 30,
+                    "endColumn": 33,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 34,
+                    "endColumn": 37,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 16,
+                    "endColumn": 52,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportUnusedParameter",
+                "range": {
+                    "startColumn": 18,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 20,
+                    "endColumn": 71,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 24,
+                    "endColumn": 51,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 24,
+                    "endColumn": 54,
+                    "lineCount": 2
+                }
+            }
+        ],
+        "./schedule/render_plist.py": [
+            {
+                "code": "reportDeprecated",
+                "range": {
+                    "startColumn": 19,
+                    "endColumn": 26,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 87,
+                    "lineCount": 2
+                }
+            }
+        ],
+        "./schedule/restore_project.py": [
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 20,
+                    "endColumn": 68,
+                    "lineCount": 2
+                }
+            }
+        ],
+        "./scoped_search.py": [
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnusedParameter",
+                "range": {
+                    "startColumn": 21,
+                    "endColumn": 30,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./scripts/provider-smoke.py": [
+            {
+                "code": "reportMissingSuperCall",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 16,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./scripts/repair-provider-host.py": [
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 31,
+                    "endColumn": 15,
+                    "lineCount": 33
+                }
+            },
+            {
+                "code": "reportUnusedParameter",
+                "range": {
+                    "startColumn": 24,
+                    "endColumn": 30,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/_loader.py": [
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 40,
+                    "endColumn": 43,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportInvalidCast",
+                "range": {
+                    "startColumn": 11,
+                    "endColumn": 37,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_agent.py": [
+            {
+                "code": "reportImplicitRelativeImport",
+                "range": {
+                    "startColumn": 5,
+                    "endColumn": 12,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 25,
+                    "endColumn": 28,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_agent_profiles.py": [
+            {
+                "code": "reportImplicitRelativeImport",
+                "range": {
+                    "startColumn": 5,
+                    "endColumn": 12,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_agent_safety.py": [
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 28,
+                    "endColumn": 31,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 53,
+                    "endColumn": 55,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 40,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 14,
+                    "endColumn": 36,
+                    "lineCount": 4
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 60,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportUnusedParameter",
+                "range": {
+                    "startColumn": 39,
+                    "endColumn": 46,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 34,
+                    "endColumn": 44,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 34,
+                    "endColumn": 36,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 26,
+                    "endColumn": 32,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 51,
+                    "endColumn": 57,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 34,
+                    "endColumn": 39,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_brain_launch.py": [
+            {
+                "code": "reportImplicitRelativeImport",
+                "range": {
+                    "startColumn": 5,
+                    "endColumn": 12,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 21,
+                    "endColumn": 24,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 39,
+                    "endColumn": 49,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 109,
+                    "lineCount": 8
+                }
+            }
+        ],
+        "./tests/test_host_repairs.py": [
+            {
+                "code": "reportImplicitRelativeImport",
+                "range": {
+                    "startColumn": 5,
+                    "endColumn": 12,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 20,
+                    "endColumn": 160,
+                    "lineCount": 12
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 20,
+                    "endColumn": 62,
+                    "lineCount": 3
+                }
+            }
+        ],
+        "./tests/test_llm_provider.py": [
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_loader.py": [
+            {
+                "code": "reportImplicitRelativeImport",
+                "range": {
+                    "startColumn": 5,
+                    "endColumn": 12,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_local_access.py": [
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_local_runtime.py": [
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnusedParameter",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 15,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 31,
+                    "endColumn": 41,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 27,
+                    "endColumn": 37,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 20,
+                    "endColumn": 23,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 16,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 16,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 41,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 41,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 48,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 48,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 44,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 42,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 39,
+                    "endColumn": 45,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 24,
+                    "endColumn": 34,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 48,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 48,
+                    "endColumn": 67,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 46,
+                    "endColumn": 49,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 39,
+                    "endColumn": 42,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 46,
+                    "endColumn": 49,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 39,
+                    "endColumn": 42,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 43,
+                    "endColumn": 46,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 44,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 44,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 24,
+                    "endColumn": 34,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 48,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 48,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 24,
+                    "endColumn": 34,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 44,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 48,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 48,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 44,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 24,
+                    "endColumn": 43,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 46,
+                    "endColumn": 48,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 46,
+                    "endColumn": 50,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 32,
+                    "endColumn": 34,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 32,
+                    "endColumn": 42,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 43,
+                    "endColumn": 62,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 43,
+                    "endColumn": 62,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 34,
+                    "endColumn": 53,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 48,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 44,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 43,
+                    "endColumn": 62,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 32,
+                    "endColumn": 42,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 46,
+                    "endColumn": 52,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 46,
+                    "endColumn": 49,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 32,
+                    "endColumn": 38,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 46,
+                    "endColumn": 56,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_macos_processes.py": [
+            {
+                "code": "reportMissingSuperCall",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 16,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 27,
+                    "endColumn": 33,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 24,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 43,
+                    "endColumn": 47,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 46,
+                    "endColumn": 49,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 46,
+                    "endColumn": 56,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 46,
+                    "endColumn": 49,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 42,
+                    "endColumn": 46,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 42,
+                    "endColumn": 46,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 43,
+                    "endColumn": 46,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 42,
+                    "endColumn": 45,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 28,
+                    "endColumn": 35,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 42,
+                    "endColumn": 49,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 42,
+                    "endColumn": 45,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 28,
+                    "endColumn": 34,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 42,
+                    "endColumn": 45,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 28,
+                    "endColumn": 35,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 42,
+                    "endColumn": 49,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 42,
+                    "endColumn": 45,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_provider_commands.py": [
+            {
+                "code": "reportImplicitRelativeImport",
+                "range": {
+                    "startColumn": 5,
+                    "endColumn": 12,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 22,
+                    "endColumn": 25,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 16,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 16,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 16,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 16,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_provider_regressions.py": [
+            {
+                "code": "reportImplicitRelativeImport",
+                "range": {
+                    "startColumn": 5,
+                    "endColumn": 12,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnusedParameter",
+                "range": {
+                    "startColumn": 30,
+                    "endColumn": 34,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnusedParameter",
+                "range": {
+                    "startColumn": 46,
+                    "endColumn": 52,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnusedParameter",
+                "range": {
+                    "startColumn": 30,
+                    "endColumn": 34,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnusedParameter",
+                "range": {
+                    "startColumn": 46,
+                    "endColumn": 52,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnusedParameter",
+                "range": {
+                    "startColumn": 22,
+                    "endColumn": 26,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnusedParameter",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 44,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_provider_smoke.py": [
+            {
+                "code": "reportImplicitRelativeImport",
+                "range": {
+                    "startColumn": 5,
+                    "endColumn": 12,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 0,
+                    "endColumn": 8,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 11,
+                    "endColumn": 14,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 16,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 16,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 36,
+                    "endColumn": 44,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 47,
+                    "endColumn": 55,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 24,
+                    "endColumn": 32,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_root_discovery.py": [
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_run_reports.py": [
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 20,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 20,
+                    "endColumn": 27,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 39,
+                    "endColumn": 41,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_runtime_deploy.py": [
+            {
+                "code": "reportImplicitRelativeImport",
+                "range": {
+                    "startColumn": 5,
+                    "endColumn": 12,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 24,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 24,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 25,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 25,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_runtime_maintenance.py": [
+            {
+                "code": "reportImplicitRelativeImport",
+                "range": {
+                    "startColumn": 5,
+                    "endColumn": 12,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_runtime_probe.py": [
+            {
+                "code": "reportImplicitRelativeImport",
+                "range": {
+                    "startColumn": 5,
+                    "endColumn": 12,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 25,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 25,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 47,
+                    "endColumn": 50,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 16,
+                    "endColumn": 71,
+                    "lineCount": 2
+                }
+            }
+        ],
+        "./tests/test_runtime_verification.py": [
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 4,
+                    "endColumn": 11,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 4,
+                    "endColumn": 10,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 24,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 24,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 27,
+                    "endColumn": 30,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 30,
+                    "endColumn": 33,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 25,
+                    "endColumn": 27,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 43,
+                    "endColumn": 46,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 43,
+                    "endColumn": 51,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 29,
+                    "endColumn": 37,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 29,
+                    "endColumn": 37,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 29,
+                    "endColumn": 37,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 25,
+                    "endColumn": 35,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_schedule.py": [
+            {
+                "code": "reportExplicitAny",
+                "range": {
+                    "startColumn": 31,
+                    "endColumn": 34,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 33,
+                    "endColumn": 44,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 35,
+                    "endColumn": 46,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 37,
+                    "endColumn": 56,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_schedule_recovery.py": [
+            {
+                "code": "reportImplicitRelativeImport",
+                "range": {
+                    "startColumn": 5,
+                    "endColumn": 12,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 16,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 16,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 48,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 48,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 29,
+                    "endColumn": 35,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 48,
+                    "endColumn": 57,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 43,
+                    "endColumn": 45,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 25,
+                    "endColumn": 35,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 34,
+                    "endColumn": 39,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 25,
+                    "endColumn": 35,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 32,
+                    "endColumn": 34,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 20,
+                    "endColumn": 42,
+                    "lineCount": 4
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 29,
+                    "endColumn": 39,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnusedParameter",
+                "range": {
+                    "startColumn": 50,
+                    "endColumn": 56,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 29,
+                    "endColumn": 39,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 48,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 38,
+                    "endColumn": 48,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_scoped_search.py": [
+            {
+                "code": "reportImplicitOverride",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 13,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 22,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 17,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 20,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 18,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 19,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnannotatedClassAttribute",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUninitializedInstanceVariable",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 21,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_wiki.py": [
+            {
+                "code": "reportImplicitRelativeImport",
+                "range": {
+                    "startColumn": 5,
+                    "endColumn": 12,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 15,
+                    "endColumn": 23,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 16,
+                    "endColumn": 75,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 31,
+                    "endColumn": 35,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 35,
+                    "endColumn": 47,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 22,
+                    "endColumn": 26,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 22,
+                    "endColumn": 34,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 26,
+                    "endColumn": 30,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 26,
+                    "endColumn": 38,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 16,
+                    "endColumn": 56,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 16,
+                    "endColumn": 100,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 16,
+                    "endColumn": 103,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 31,
+                    "endColumn": 35,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 35,
+                    "endColumn": 47,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 19,
+                    "lineCount": 11
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 22,
+                    "endColumn": 26,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 22,
+                    "endColumn": 34,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 26,
+                    "endColumn": 30,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 26,
+                    "endColumn": 38,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./tests/test_wiki_modules.py": [
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 24,
+                    "lineCount": 8
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 37,
+                    "endColumn": 43,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 37,
+                    "endColumn": 47,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 37,
+                    "endColumn": 43,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 37,
+                    "endColumn": 47,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 37,
+                    "endColumn": 43,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportPrivateLocalImportUsage",
+                "range": {
+                    "startColumn": 28,
+                    "endColumn": 38,
+                    "lineCount": 1
+                }
+            }
+        ],
+        "./wiki.py": [
+            {
+                "code": "reportImportCycles",
+                "range": {
+                    "startColumn": 0,
+                    "endColumn": 0,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImportCycles",
+                "range": {
+                    "startColumn": 0,
+                    "endColumn": 0,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImportCycles",
+                "range": {
+                    "startColumn": 0,
+                    "endColumn": 0,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportImportCycles",
+                "range": {
+                    "startColumn": 0,
+                    "endColumn": 0,
+                    "lineCount": 1
+                }
+            },
+            {
+                "code": "reportUnreachable",
+                "range": {
+                    "startColumn": 4,
+                    "endColumn": 23,
+                    "lineCount": 4
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 13,
+                    "endColumn": 53,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 16,
+                    "endColumn": 58,
+                    "lineCount": 2
+                }
+            }
+        ],
+        "./wiki_index.py": [
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 68,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 77,
+                    "lineCount": 3
+                }
+            }
+        ],
+        "./wiki_ingest.py": [
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 38,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 20,
+                    "endColumn": 79,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 77,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 66,
+                    "lineCount": 3
+                }
+            }
+        ],
+        "./wiki_lint.py": [
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 16,
+                    "endColumn": 63,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 16,
+                    "endColumn": 46,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 16,
+                    "endColumn": 46,
+                    "lineCount": 2
+                }
+            }
+        ],
+        "./wiki_projects.py": [
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 56,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 97,
+                    "lineCount": 4
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 16,
+                    "endColumn": 73,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 84,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 67,
+                    "lineCount": 2
+                }
+            }
+        ],
+        "./wiki_query.py": [
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 47,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 16,
+                    "endColumn": 81,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 12,
+                    "endColumn": 65,
+                    "lineCount": 2
+                }
+            },
+            {
+                "code": "reportImplicitStringConcatenation",
+                "range": {
+                    "startColumn": 8,
+                    "endColumn": 46,
+                    "lineCount": 2
+                }
+            }
+        ]
+    }
+}
