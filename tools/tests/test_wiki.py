@@ -396,8 +396,8 @@ def test_project_provider_scaffold() -> None:
             check("project scaffold succeeds", rc == 0)
             check("project gets neutral AGENTS.md", "read\n`project.md`" in agents_text)
             check(
-                "Claude project shim imports canonical instructions",
-                (project / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n",
+                "project scaffold adds no CLAUDE.md that would hide AGENTS.md",
+                not (project / "CLAUDE.md").exists(),
             )
         finally:
             wiki_projects.ROOT = saved_root
@@ -422,12 +422,6 @@ def test_provider_adapter_generation() -> None:
             generator.ROLES_DIR = root / ".agents" / "roles"
             generator.CLAUDE_DIR = root / ".claude" / "agents"
             generator.CODEX_DIR = root / ".codex" / "agents"
-            generator.PROJECTS_DIR = root / "projects"
-            project = generator.PROJECTS_DIR / "demo"
-            for directory in [root, root / "wiki", generator.PROJECTS_DIR, project]:
-                directory.mkdir(parents=True, exist_ok=True)
-                (directory / "AGENTS.md").write_text("# Shared\n", encoding="utf-8")
-            (project / "project.md").write_text("# Demo\n", encoding="utf-8")
             (root / "tools").mkdir()
             (root / "tools" / "model-profiles.json").write_text(
                 '{"claude": {"standard": "sonnet", "deep": "opus"}, '
@@ -452,13 +446,8 @@ def test_provider_adapter_generation() -> None:
                 "both provider adapters generate and check", generated == checked == 0
             )
             check(
-                "all Claude instruction scopes import shared guidance",
-                all(
-                    path.read_text(encoding="utf-8") == "@AGENTS.md\n"
-                    for path in generator.claude_instruction_paths(
-                        generator.load_projects()
-                    )
-                ),
+                "generator writes no CLAUDE.md instruction files",
+                not list(root.rglob("CLAUDE.md")),
             )
             manifest = (generator.CLAUDE_DIR / "wiki-search.md").read_text(
                 encoding="utf-8"
@@ -496,11 +485,13 @@ def test_provider_adapter_generation() -> None:
                 reader_config["sandbox_mode"] == "read-only"
                 and "sandbox_workspace_write" not in reader_config,
             )
-            (root / "CLAUDE.md").write_text("stale\n", encoding="utf-8")
+            (generator.CLAUDE_DIR / "wiki-search.md").write_text(
+                "stale\n", encoding="utf-8"
+            )
             with contextlib.redirect_stdout(io.StringIO()):
                 claude_checked = generator.main(["--check", "--provider", "claude"])
                 codex_checked = generator.main(["--check", "--provider", "codex"])
-            check("Claude check detects a stale instruction shim", claude_checked == 1)
+            check("Claude check detects a stale adapter", claude_checked == 1)
             check("Codex-only check ignores Claude outputs", codex_checked == 0)
     finally:
         del sys.modules[spec.name]

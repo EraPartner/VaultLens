@@ -76,6 +76,8 @@ Do not claim isolation is verified from a cloud run.
   hook accepts `feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert`.
 - Edit canonical roles in `.agents/roles/`, then regenerate adapters. Never hand-edit
   `.claude/agents/` or `.codex/agents/`.
+- Do not add `CLAUDE.md` files. Claude Code reads `AGENTS.md` natively (v2.1.277 or newer), and
+  any `CLAUDE.md` in the directory or above it makes Claude read that file instead.
 - Keep access policy (`tools/access-profiles.json`) separate from provider and model selection.
   Do not add an automatic provider switch or an unsandboxed fallback.
 - Keep changes focused. Do not mix unrelated cleanup into a task.

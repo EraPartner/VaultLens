@@ -57,7 +57,6 @@ class ProviderRegressionTests(unittest.TestCase):
             self.generator,
             ROOT=self.root,
             ROLES_DIR=self.roles,
-            PROJECTS_DIR=self.root / "projects",
             CLAUDE_DIR=self.root / ".claude" / "agents",
             CODEX_DIR=self.root / ".codex" / "agents",
         )
@@ -308,12 +307,7 @@ class ProviderRegressionTests(unittest.TestCase):
                 len(list((output / provider / "agents").iterdir())), len(AGENT_FILES)
             )
             self.assertFalse((self.root / provider).exists())
-        for path in (
-            output / "CLAUDE.md",
-            output / "wiki" / "CLAUDE.md",
-            output / "projects" / "CLAUDE.md",
-        ):
-            self.assertEqual(path.read_text(), "@AGENTS.md\n")
+        self.assertEqual(list(output.rglob("CLAUDE.md")), [])
 
     def test_provider_launches_from_nested_project_use_vault_root(self):
         project = self.root / "projects" / "nested-project"

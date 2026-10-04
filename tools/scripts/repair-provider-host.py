@@ -301,12 +301,6 @@ def plan_repairs(
             raise ValueError(
                 f"Missing canonical instructions: {directory / 'AGENTS.md'}"
             )
-        adapter = directory / "CLAUDE.md"
-        if adapter.exists() and adapter.read_bytes() != b"@AGENTS.md\n":
-            raise ValueError(
-                f"Existing Claude instructions need manual review: {adapter}"
-            )
-        add(adapter, b"@AGENTS.md\n")
 
     ignore = vault / ".gitignore"
     ignored = ignore.read_text(encoding="utf-8")
