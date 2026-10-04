@@ -137,6 +137,7 @@ def _sync(path: Path, expected: str, check: bool) -> bool:
 def _check_adapter_set(directory: Path, suffix: str, expected: set[str]) -> bool:
     # Path.glob can silently report an unreadable directory as empty. Explicit
     # enumeration keeps blocked verification distinct from missing adapters.
+    actual: set[str]
     try:
         actual = {
             path.name for path in directory.iterdir() if path.name.endswith(suffix)

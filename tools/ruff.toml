@@ -13,9 +13,7 @@ select = ["E4", "E7", "E9", "F", "ANN"]
 # Files listed here predate the rule. Shrink only: delete an entry once its file is annotated;
 # never add one. New files are checked from their first commit.
 [lint.per-file-ignores]
-"agents/wiki-agent.py" = ["ANN"]
 "schedule/dispatch.py" = ["ANN"]
-"scripts/provider-smoke.py" = ["ANN"]
 "tests/test_agenda.py" = ["ANN"]
 "tests/test_agent_profiles.py" = ["ANN"]
 "tests/test_agent_safety.py" = ["ANN"]
