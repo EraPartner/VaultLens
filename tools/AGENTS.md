@@ -11,20 +11,21 @@ file lists project-specific rules only.
 ## Project
 
 VaultLens is the public, AGPL-3.0-only, provider-neutral template of an "LLM Wiki" knowledge base
-for Obsidian with Claude Code or Codex. It ships the system (tooling, roles, runbooks, adapters)
-and never any vault content.
+for Obsidian with Claude Code or Codex. It ships the system (tooling, roles, runbooks, adapters,
+native agent runtime) and never any vault content.
 
 | Area | Path |
 | --- | --- |
 | Wiki CLI and modules (`wiki.py` dispatches to `wiki_*.py`) | `tools/` |
 | Headless agent launcher, adapter generator | `tools/agents/` |
-| Scheduled-agent dispatcher and spec | `tools/schedule/` |
+| Access profiles, provider commands, launch routing, scoped search | `tools/access-profiles.json`, `tools/local_*.py`, `tools/agent_*.py`, `tools/provider_commands.py`, `tools/brain_launch.py`, `tools/scoped_search.py` |
+| Native whole-process runtime: install, probe, deploy, maintain | `tools/runtime/`, `tools/runtime_*.py`, `tools/process_control.py`, `tools/macos_processes.py` |
+| Host fish wrappers and host repair scripts | `tools/shell/`, `tools/scripts/` |
+| Scheduled-agent dispatcher, recovery, spec | `tools/schedule/` |
 | Context budgeting and fixture evals | `tools/context_*.py`, `tools/evals/` |
 | Tooling tests (stdlib `unittest`) | `tools/tests/` |
 | Canonical roles and runbooks | `.agents/roles/`, `.agents/skills/` |
 | Generated provider adapters (do not hand-edit) | `.claude/agents/`, `.codex/agents/` |
-| Codex cloud setup, generated policy | `.codex/cloud/` |
-| Sandbox launcher | `.devcontainer/` |
 | Local git gates | `.githooks/` |
 | CI | `.github/workflows/` |
 
@@ -34,15 +35,17 @@ Before changing code, read the relevant docs. Treat docs as intent and code as c
 resolve conflicts explicitly.
 
 - `REVIEW.md` — the pre-change checklist. Run through it before proposing a change.
-- `.githooks/README.md` — what each local gate checks and its escape hatches.
+- `tools/runtime/README.md` — runtime boundary, profiles, probe receipt, deployment, recovery.
 - `tools/schedule/SPEC.md` — locked scheduler decisions and rejected options.
 - `tools/evals/README.md` — what the context fixtures do and do not measure.
-- `.devcontainer/README.md` and `.codex/cloud/README.md` — sandbox and cloud environments.
+- `.githooks/README.md` — what each local gate checks and its escape hatches.
+- `README.md` — setup, provider selection and access profiles.
 - `.agents/skills/*/SKILL.md` — operational runbooks that the tooling must keep working.
 
 ## Commands
 
-Run from the repository root. CI uses Python 3.12 and `ruff==0.15.17`.
+Run from the repository root. CI uses Python 3.12 and `ruff==0.15.17`. The runtime needs Python
+3.11 or newer. CI installs `fish` for the provider wrapper tests.
 
 ```bash
 .githooks/install.sh                                 # enable local hooks (once per clone)
@@ -53,12 +56,15 @@ python3 tools/tests/test_wiki.py                     # one suite
 python3 tools/agents/generate-adapters.py            # regenerate adapters after a role change
 python3 tools/agents/generate-adapters.py --check    # fail on adapter drift
 python3 tools/context_evaluation.py --check          # context fixture baseline
-python3 .codex/cloud/check-instructions.py           # cloud policy matches vendored inputs
-for s in .codex/cloud/tests/*.test.sh; do bash "$s"; done  # cloud lifecycle tests
 ```
 
 Suites are run one file at a time, not through `unittest discover`. New `tools/tests/test_*.py`
 files are picked up by CI automatically.
+
+Some checks need the operator's Mac and cannot run in a cloud session. `bash tools/runtime/install.sh`,
+`python3 tools/local_runtime.py doctor`, and `python3 tools/runtime/probe.py` install and verify the
+pinned sandbox runtime on the real host. Portable tests do not establish operating-system isolation.
+Do not claim isolation is verified from a cloud run.
 
 ## Conventions
 
@@ -70,11 +76,11 @@ files are picked up by CI automatically.
   hook accepts `feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert`.
 - Edit canonical roles in `.agents/roles/`, then regenerate adapters. Never hand-edit
   `.claude/agents/` or `.codex/agents/`.
-- `.codex/cloud/policy/` and `.codex/cloud/AGENTS.md` are generated from vendored inputs. Do not
-  edit them by hand.
+- Keep access policy (`tools/access-profiles.json`) separate from provider and model selection.
+  Do not add an automatic provider switch or an unsandboxed fallback.
 - Keep changes focused. Do not mix unrelated cleanup into a task.
-- Add a test with each behaviour change. Safety-relevant behaviour (consent gate, write
-  boundaries, cancellation, link handling) needs a regression test.
+- Add a test with each behaviour change. Safety-relevant behaviour (consent gate, access
+  profiles, write boundaries, cancellation and cleanup, link handling) needs a regression test.
 
 ## Public-repo boundary
 
@@ -83,6 +89,8 @@ ignored.
 
 - Never commit private vault content, the operator profile, personal `raw/`, `wiki/` or
   `projects/` material, credentials, or host-specific paths.
+- Never commit local state: `tools/llm.local.json`, `tools/access.local.json`,
+  `tools/runtime-state/` (receipts, deployments, backups), or provider authentication stores.
 - Never `git add -f` an ignored path. Flag any change that would start tracking a data path.
 - Do not read, copy, mount or infer the private Brain vault in a cloud session. Cloud work uses
   only the tracked template.
@@ -90,22 +98,23 @@ ignored.
 
 ## Verification
 
-Scale checks to risk. CI runs lint, compile, all suites, cloud checks and a secrets scan behind the
+Scale checks to risk. CI runs lint, compile, all suites and a secrets scan behind the
 `CI Complete` gate.
 
 - Isolated edit: the targeted suite and `ruff check tools/`.
 - Cross-module change: compileall, every suite, and `ruff check tools/`.
-- Agent launcher, scheduler, context budgeting, or sandbox change: the full set above, plus
-  `generate-adapters.py --check` and `context_evaluation.py --check`.
+- Agent launcher, access profile, runtime, scheduler, or context budgeting change: the full set
+  above, plus `generate-adapters.py --check` and `context_evaluation.py --check`. Say which
+  host-only checks (probe, native provider runs) were not run.
 
-Local gates do not replace these. `pre-commit` runs only `test_wiki.py` and `test_schedule.py`.
-Do not land a change using `--no-verify`.
+Local gates do not replace these. `pre-commit` and `pre-push` run only `test_wiki.py` and
+`test_schedule.py`. Do not land a change using `--no-verify`.
 
 Finish with changed files, checks run, skipped checks, residual risk, and follow-ups.
 
 ## Documentation sync
 
 Update docs in the same change when behaviour, a gate, a command, or a documented path changes:
-`README.md`, `.githooks/README.md`, `tools/schedule/SPEC.md`, `tools/evals/README.md`,
-`.devcontainer/README.md`, or the affected `SKILL.md`. If none needs an update, say why in the
+`README.md`, `.githooks/README.md`, `tools/runtime/README.md`, `tools/schedule/SPEC.md`,
+`tools/evals/README.md`, or the affected `SKILL.md`. If none needs an update, say why in the
 completion report.
