@@ -16,27 +16,35 @@ import sys
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agents"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "schedule"))
 
 import dispatch  # noqa: E402
 
-PASSED = 0
-FAILED = 0
+# One alias per private name the suite exercises (tests legitimately touch internals).
+_env_flag = dispatch._env_flag  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+_slugify = dispatch._slugify  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+_select_ingest_pdfs = dispatch._select_ingest_pdfs  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+_agent_output = dispatch._agent_output  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+_record = dispatch._record  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+_reports_to_prune = dispatch._reports_to_prune  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+
+# Mutable counters in a dict so check() needs no module-level rebinding of constants.
+_COUNTS = {"passed": 0, "failed": 0}
 
 
 def check(name: str, condition: bool, detail: str = "") -> None:
-    global PASSED, FAILED
     if condition:
-        PASSED += 1
+        _COUNTS["passed"] += 1
         print(f"  PASS  {name}")
     else:
-        FAILED += 1
+        _COUNTS["failed"] += 1
         print(f"  FAIL  {name}  {detail}")
 
 
-def fresh_ledger() -> dict:
+def fresh_ledger() -> dispatch.Ledger:
     return {
         "jobs": {},
         "accounts": {
@@ -65,12 +73,12 @@ def main() -> int:
     original_flag = os.environ.get(flag_name)
     try:
         os.environ[flag_name] = "yes"
-        check("true environment flag", dispatch._env_flag(flag_name) is True)
+        check("true environment flag", _env_flag(flag_name) is True)
         os.environ[flag_name] = "off"
-        check("false environment flag", dispatch._env_flag(flag_name) is False)
+        check("false environment flag", _env_flag(flag_name) is False)
         os.environ[flag_name] = "invalid"
         try:
-            dispatch._env_flag(flag_name)
+            _env_flag(flag_name)
         except ValueError:
             invalid_rejected = True
         else:
@@ -197,12 +205,12 @@ def main() -> int:
     print("ingest target selection:")
     check(
         "slugify matches source-text convention",
-        dispatch._slugify("Cryptology and Error Correction")
+        _slugify("Cryptology and Error Correction")
         == "cryptology-and-error-correction",
     )
     check(
         "PDF with a wiki source page is skipped",
-        dispatch._select_ingest_pdfs(
+        _select_ingest_pdfs(
             ["Cryptology and Error Correction.pdf"],
             {"Cryptology and Error Correction.pdf"},
         )
@@ -210,7 +218,7 @@ def main() -> int:
     )
     check(
         "new PDF is selected",
-        dispatch._select_ingest_pdfs(["Brand New.pdf"], set()) == ["Brand New.pdf"],
+        _select_ingest_pdfs(["Brand New.pdf"], set()) == ["Brand New.pdf"],
     )
 
     print("scheduler status summary:")
@@ -234,7 +242,7 @@ def main() -> int:
     }
     s_fail = dispatch.format_schedule_status(failed, {}, meta, nowt)
     check("failing job named in verdict", "cos-brief" in s_fail and "failing" in s_fail)
-    never = {n: {} for n, _ in meta}  # never run -> stale, not failing
+    never: dict[str, dict[str, Any]] = {n: {} for n, _ in meta}  # never run -> stale, not failing
     s_stale = dispatch.format_schedule_status(never, {}, meta, nowt)
     check(
         "never-run jobs read as stale", "stale" in s_stale and "failing" not in s_stale
@@ -407,7 +415,7 @@ def main() -> int:
         )
         config_snapshot = dispatch.load_config(config_path)
         profiles_snapshot = dispatch.load_profile_models(profiles_path)
-        env_snapshot = {}
+        env_snapshot: dict[str, str] = {}
         for provider in ("claude", "codex"):
             frozen = dispatch.freeze_role_models(
                 provider,
@@ -458,12 +466,12 @@ def main() -> int:
     print("agent report stream selection:")
     check(
         "successful agent report keeps stdout only",
-        dispatch._agent_output(0, "final answer\n", "runtime trace\n")
+        _agent_output(0, "final answer\n", "runtime trace\n")
         == "final answer\n",
     )
     check(
         "failed agent result keeps diagnostics",
-        dispatch._agent_output(1, "partial\n", "failure detail\n")
+        _agent_output(1, "partial\n", "failure detail\n")
         == "partial\nfailure detail\n",
     )
     noisy_report = (
@@ -543,9 +551,9 @@ def main() -> int:
 
     print("_record failure semantics:")
     led7 = fresh_ledger()
-    dispatch._record(led7, "enhance", now, "ok")
+    _record(led7, "enhance", now, "ok")
     ok_ts = led7["jobs"]["enhance"]["last_ok"]
-    dispatch._record(led7, "enhance", now + timedelta(hours=3), "transient")
+    _record(led7, "enhance", now + timedelta(hours=3), "transient")
     check("failure preserves last_ok", led7["jobs"]["enhance"]["last_ok"] == ok_ts)
     check(
         "failure sets last_result",
@@ -561,7 +569,7 @@ def main() -> int:
         "lint-report.md",
         ".gitkeep",
     ]
-    prune = dispatch._reports_to_prune(names, 14, dispatch.REPORT_RETENTION_BY_TYPE)
+    prune = _reports_to_prune(names, 14, dispatch.REPORT_RETENTION_BY_TYPE)
     check(
         "daily cos briefs retain only the latest generated report",
         sum("cos-brief" in n for n in prune) == 19,
@@ -583,7 +591,7 @@ def main() -> int:
     )
     check(
         "retention 0 prunes all matching",
-        len(dispatch._reports_to_prune(names, 0)) == 22,
+        len(_reports_to_prune(names, 0)) == 22,
     )
 
     print("cos proposal parsing (CoS→AGENDA seam):")
@@ -706,8 +714,8 @@ def main() -> int:
             dispatch.resolve_proposal_dest("assistant", projects_dir) is None,
         )
 
-    print(f"\n{PASSED} passed, {FAILED} failed")
-    return 1 if FAILED else 0
+    print(f"\n{_COUNTS['passed']} passed, {_COUNTS['failed']} failed")
+    return 1 if _COUNTS["failed"] else 0
 
 
 if __name__ == "__main__":

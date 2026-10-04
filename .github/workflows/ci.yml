@@ -104,8 +104,8 @@ jobs:
           exit "$rc"
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Typing — basedpyright strict against tools/typing-baseline.json (new errors fail;
-  # shrink the baseline as files are fixed). Dev-only tool, pinned here. ruff ANN runs in Lint.
+  # Typing — basedpyright strict, no baseline (any error fails). Dev-only tool, pinned here.
+  # ruff ANN runs in Lint.
   # ─────────────────────────────────────────────────────────────────────────────
   typing:
     name: Typing (basedpyright)
@@ -124,7 +124,7 @@ jobs:
       - name: Install type tools (pinned)
         run: pip install basedpyright==1.40.2
 
-      - name: basedpyright (strict, baselined)
+      - name: basedpyright (strict)
         run: basedpyright --project tools/pyrightconfig.json
 
   # ─────────────────────────────────────────────────────────────────────────────

@@ -1,5 +1,8 @@
 """Public synthetic contracts for macOS lifetime ownership; no native jobs."""
 
+from __future__ import annotations
+
+import ctypes
 import errno
 import json
 import os
@@ -21,17 +24,52 @@ import macos_processes as supervision
 import process_control
 
 
-def token(pid, session=900, version=1):
+# Tests exercise these module internals directly; one alias per private name.
+_read_document = supervision._read_document  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+_write_document = supervision._write_document  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+_stop_members = supervision._stop_members  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+_terminal_identity = supervision._terminal_identity  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+
+
+def token(pid: int, session: int = 900, version: int = 1) -> supervision.Token:
     return (501, 501, 20, 501, 20, pid, session, version)
 
 
+class SyntheticOwner(supervision.AuditSessionProcess):
+    """An owner built without ``__init__`` (no native job) around a private pty pair.
+
+    A subclass may use the protected terminal state, so tests read it through these accessors.
+    """
+
+    def __init__(self) -> None:  # deliberately skips the native bootstrap
+        self._master, self._slave = pty.openpty()
+        self._dummy = []
+        self._streams = []
+        self._forwarders = []
+
+    @property
+    def master_fd(self) -> int | None:
+        return self._master
+
+    @property
+    def slave_fd(self) -> int:
+        assert self._slave is not None
+        return self._slave
+
+    def close_io(self) -> None:
+        self._close_io()
+
+    def resize(self) -> None:
+        self._resize_terminal(signal.SIGWINCH, None)
+
+
 class AuditKernelTests(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         # Deliberately bypass ctypes initialization: these are fake public IDs.
         self.kernel = object.__new__(supervision.AuditKernel)
         self.kernel.foreign_lifetimes = {}
 
-    def test_exact_session_membership_includes_detached_unrelated_parent(self):
+    def test_exact_session_membership_includes_detached_unrelated_parent(self) -> None:
         with (
             mock.patch.object(self.kernel, "user_pids", return_value=[101, 102, 103]),
             mock.patch.object(
@@ -42,7 +80,7 @@ class AuditKernelTests(unittest.TestCase):
         ):
             self.assertEqual(self.kernel.members(900), [token(101), token(103)])
 
-    def test_preexisting_inaccessible_exact_lifetime_is_foreign(self):
+    def test_preexisting_inaccessible_exact_lifetime_is_foreign(self) -> None:
         self.kernel.use_foreign_lifetimes([[102, 1000]])
         with (
             mock.patch.object(self.kernel, "user_pids", return_value=[101, 102]),
@@ -58,7 +96,7 @@ class AuditKernelTests(unittest.TestCase):
         ):
             self.assertEqual(self.kernel.members(900), [token(101)])
 
-    def test_pid_reuse_never_excludes_an_inaccessible_new_task(self):
+    def test_pid_reuse_never_excludes_an_inaccessible_new_task(self) -> None:
         self.kernel.use_foreign_lifetimes([[102, 1000]])
         with (
             mock.patch.object(self.kernel, "user_pids", return_value=[102]),
@@ -72,7 +110,7 @@ class AuditKernelTests(unittest.TestCase):
             with self.assertRaises(process_control.ProcessCleanupError):
                 self.kernel.members(900)
 
-    def test_new_inaccessible_task_cannot_be_ignored(self):
+    def test_new_inaccessible_task_cannot_be_ignored(self) -> None:
         with (
             mock.patch.object(self.kernel, "user_pids", return_value=[103]),
             mock.patch.object(
@@ -85,7 +123,7 @@ class AuditKernelTests(unittest.TestCase):
             with self.assertRaises(process_control.ProcessCleanupError):
                 self.kernel.members(900)
 
-    def test_kernel_inconsistency_is_never_an_exclusion(self):
+    def test_kernel_inconsistency_is_never_an_exclusion(self) -> None:
         self.kernel.use_foreign_lifetimes([[102, 1000]])
         with (
             mock.patch.object(self.kernel, "user_pids", return_value=[102]),
@@ -100,7 +138,7 @@ class AuditKernelTests(unittest.TestCase):
                 self.kernel.members(900)
             lifetime.assert_not_called()
 
-    def test_gone_lifetime_is_not_an_unknown_live_task(self):
+    def test_gone_lifetime_is_not_an_unknown_live_task(self) -> None:
         with (
             mock.patch.object(self.kernel, "user_pids", return_value=[102]),
             mock.patch.object(
@@ -112,7 +150,7 @@ class AuditKernelTests(unittest.TestCase):
         ):
             self.assertEqual(self.kernel.members(900), [])
 
-    def test_capture_retains_only_numeric_lifetimes(self):
+    def test_capture_retains_only_numeric_lifetimes(self) -> None:
         with (
             mock.patch.object(self.kernel, "user_pids", return_value=[101, 102]),
             mock.patch.object(self.kernel, "lifetime", side_effect=[1000, None]),
@@ -120,17 +158,15 @@ class AuditKernelTests(unittest.TestCase):
             self.assertEqual(self.kernel.capture_foreign_lifetimes(), [[101, 1000]])
             self.assertEqual(self.kernel.foreign_lifetimes, {101: 1000})
 
-    def test_invalid_foreign_identity_and_duplicates_refuse(self):
+    def test_invalid_foreign_identity_and_duplicates_refuse(self) -> None:
         for values in ([[102, 1], [102, 1]], None, [[1, 2]], [[102, True]]):
             with self.subTest(values=values), self.assertRaises(ValueError):
                 self.kernel.use_foreign_lifetimes(values)
 
-    def test_signal_carries_exact_kernel_token_and_reuse_is_esrch(self):
-        observed = []
+    def test_signal_carries_exact_kernel_token_and_reuse_is_esrch(self) -> None:
+        observed: list[tuple[tuple[int, ...], int]] = []
 
-        def invoke(pointer, signum):
-            import ctypes
-
+        def invoke(pointer: ctypes.c_void_p, signum: int) -> int:
             observed.append(
                 (
                     tuple(
@@ -141,18 +177,25 @@ class AuditKernelTests(unittest.TestCase):
             )
             return errno.ESRCH
 
-        self.kernel.signal_call = invoke
+        self.enterContext(mock.patch.object(self.kernel, "signal_call", invoke, create=True))
         self.assertFalse(self.kernel.signal(token(101, version=7), signal.SIGKILL))
         self.assertEqual(observed, [(token(101, version=7), signal.SIGKILL)])
 
-    def test_signal_permission_failure_is_unconfirmed(self):
-        self.kernel.signal_call = mock.Mock(return_value=errno.EPERM)
+    def test_signal_permission_failure_is_unconfirmed(self) -> None:
+        self.enterContext(
+            mock.patch.object(
+                self.kernel,
+                "signal_call",
+                mock.Mock(return_value=errno.EPERM),
+                create=True,
+            )
+        )
         with self.assertRaises(process_control.ProcessCleanupError):
             self.kernel.signal(token(101), signal.SIGKILL)
 
 
 class FreezeTests(unittest.TestCase):
-    def test_guardian_is_frozen_before_members_and_double_fork_is_killed(self):
+    def test_guardian_is_frozen_before_members_and_double_fork_is_killed(self) -> None:
         guardian = token(101)
         orphan = token(104)
         kernel = mock.Mock()
@@ -163,7 +206,7 @@ class FreezeTests(unittest.TestCase):
         ]
         kernel.state.return_value = 4
         with mock.patch.object(supervision.time, "sleep"):
-            supervision._stop_members(kernel, 900, guardian)
+            _stop_members(kernel, 900, guardian)
         self.assertEqual(
             kernel.method_calls[0], mock.call.signal(guardian, signal.SIGSTOP)
         )
@@ -172,72 +215,72 @@ class FreezeTests(unittest.TestCase):
             mock.call.signal(guardian, signal.SIGKILL), kernel.signal.call_args_list
         )
 
-    def test_membership_failure_propagates_without_completion(self):
+    def test_membership_failure_propagates_without_completion(self) -> None:
         kernel = mock.Mock()
         kernel.members.side_effect = process_control.ProcessCleanupError(
             "unknown new task"
         )
         with self.assertRaises(process_control.ProcessCleanupError):
-            supervision._stop_members(kernel, 900, token(101))
+            _stop_members(kernel, 900, token(101))
 
 
 class PrivateStateTests(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="vaultlens-public-audit-unit-")
         self.addCleanup(temporary.cleanup)
         self.directory = Path(temporary.name).resolve()
         self.path = self.directory / "public-state.json"
 
-    def test_private_document_round_trip_and_atomic_update(self):
-        supervision._write_document(self.path, {"version": 1, "public": 1})
+    def test_private_document_round_trip_and_atomic_update(self) -> None:
+        _write_document(self.path, {"version": 1, "public": 1})
         self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
-        supervision._write_document(
+        _write_document(
             self.path, {"version": 1, "public": 2}, replace=True
         )
-        self.assertEqual(supervision._read_document(self.path)["public"], 2)
+        self.assertEqual(_read_document(self.path)["public"], 2)
         self.assertEqual(len(list(self.directory.iterdir())), 1)
 
-    def test_symbolic_alias_and_hard_link_refuse(self):
-        supervision._write_document(self.path, {"version": 1})
+    def test_symbolic_alias_and_hard_link_refuse(self) -> None:
+        _write_document(self.path, {"version": 1})
         alias = self.directory / "alias.json"
         alias.symlink_to(self.path)
         with self.assertRaises(OSError):
-            supervision._read_document(alias)
+            _read_document(alias)
         alias.unlink()
         os.link(self.path, alias)
         with self.assertRaises(ValueError):
-            supervision._read_document(self.path)
+            _read_document(self.path)
 
-    def test_changed_permissions_and_schema_refuse(self):
-        supervision._write_document(self.path, {"version": 1})
+    def test_changed_permissions_and_schema_refuse(self) -> None:
+        _write_document(self.path, {"version": 1})
         self.path.chmod(0o644)
         with self.assertRaises(ValueError):
-            supervision._read_document(self.path)
+            _read_document(self.path)
         self.path.chmod(0o600)
         self.path.write_text('{"version":2}')
         with self.assertRaises(ValueError):
-            supervision._read_document(self.path)
+            _read_document(self.path)
 
-    def test_lost_owner_blocks_future_runs(self):
-        supervision._write_document(self.path, {"version": 1, "owner": token(101)})
+    def test_lost_owner_blocks_future_runs(self) -> None:
+        _write_document(self.path, {"version": 1, "owner": token(101)})
         with mock.patch.object(supervision, "AuditKernel") as kernel:
             kernel.return_value.token.return_value = token(101, version=2)
             with self.assertRaisesRegex(ValueError, "supervisor was lost"):
                 supervision.verify_process_records(self.directory)
 
-    def test_live_exact_owner_retains_parallel_run_record(self):
-        supervision._write_document(self.path, {"version": 1, "owner": token(101)})
+    def test_live_exact_owner_retains_parallel_run_record(self) -> None:
+        _write_document(self.path, {"version": 1, "owner": token(101)})
         with mock.patch.object(supervision, "AuditKernel") as kernel:
             kernel.return_value.token.return_value = token(101)
             supervision.verify_process_records(self.directory)
         self.assertTrue(self.path.is_file())
 
-    def test_pending_record_blocks_future_runs(self):
+    def test_pending_record_blocks_future_runs(self) -> None:
         (self.directory / ".pending-public").write_text("public")
         with self.assertRaisesRegex(ValueError, "Unfinished"):
             supervision.verify_process_records(self.directory)
 
-    def test_missing_guard_helper_never_bootstraps(self):
+    def test_missing_guard_helper_never_bootstraps(self) -> None:
         run = self.directory / "run"
         run.mkdir()
         (run / "scope.json").write_text(json.dumps({"root": str(self.directory)}))
@@ -255,7 +298,7 @@ class PrivateStateTests(unittest.TestCase):
 
 
 class DispatcherTests(unittest.TestCase):
-    def test_linux_retains_process_group_policy_and_exact_argv(self):
+    def test_linux_retains_process_group_policy_and_exact_argv(self) -> None:
         with (
             mock.patch.object(process_control.sys, "platform", "linux"),
             mock.patch.object(process_control.subprocess, "Popen") as popen,
@@ -273,7 +316,7 @@ class DispatcherTests(unittest.TestCase):
                 env={},
             )
 
-    def test_macos_uses_audit_owner(self):
+    def test_macos_uses_audit_owner(self) -> None:
         with (
             mock.patch.object(process_control.sys, "platform", "darwin"),
             mock.patch.object(supervision, "AuditSessionProcess") as child,
@@ -293,7 +336,7 @@ class DispatcherTests(unittest.TestCase):
                 env={},
             )
 
-    def test_audit_cleanup_never_falls_back_to_pid_group_signaling(self):
+    def test_audit_cleanup_never_falls_back_to_pid_group_signaling(self) -> None:
         child = mock.Mock(audit_session_owner=True)
         with mock.patch.object(process_control, "signal_group") as fallback:
             process_control.terminate_group(child, grace=0.1)
@@ -302,16 +345,12 @@ class DispatcherTests(unittest.TestCase):
 
 
 class TerminalTests(unittest.TestCase):
-    def public_terminal(self):
-        owner = object.__new__(supervision.AuditSessionProcess)
-        owner._master, owner._slave = pty.openpty()
-        self.addCleanup(owner._close_io)
-        owner._dummy = []
-        owner._streams = []
-        owner._forwarders = []
+    def public_terminal(self) -> SyntheticOwner:
+        owner = SyntheticOwner()
+        self.addCleanup(owner.close_io)
         return owner
 
-    def test_cleanup_drains_final_output_before_closing_terminal(self):
+    def cleanup_owner(self) -> tuple[SyntheticOwner, mock.Mock]:
         owner = self.public_terminal()
         owner.closed = False
         owner.returncode = 0
@@ -319,12 +358,19 @@ class TerminalTests(unittest.TestCase):
         owner.guardian = token(101)
         owner.session = 900
         owner.service = "public-synthetic-service"
-        owner.kernel = mock.Mock()
-        owner.kernel.token.return_value = owner.guardian
-        owner.kernel.members.return_value = [owner.guardian]
-        owner._remove_record = mock.Mock()
-        owner._terminal_output = mock.Mock()
-        os.write(owner._slave, b"public final CLI output\n")
+        kernel = mock.Mock()
+        kernel.token.return_value = owner.guardian
+        kernel.members.return_value = [owner.guardian]
+        owner.kernel = kernel
+        return owner, kernel
+
+    def test_cleanup_drains_final_output_before_closing_terminal(self) -> None:
+        owner, _kernel = self.cleanup_owner()
+        remove_record = self.enterContext(mock.patch.object(owner, "_remove_record"))
+        terminal_output = self.enterContext(
+            mock.patch.object(owner, "_terminal_output")
+        )
+        os.write(owner.slave_fd, b"public final CLI output\n")
         with (
             mock.patch.object(supervision, "_stop_members"),
             mock.patch.object(
@@ -334,31 +380,16 @@ class TerminalTests(unittest.TestCase):
             ),
         ):
             owner.terminate_owned(grace=0)
-        output = b"".join(
-            call.args[0] for call in owner._terminal_output.call_args_list
-        )
+        output = b"".join(call.args[0] for call in terminal_output.call_args_list)
         self.assertIn(b"public final CLI output", output)
         self.assertTrue(owner.closed)
-        self.assertIsNone(owner._master)
-        owner._remove_record.assert_called_once()
+        self.assertIsNone(owner.master_fd)
+        remove_record.assert_called_once()
 
-    def cleanup_owner(self):
-        owner = self.public_terminal()
-        owner.closed = False
-        owner.returncode = 0
-        owner.pid = 101
-        owner.guardian = token(101)
-        owner.session = 900
-        owner.service = "public-synthetic-service"
-        owner.kernel = mock.Mock()
-        owner.kernel.token.return_value = owner.guardian
-        owner.kernel.members.return_value = [owner.guardian]
-        owner._remove_record = mock.Mock()
-        owner._drain_terminal = mock.Mock()
-        return owner
-
-    def test_cleanup_waits_for_asynchronous_job_disappearance(self):
-        owner = self.cleanup_owner()
+    def test_cleanup_waits_for_asynchronous_job_disappearance(self) -> None:
+        owner, _kernel = self.cleanup_owner()
+        remove_record = self.enterContext(mock.patch.object(owner, "_remove_record"))
+        self.enterContext(mock.patch.object(owner, "_drain_terminal"))
         with (
             mock.patch.object(supervision, "_stop_members"),
             mock.patch.object(supervision.time, "sleep"),
@@ -375,10 +406,14 @@ class TerminalTests(unittest.TestCase):
             owner.terminate_owned(grace=0)
         self.assertTrue(owner.closed)
         self.assertEqual(launchctl.call_count, 3)
-        owner._remove_record.assert_called_once()
+        remove_record.assert_called_once()
 
-    def test_repeated_cleanup_preserves_original_failure_after_anchor_kill(self):
-        owner = self.cleanup_owner()
+    def test_repeated_cleanup_preserves_original_failure_after_anchor_kill(
+        self,
+    ) -> None:
+        owner, kernel = self.cleanup_owner()
+        remove_record = self.enterContext(mock.patch.object(owner, "_remove_record"))
+        self.enterContext(mock.patch.object(owner, "_drain_terminal"))
         with (
             mock.patch.object(supervision, "_stop_members"),
             mock.patch.object(supervision.time, "monotonic", side_effect=[0, 3]),
@@ -390,14 +425,14 @@ class TerminalTests(unittest.TestCase):
                 process_control.ProcessCleanupError, "job cleanup is unconfirmed"
             ) as original:
                 owner.terminate_owned(grace=0)
-        owner.kernel.token.return_value = None
+        kernel.token.return_value = None
         with self.assertRaises(process_control.ProcessCleanupError) as repeated:
             owner.terminate_owned(grace=0)
         self.assertIs(repeated.exception, original.exception)
-        owner._remove_record.assert_not_called()
+        remove_record.assert_not_called()
         self.assertFalse(owner.closed)
 
-    def test_initial_size_and_resize_forward_to_private_terminal(self):
+    def test_initial_size_and_resize_forward_to_private_terminal(self) -> None:
         owner = self.public_terminal()
         host_master, host_slave = pty.openpty()
         self.addCleanup(os.close, host_master)
@@ -409,18 +444,20 @@ class TerminalTests(unittest.TestCase):
             for rows, columns in ((24, 100), (36, 140)):
                 size = struct.pack("HHHH", rows, columns, 0, 0)
                 fcntl.ioctl(host_slave, termios.TIOCSWINSZ, size)
-                owner._resize_terminal(signal.SIGWINCH, None)
+                owner.resize()
                 self.assertEqual(
-                    fcntl.ioctl(owner._slave, termios.TIOCGWINSZ, b"\0" * 8), size
+                    fcntl.ioctl(owner.slave_fd, termios.TIOCGWINSZ, b"\0" * 8), size
                 )
 
-    def test_wait_restores_sigwinch_and_host_terminal(self):
+    def test_wait_restores_sigwinch_and_host_terminal(self) -> None:
         owner = self.public_terminal()
         owner.interactive = True
         owner.returncode = 0
-        owner.poll = mock.Mock(side_effect=[None, 0])
-        owner._terminal_tick = mock.Mock()
-        owner._resize_terminal = mock.Mock()
+        self.enterContext(
+            mock.patch.object(owner, "poll", mock.Mock(side_effect=[None, 0]))
+        )
+        self.enterContext(mock.patch.object(owner, "_terminal_tick"))
+        resize = self.enterContext(mock.patch.object(owner, "_resize_terminal"))
         stdin = mock.Mock()
         stdin.isatty.return_value = True
         stdin.fileno.return_value = 102
@@ -439,16 +476,22 @@ class TerminalTests(unittest.TestCase):
         self.assertEqual(
             handlers.call_args_list,
             [
-                mock.call(signal.SIGWINCH, owner._resize_terminal),
+                mock.call(signal.SIGWINCH, resize),
                 mock.call(signal.SIGWINCH, signal.SIG_DFL),
             ],
         )
         restore.assert_called_once_with(102, termios.TCSADRAIN, ["public attributes"])
 
-    def test_resize_setup_failure_restores_host_terminal(self):
+    def test_resize_setup_failure_restores_host_terminal(self) -> None:
         owner = self.public_terminal()
         owner.interactive = True
-        owner._resize_terminal = mock.Mock(side_effect=OSError("public resize failure"))
+        self.enterContext(
+            mock.patch.object(
+                owner,
+                "_resize_terminal",
+                mock.Mock(side_effect=OSError("public resize failure")),
+            )
+        )
         stdin = mock.Mock()
         stdin.isatty.return_value = True
         stdin.fileno.return_value = 102
@@ -466,19 +509,19 @@ class TerminalTests(unittest.TestCase):
 
 
 class GuardParserTests(unittest.TestCase):
-    def test_private_terminal_identity_rejects_regular_files(self):
+    def test_private_terminal_identity_rejects_regular_files(self) -> None:
         master, slave = pty.openpty()
         try:
-            identity = supervision._terminal_identity(slave)
+            identity = _terminal_identity(slave)
             self.assertEqual(len(identity), 3)
             with tempfile.TemporaryFile() as regular:
                 with self.assertRaisesRegex(ValueError, "terminal character device"):
-                    supervision._terminal_identity(regular.fileno())
+                    _terminal_identity(regular.fileno())
         finally:
             os.close(master)
             os.close(slave)
 
-    def test_exact_transport_and_credential_denials(self):
+    def test_exact_transport_and_credential_denials(self) -> None:
         node = shutil.which("node")
         if not node:
             self.skipTest("Node is unavailable for the public transport parser fixture")
