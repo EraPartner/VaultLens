@@ -6,25 +6,39 @@ from datetime import datetime, timezone
 from pathlib import Path
 import subprocess
 import json
-import importlib.util
 import os
 import shlex
 import shutil
 import sys
 import tempfile
 import unittest
+from typing import NoReturn
 from unittest.mock import Mock, patch
+
+from _loader import load_module
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "schedule"))
 import dispatch  # noqa: E402
 from restore_project import restore_project  # noqa: E402
 
+# One alias per private name the suite exercises (tests legitimately touch internals).
+_ingest_targets = dispatch._ingest_targets  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+_project_runner_targets = dispatch._project_runner_targets  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+_run_steps = dispatch._run_steps  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+_snapshot_project = dispatch._snapshot_project  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+_project_runner_header = dispatch._project_runner_header  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+
+
+def _noop_log(_: str) -> None:
+    """Logger stand-in for dispatcher callables that take a log callback."""
+
+
 
 class SchedulerRecoveryTests(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.now = datetime(2026, 10, 3, 3, tzinfo=timezone.utc)
 
-    def test_invalid_model_policy_preserves_status_maintenance_and_recovery(self):
+    def test_invalid_model_policy_preserves_status_maintenance_and_recovery(self) -> None:
         import llm_provider
 
         load_config = llm_provider.load_config
@@ -60,13 +74,10 @@ class SchedulerRecoveryTests(unittest.TestCase):
                     (root / ".agents" / "roles" / "wiki-search.md").write_text(
                         "missing frontmatter"
                     )
-                spec = importlib.util.spec_from_file_location(
-                    "schedule_policy_fixture", schedule / "dispatch.py"
-                )
-                fixture = importlib.util.module_from_spec(spec)
-                # dataclasses resolve annotations through the module registry.
+                # dataclasses resolve annotations through the module registry, so the
+                # fixture is registered in sys.modules (restored by patch.dict on exit).
                 with (
-                    patch.dict(sys.modules, {spec.name: fixture}),
+                    patch.dict(sys.modules),
                     patch.dict(
                         os.environ,
                         {
@@ -91,7 +102,11 @@ class SchedulerRecoveryTests(unittest.TestCase):
                         ),
                     ),
                 ):
-                    spec.loader.exec_module(fixture)
+                    fixture = load_module(
+                        "schedule_policy_fixture",
+                        schedule / "dispatch.py",
+                        register=True,
+                    )
                 self.assertTrue(fixture._PROVIDER_ERROR)
                 self.assertEqual(fixture.ACCOUNTS, [])
                 with self.assertRaisesRegex(ValueError, "LLM configuration invalid"):
@@ -117,12 +132,12 @@ class SchedulerRecoveryTests(unittest.TestCase):
                         model_builder,
                     ),
                 ]
-                ledger = {"jobs": {}, "accounts": {}}
+                ledger: dispatch.Ledger = {"jobs": {}, "accounts": {}}
                 with (
                     patch.object(fixture, "load_ledger", return_value=ledger),
                     patch.object(fixture, "now_local", return_value=self.now),
                     patch.object(fixture, "build_steps", return_value=steps),
-                    patch.object(fixture, "make_logger", return_value=lambda _: None),
+                    patch.object(fixture, "make_logger", return_value=_noop_log),
                     patch.object(fixture, "acquire_lock", return_value=Mock()),
                     patch.object(fixture.fcntl, "flock"),
                     patch.object(fixture, "save_ledger"),
@@ -163,8 +178,8 @@ class SchedulerRecoveryTests(unittest.TestCase):
                     (fixture.REPORTS_DIR / "schedule-status.md").read_text(),
                 )
 
-    def test_preview_has_no_mutating_gates_or_ledger_writes(self):
-        ledger = {"jobs": {}, "accounts": {}}
+    def test_preview_has_no_mutating_gates_or_ledger_writes(self) -> None:
+        ledger: dispatch.Ledger = {"jobs": {}, "accounts": {}}
         steps = [dispatch.Step("empty", "llm", "daily", (1, 11), [], lambda: [])]
         with (
             patch.object(dispatch, "load_ledger", return_value=ledger),
@@ -193,13 +208,13 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 ) as probe,
                 patch.object(dispatch.subprocess, "run") as run,
             ):
-                gates = dispatch.Gates(lambda _: None, read_only=True)
+                gates = dispatch.Gates(_noop_log, read_only=True)
                 self.assertFalse(gates.get("runtime"))
                 self.assertTrue(gates.get("icloud"))
             run.assert_not_called()
             probe.assert_called_once_with(root=root, cli=dispatch.CLI)
 
-    def test_native_runtime_gate_never_starts_or_installs_a_service(self):
+    def test_native_runtime_gate_never_starts_or_installs_a_service(self) -> None:
         for available in (False, True):
             with (
                 self.subTest(available=available),
@@ -208,13 +223,13 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 ) as probe,
                 patch.object(dispatch.subprocess, "run") as start,
             ):
-                gates = dispatch.Gates(lambda _: None)
+                gates = dispatch.Gates(_noop_log)
                 self.assertEqual(gates.get("runtime"), available)
                 self.assertEqual(gates.get("runtime"), available)
             probe.assert_called_once_with(root=dispatch.ROOT, cli=dispatch.CLI)
             start.assert_not_called()
 
-    def test_preprocessing_does_not_mark_pdf_ingested(self):
+    def test_preprocessing_does_not_mark_pdf_ingested(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             sources = root / "raw" / "sources"
@@ -228,14 +243,14 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 (extracted / f"{stem}.md").write_text("preprocessed input")
             with patch.object(dispatch, "ROOT", root):
                 self.assertEqual(
-                    dispatch._ingest_targets(), [["ingest", "--source", str(pdf)]]
+                    _ingest_targets(), [["ingest", "--source", str(pdf)]]
                 )
                 (wiki_sources / "foo-bar.md").write_text(
                     "Source: [PDF](<../../raw/sources/Foo Bar.pdf>)"
                 )
-                self.assertEqual(dispatch._ingest_targets(), [])
+                self.assertEqual(_ingest_targets(), [])
 
-    def test_scheduled_ingest_never_follows_source_or_inbox_links(self):
+    def test_scheduled_ingest_never_follows_source_or_inbox_links(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             inbox = root / "raw" / "inbox"
@@ -251,15 +266,15 @@ class SchedulerRecoveryTests(unittest.TestCase):
             approved.write_text("approved fixture")
             with patch.object(dispatch, "ROOT", root):
                 self.assertEqual(
-                    dispatch._ingest_targets(), [["ingest", "--source", str(approved)]]
+                    _ingest_targets(), [["ingest", "--source", str(approved)]]
                 )
                 approved.unlink()
                 (inbox / "private.md").unlink()
                 inbox.rmdir()
                 inbox.symlink_to(review, target_is_directory=True)
-                self.assertEqual(dispatch._ingest_targets(), [])
+                self.assertEqual(_ingest_targets(), [])
 
-    def test_cited_inbox_inputs_remain_immutable_without_reingestion(self):
+    def test_cited_inbox_inputs_remain_immutable_without_reingestion(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             inbox = root / "raw" / "inbox"
@@ -285,13 +300,13 @@ class SchedulerRecoveryTests(unittest.TestCase):
             )
             with patch.object(dispatch, "ROOT", root):
                 self.assertEqual(
-                    dispatch._ingest_targets(),
+                    _ingest_targets(),
                     [["ingest", "--source", str(inbox / "Next Source.pdf")]],
                 )
             for name, data in files.items():
                 self.assertEqual((inbox / name).read_bytes(), data)
 
-    def test_handoff_routes_only_to_real_opted_in_projects(self):
+    def test_handoff_routes_only_to_real_opted_in_projects(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             projects = root / "projects"
@@ -329,7 +344,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
                         handoffs,
                         "source",
                         self.now,
-                        lambda _: None,
+                        _noop_log,
                         projects_dir=projects,
                     ),
                     1,
@@ -343,7 +358,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
             (enabled / "AGENDA.md").symlink_to(outside / "AGENDA.md")
             self.assertIsNone(dispatch.resolve_proposal_dest("enabled", projects))
 
-    def test_project_selection_checks_links_before_reading_agendas(self):
+    def test_project_selection_checks_links_before_reading_agendas(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             projects = root / "projects"
@@ -367,10 +382,12 @@ class SchedulerRecoveryTests(unittest.TestCase):
             (projects / "linked").symlink_to(review, target_is_directory=True)
             original_read = Path.read_text
 
-            def allowed_read(path, *args, **kwargs):
+            def allowed_read(
+                path: Path, encoding: str | None = None, errors: str | None = None
+            ) -> str:
                 if path.resolve().is_relative_to(review.resolve()):
                     raise AssertionError("Consent queue content must not be opened")
-                return original_read(path, *args, **kwargs)
+                return original_read(path, encoding, errors)
 
             with (
                 patch.object(dispatch, "ROOT", root),
@@ -381,11 +398,11 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 patch.object(Path, "read_text", allowed_read),
             ):
                 self.assertEqual(
-                    dispatch._project_runner_targets(),
+                    _project_runner_targets(),
                     [["project-run", "--project", "enabled"]],
                 )
 
-    def test_host_reports_cannot_follow_directory_or_file_links(self):
+    def test_host_reports_cannot_follow_directory_or_file_links(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             wiki = root / "wiki"
@@ -414,7 +431,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "simple job name"):
                     dispatch.write_report("../escaped", "fixture", self.now)
 
-    def test_content_reports_are_excluded_from_all_profiles_and_scoped_search(self):
+    def test_content_reports_are_excluded_from_all_profiles_and_scoped_search(self) -> None:
         from local_access import resolve_scope
         from scoped_search import ScopedSearch
 
@@ -457,7 +474,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
                         profile,
                         project="alpha" if profile == "project-write" else None,
                         capability=capability,
-                        read_paths=["wiki/reports/schedule-status.md"]
+                        read_paths=("wiki/reports/schedule-status.md",)
                         if profile == "selected-read"
                         else (),
                     )
@@ -473,11 +490,11 @@ class SchedulerRecoveryTests(unittest.TestCase):
                     self.assertIn("all scheduled jobs healthy", health["text"])
                     self.assertNotIn(private, health["text"])
 
-    def test_readable_status_never_copies_raw_errors_results_or_backend_identity(self):
+    def test_readable_status_never_copies_raw_errors_results_or_backend_identity(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
             sentinel = "SCHEDULER_PRIVATE_DIAGNOSTIC_SENTINEL_731"
-            ledger = {
+            ledger: dispatch.Ledger = {
                 "jobs": {
                     "cos-brief": {
                         "last_result": sentinel,
@@ -512,7 +529,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
             self.assertIn("1 backend(s)", text)
             self.assertEqual(ledger["cancellation_pending"]["detail"], sentinel)
 
-    def test_private_report_directories_reject_links_during_writes_and_retention(self):
+    def test_private_report_directories_reject_links_during_writes_and_retention(self) -> None:
         for relative in (
             "wiki",
             "wiki/reports",
@@ -544,7 +561,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
 
     def test_private_report_target_links_and_directory_swaps_cannot_redirect_output(
         self,
-    ):
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
             reports = root / "wiki/reports"
@@ -570,11 +587,17 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 original_open = os.open
                 renamed = scheduled.with_name("held-scheduled")
 
-                def swapped_open(path, flags, *args, **kwargs):
+                def swapped_open(
+                    path: str | os.PathLike[str],
+                    flags: int,
+                    mode: int = 0o777,
+                    *,
+                    dir_fd: int | None = None,
+                ) -> int:
                     if isinstance(path, str) and path.startswith(".schedule-report-"):
                         scheduled.rename(renamed)
                         scheduled.symlink_to(outside, target_is_directory=True)
-                    return original_open(path, flags, *args, **kwargs)
+                    return original_open(path, flags, mode, dir_fd=dir_fd)
 
                 with patch.object(dispatch.os, "open", side_effect=swapped_open):
                     with self.assertRaisesRegex(ValueError, "Report destination"):
@@ -583,7 +606,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 self.assertEqual(sentinel.read_text(), "Unrelated fixture\n")
                 self.assertEqual(list(outside.iterdir()), [sentinel])
 
-    def test_retention_prunes_only_real_private_reports_and_keeps_public_status(self):
+    def test_retention_prunes_only_real_private_reports_and_keeps_public_status(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
             reports = root / "wiki/reports"
@@ -616,7 +639,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
             self.assertEqual(status.read_text(), "Metadata only\n")
             self.assertEqual(hand_written.read_text(), "Preserved fixture\n")
 
-    def test_maintenance_operational_failures_remain_due(self):
+    def test_maintenance_operational_failures_remain_due(self) -> None:
         findings = json.dumps(
             {
                 "error_count": 2,
@@ -636,20 +659,23 @@ class SchedulerRecoveryTests(unittest.TestCase):
         for name, kind, args, rc, output, completed in cases:
             with self.subTest(name=name, rc=rc, output=output):
                 step = dispatch.Step(name, kind, "daily", (1, 11), [], lambda: [args])
-                ledger = {"jobs": {name: {"fail_streak": 2}}, "accounts": {}}
+                ledger: dispatch.Ledger = {
+                    "jobs": {name: {"fail_streak": 2}},
+                    "accounts": {},
+                }
                 runner = "run_host" if kind == "host" else "run_qmd"
                 with (
                     patch.object(dispatch, runner, return_value=(rc, output)),
                     patch.object(dispatch, "save_ledger"),
                     patch.object(dispatch, "notify"),
                 ):
-                    dispatch._run_steps(
+                    _run_steps(
                         [step],
                         ledger,
-                        dispatch.Gates(lambda _: None),
+                        dispatch.Gates(_noop_log),
                         self.now,
                         False,
-                        lambda _: None,
+                        _noop_log,
                     )
                 record = ledger["jobs"][name]
                 self.assertEqual("last_ok" in record, completed)
@@ -658,14 +684,14 @@ class SchedulerRecoveryTests(unittest.TestCase):
                     dispatch.step_due(step, ledger, self.now), not completed
                 )
 
-    def test_missing_maintenance_executable_is_recordable_failure(self):
+    def test_missing_maintenance_executable_is_recordable_failure(self) -> None:
         for runner in (dispatch.run_host, dispatch.run_qmd):
             with patch.object(
                 dispatch.subprocess, "run", side_effect=FileNotFoundError("absent")
             ):
                 self.assertEqual(runner(["update"], 1), (127, "absent"))
 
-    def test_dispatcher_does_not_start_or_stop_an_external_runtime(self):
+    def test_dispatcher_does_not_start_or_stop_an_external_runtime(self) -> None:
         # An unrelated session can appear at any time; a failed baseline list
         # likewise conveys no ownership. Neither warrants any global listing.
         with (
@@ -676,7 +702,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
             ),
             patch.object(dispatch, "now_local", return_value=self.now),
             patch.object(dispatch, "build_steps", return_value=[]),
-            patch.object(dispatch, "make_logger", return_value=lambda _: None),
+            patch.object(dispatch, "make_logger", return_value=_noop_log),
             patch.object(dispatch.Gates, "get", return_value=False),
             patch.object(dispatch, "lid_closed", return_value=False),
             patch.object(dispatch, "keepawake_off"),
@@ -693,7 +719,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
             self.assertEqual(dispatch.cmd_run(), 0)
         run.assert_not_called()
 
-    def test_native_launch_discards_legacy_session_reuse_setting(self):
+    def test_native_launch_discards_legacy_session_reuse_setting(self) -> None:
         with (
             patch.dict(dispatch.os.environ, {"BRAIN_KEEP_WARM": "1"}),
             patch.object(
@@ -703,14 +729,14 @@ class SchedulerRecoveryTests(unittest.TestCase):
             dispatch.exec_brain_wiki(["cos"], "claude", "low", 5)
         self.assertNotIn("BRAIN_KEEP_WARM", run.call_args.args[2])
 
-    def test_claude_limit_defers_following_invocations(self):
+    def test_claude_limit_defers_following_invocations(self) -> None:
         for response in (
             "You've hit your session limit",
             "You've hit your limit · resets 6pm",
             "Monthly spend limit reached",
         ):
             with self.subTest(response=response):
-                ledger = {"jobs": {}, "accounts": {}}
+                ledger: dispatch.Ledger = {"jobs": {}, "accounts": {}}
                 with (
                     patch.object(dispatch, "ACCOUNTS", ["claude"]),
                     patch.object(dispatch, "_PROVIDER_ERROR", ""),
@@ -720,17 +746,17 @@ class SchedulerRecoveryTests(unittest.TestCase):
                     ) as launch,
                 ):
                     first = dispatch.run_llm(
-                        ["cos"], "low", 5, ledger, self.now, lambda _: None
+                        ["cos"], "low", 5, ledger, self.now, _noop_log
                     )
                     second = dispatch.run_llm(
-                        ["search"], "low", 5, ledger, self.now, lambda _: None
+                        ["search"], "low", 5, ledger, self.now, _noop_log
                     )
                 self.assertEqual(first, ("deferred", "claude", response))
                 self.assertEqual(second, ("deferred", "claude", ""))
                 launch.assert_called_once()
                 self.assertEqual(ledger["accounts"]["claude"]["last_error"], "quota")
 
-    def test_scheduled_launch_is_bound_to_dispatcher_checkout(self):
+    def test_scheduled_launch_is_bound_to_dispatcher_checkout(self) -> None:
         with tempfile.TemporaryDirectory(prefix="schedule checkout ") as temporary:
             base = Path(temporary).resolve()
             root = base / "alternate vault"
@@ -775,7 +801,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 self.assertIn(str(root), output)
                 self.assertNotIn(str(fallback), output)
 
-    def test_failed_snapshot_blocks_the_project_writer(self):
+    def test_failed_snapshot_blocks_the_project_writer(self) -> None:
         step = dispatch.Step(
             "project-runner",
             "llm",
@@ -784,19 +810,19 @@ class SchedulerRecoveryTests(unittest.TestCase):
             [],
             lambda: [["project-run", "--project", "demo"]],
         )
-        ledger = {"jobs": {}, "accounts": {}}
+        ledger: dispatch.Ledger = {"jobs": {}, "accounts": {}}
         with (
             patch.object(dispatch, "_snapshot_project", return_value=None),
             patch.object(dispatch, "run_llm") as run,
             patch.object(dispatch, "save_ledger"),
         ):
-            dispatch._run_steps(
+            _run_steps(
                 [step],
                 ledger,
-                dispatch.Gates(lambda _: None),
+                dispatch.Gates(_noop_log),
                 self.now,
                 False,
-                lambda _: None,
+                _noop_log,
             )
         run.assert_not_called()
         self.assertEqual(
@@ -804,14 +830,14 @@ class SchedulerRecoveryTests(unittest.TestCase):
         )
         self.assertNotIn("last_ok", ledger["jobs"]["project-runner"])
 
-    def test_partial_failed_snapshot_never_becomes_valid(self):
+    def test_partial_failed_snapshot_never_becomes_valid(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             project = root / "projects" / "demo"
             project.mkdir(parents=True)
             snapshots = root / "snapshots"
 
-            def failed_copy(command, **kwargs):
+            def failed_copy(command: list[str], **kwargs: object) -> NoReturn:
                 destination = Path(command[-1])
                 destination.mkdir()
                 (destination / "partial").write_text("incomplete")
@@ -825,13 +851,13 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 ) as copy,
             ):
                 self.assertIsNone(
-                    dispatch._snapshot_project("demo", self.now, lambda _: None)
+                    _snapshot_project("demo", self.now, _noop_log)
                 )
             self.assertEqual(copy.call_count, 2)
             self.assertFalse((snapshots / "2026-10-03" / "demo").exists())
             self.assertEqual(list((snapshots / "2026-10-03").iterdir()), [])
 
-    def test_complete_snapshot_is_reused_without_losing_original(self):
+    def test_complete_snapshot_is_reused_without_losing_original(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             project = root / "projects" / "demo"
@@ -841,18 +867,19 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 patch.object(dispatch, "ROOT", root),
                 patch.object(dispatch, "SNAPSHOT_DIR", root / "snapshots"),
             ):
-                snapshot = dispatch._snapshot_project("demo", self.now, lambda _: None)
+                snapshot = _snapshot_project("demo", self.now, _noop_log)
                 self.assertIsNotNone(snapshot)
+                assert snapshot is not None  # narrowed for the type checker
                 (project / "note").write_text("changed")
                 self.assertEqual(
-                    dispatch._snapshot_project("demo", self.now, lambda _: None),
+                    _snapshot_project("demo", self.now, _noop_log),
                     snapshot,
                 )
             self.assertEqual((snapshot / "note").read_text(), "original")
             self.assertTrue((snapshot.parent / ".demo.complete.json").is_file())
             self.assertEqual(list(snapshot.iterdir()), [snapshot / "note"])
 
-    def test_legacy_incomplete_snapshot_is_preserved_and_rejected(self):
+    def test_legacy_incomplete_snapshot_is_preserved_and_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             project = root / "projects" / "demo"
@@ -860,14 +887,14 @@ class SchedulerRecoveryTests(unittest.TestCase):
             snapshot = root / "snapshots" / "2026-10-03" / "demo"
             snapshot.mkdir(parents=True)
             (snapshot / "partial").write_text("legacy incomplete copy")
-            logs = []
+            logs: list[str] = []
             with (
                 patch.object(dispatch, "ROOT", root),
                 patch.object(dispatch, "SNAPSHOT_DIR", root / "snapshots"),
                 patch.object(dispatch.subprocess, "run") as copy,
             ):
                 self.assertIsNone(
-                    dispatch._snapshot_project("demo", self.now, logs.append)
+                    _snapshot_project("demo", self.now, logs.append)
                 )
             copy.assert_not_called()
             self.assertEqual(
@@ -876,7 +903,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
             self.assertIn("preserved for operator review", logs[0])
             self.assertFalse((snapshot.parent / ".demo.complete.json").exists())
 
-    def test_marker_publication_failure_never_authorizes_snapshot_reuse(self):
+    def test_marker_publication_failure_never_authorizes_snapshot_reuse(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             project = root / "projects" / "demo"
@@ -884,7 +911,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
             (project / "note").write_text("original")
             rename = Path.rename
 
-            def fail_marker(path, target):
+            def fail_marker(path: Path, target: str | Path) -> Path:
                 if Path(target).name == ".demo.complete.json":
                     raise OSError("marker failed")
                 return rename(path, target)
@@ -895,7 +922,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 patch.object(Path, "rename", fail_marker),
             ):
                 self.assertIsNone(
-                    dispatch._snapshot_project("demo", self.now, lambda _: None)
+                    _snapshot_project("demo", self.now, _noop_log)
                 )
             snapshot = root / "snapshots" / "2026-10-03" / "demo"
             self.assertEqual((snapshot / "note").read_text(), "original")
@@ -905,12 +932,12 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 patch.object(dispatch.subprocess, "run") as copy,
             ):
                 self.assertIsNone(
-                    dispatch._snapshot_project("demo", self.now, lambda _: None)
+                    _snapshot_project("demo", self.now, _noop_log)
                 )
             copy.assert_not_called()
             self.assertFalse((snapshot.parent / ".demo.complete.json").exists())
 
-    def test_completion_marker_must_match_current_directory(self):
+    def test_completion_marker_must_match_current_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             project = root / "projects" / "demo"
@@ -920,17 +947,18 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 patch.object(dispatch, "ROOT", root),
                 patch.object(dispatch, "SNAPSHOT_DIR", root / "snapshots"),
             ):
-                snapshot = dispatch._snapshot_project("demo", self.now, lambda _: None)
+                snapshot = _snapshot_project("demo", self.now, _noop_log)
                 self.assertIsNotNone(snapshot)
+                assert snapshot is not None  # narrowed for the type checker
                 snapshot.rename(snapshot.with_name("retained-original"))
                 snapshot.mkdir()
                 (snapshot / "partial").write_text("replacement")
                 self.assertIsNone(
-                    dispatch._snapshot_project("demo", self.now, lambda _: None)
+                    _snapshot_project("demo", self.now, _noop_log)
                 )
             self.assertEqual((snapshot / "partial").read_text(), "replacement")
 
-    def fixture(self, root):
+    def fixture(self, root: Path) -> tuple[Path, Path]:
         snapshot = root / "snapshots" / "demo"
         project = root / "projects" / "demo"
         snapshot.mkdir(parents=True)
@@ -941,7 +969,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
         (project / "created-by-run").write_text("keep in backup")
         return snapshot, project
 
-    def test_restore_exact_tree_and_preserve_operator_edits(self):
+    def test_restore_exact_tree_and_preserve_operator_edits(self) -> None:
         with tempfile.TemporaryDirectory(prefix="restore spaces ") as temporary:
             snapshot, project = self.fixture(Path(temporary))
             external = Path(temporary) / "external"
@@ -958,7 +986,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
             self.assertEqual((snapshot / "note").read_text(), "original")
             self.assertEqual(external.read_text(), "external")
 
-    def test_generated_restore_command_restores_the_project(self):
+    def test_generated_restore_command_restores_the_project(self) -> None:
         with tempfile.TemporaryDirectory(prefix="restore command spaces ") as temporary:
             root = Path(temporary)
             snapshot, project = self.fixture(root)
@@ -975,7 +1003,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 patch.object(dispatch, "ROOT", root),
                 patch.object(dispatch, "SNAPSHOT_DIR", root / "snapshots"),
             ):
-                header = dispatch._project_runner_header(["demo"], self.now)
+                header = _project_runner_header(["demo"], self.now)
             command = next(
                 line for line in header.splitlines() if line.startswith("- `demo`:")
             )
@@ -988,7 +1016,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
             self.assertFalse((project / "created-by-run").exists())
             self.assertIn("previous contents preserved", result.stdout)
 
-    def test_restore_copy_failure_keeps_current_tree(self):
+    def test_restore_copy_failure_keeps_current_tree(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             snapshot, project = self.fixture(Path(temporary))
             with patch(
@@ -999,12 +1027,12 @@ class SchedulerRecoveryTests(unittest.TestCase):
             self.assertEqual((project / "note").read_text(), "operator edits")
             self.assertTrue((project / "created-by-run").is_file())
 
-    def test_failed_install_rolls_back_current_tree(self):
+    def test_failed_install_rolls_back_current_tree(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             snapshot, project = self.fixture(Path(temporary))
             rename = Path.rename
 
-            def fail_install(path, target):
+            def fail_install(path: Path, target: str | Path) -> Path:
                 if (
                     path.parent.name.startswith(".restore-")
                     and path.parent.name != ".restore-backups"
@@ -1018,7 +1046,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
             self.assertEqual((project / "note").read_text(), "operator edits")
             self.assertTrue((project / "created-by-run").is_file())
 
-    def test_reject_symlink_and_nested_restore_targets(self):
+    def test_reject_symlink_and_nested_restore_targets(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             snapshot, project = self.fixture(root)

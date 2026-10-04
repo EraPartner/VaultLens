@@ -4,20 +4,23 @@
 from __future__ import annotations
 
 import copy
-import importlib.util
 import json
 import os
 import stat
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-SCRIPT = Path(__file__).resolve().parents[1] / "runtime/deploy.py"
-SPEC = importlib.util.spec_from_file_location("runtime_deployment", SCRIPT)
-assert SPEC and SPEC.loader
-deploy = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(deploy)
+TOOLS = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(TOOLS))
+sys.path.insert(0, str(TOOLS / "tests"))
+
+from _loader import load_module  # noqa: E402
+from local_access import JsonObject  # noqa: E402
+
+deploy = load_module("runtime_deployment", TOOLS / "runtime/deploy.py")
 
 
 class DeploymentTests(unittest.TestCase):
@@ -63,7 +66,7 @@ class DeploymentTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(value + "\n", encoding="utf-8")
 
-    def plan(self) -> dict:
+    def plan(self) -> JsonObject:
         return deploy.plan_deployment(
             self.source,
             self.destination,
@@ -71,12 +74,12 @@ class DeploymentTests(unittest.TestCase):
             adapter_candidates=self.adapters,
         )
 
-    def deployed(self) -> dict:
+    def deployed(self) -> JsonObject:
         return deploy.apply_deployment(self.plan())
 
-    def retirement_plan(self) -> dict:
+    def retirement_plan(self) -> JsonObject:
         export = self.root / "retired-container"
-        records = []
+        records: list[JsonObject] = []
         for relative in sorted(deploy.RETIRE_FILES):
             source = export / "source" / relative
             self.write(source, "OLD CHECKOUT " + relative)
@@ -93,7 +96,7 @@ class DeploymentTests(unittest.TestCase):
             retirement_manifest=path,
         )
 
-    def tree(self, directory: Path) -> dict:
+    def tree(self, directory: Path) -> JsonObject:
         return {
             str(path.relative_to(directory)): (
                 path.read_bytes(),
@@ -270,12 +273,12 @@ class DeploymentTests(unittest.TestCase):
         original = deploy._atomic_copy
         failed = False
 
-        def copy_once(source, target, *, expected):
+        def copy_once(source: Path, target: Path, *, expected: str) -> None:
             nonlocal failed
             if target == fail_target and not failed:
                 failed = True
                 raise OSError("synthetic write failure")
-            return original(source, target, expected=expected)
+            original(source, target, expected=expected)
 
         with mock.patch.object(deploy, "_atomic_copy", side_effect=copy_once):
             with self.assertRaisesRegex(OSError, "synthetic write failure"):

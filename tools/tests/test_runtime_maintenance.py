@@ -1,6 +1,5 @@
 """Update gating and interprocess lock tests, using public disposable fixtures."""
 
-import importlib.util
 import json
 import os
 import subprocess
@@ -12,18 +11,16 @@ from unittest import mock
 
 TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS))
+sys.path.insert(0, str(TOOLS / "tests"))
 
 from runtime_maintenance import runtime_lock  # noqa: E402
+from _loader import load_module  # noqa: E402
 
-spec = importlib.util.spec_from_file_location(
-    "sandbox_maintain", TOOLS / "runtime/maintain.py"
-)
-maintenance = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(maintenance)
+maintenance = load_module("sandbox_maintain", TOOLS / "runtime/maintain.py")
 
 
 class MaintenanceTests(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="vaultlens-maintenance-test-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
@@ -40,7 +37,7 @@ class MaintenanceTests(unittest.TestCase):
         self.processes.start()
         self.addCleanup(self.processes.stop)
 
-    def test_agents_share_lock_but_block_maintenance(self):
+    def test_agents_share_lock_but_block_maintenance(self) -> None:
         with runtime_lock(self.root), runtime_lock(self.root):
             with self.assertRaises(ValueError):
                 with runtime_lock(self.root, exclusive=True):
@@ -52,7 +49,7 @@ class MaintenanceTests(unittest.TestCase):
         with runtime_lock(self.root):
             pass
 
-    def test_exclusive_lock_blocks_another_process(self):
+    def test_exclusive_lock_blocks_another_process(self) -> None:
         script = (
             "import sys,pathlib; sys.path.insert(0,sys.argv[1]); "
             "from runtime_maintenance import runtime_lock; "
@@ -67,7 +64,7 @@ class MaintenanceTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("maintenance is active", result.stderr)
 
-    def test_alias_lock_is_rejected_without_touching_target(self):
+    def test_alias_lock_is_rejected_without_touching_target(self) -> None:
         target = self.root / "untouched"
         target.write_text("public sentinel")
         (self.root / "tools/runtime-state/maintenance.lock").symlink_to(target)
@@ -76,7 +73,7 @@ class MaintenanceTests(unittest.TestCase):
                 pass
         self.assertEqual(target.read_text(), "public sentinel")
 
-    def test_hardlinked_lock_is_rejected(self):
+    def test_hardlinked_lock_is_rejected(self) -> None:
         target = self.root / "untouched"
         target.write_text("public sentinel")
         target.chmod(0o600)
@@ -85,7 +82,7 @@ class MaintenanceTests(unittest.TestCase):
             with runtime_lock(self.root):
                 pass
 
-    def test_current_receipt_does_not_install_or_probe(self):
+    def test_current_receipt_does_not_install_or_probe(self) -> None:
         with (
             mock.patch.object(maintenance, "needs_install", return_value=False),
             mock.patch.object(maintenance, "require_verified_runtime"),
@@ -94,7 +91,7 @@ class MaintenanceTests(unittest.TestCase):
             maintenance.maintain(self.root)
             run.assert_not_called()
 
-    def test_failed_probe_revokes_prior_receipt(self):
+    def test_failed_probe_revokes_prior_receipt(self) -> None:
         receipt = self.root / "tools/runtime-state/verification.json"
         receipt.write_text(json.dumps({"public": "old receipt"}))
         receipt.chmod(0o600)
@@ -110,14 +107,14 @@ class MaintenanceTests(unittest.TestCase):
                 maintenance.maintain(self.root)
         self.assertFalse(receipt.exists())
 
-    def test_mismatched_pins_stop_before_installation(self):
+    def test_mismatched_pins_stop_before_installation(self) -> None:
         (self.root / "tools/runtime/install.sh").write_text("unreviewed-version")
         with mock.patch.object(maintenance.subprocess, "run") as run:
             with self.assertRaisesRegex(ValueError, "pins disagree"):
                 maintenance.maintain(self.root)
             run.assert_not_called()
 
-    def test_new_registry_release_is_reported_without_updating_pin(self):
+    def test_new_registry_release_is_reported_without_updating_pin(self) -> None:
         with (
             mock.patch.object(maintenance, "maintain") as maintain,
             mock.patch.object(maintenance, "latest_release", return_value="99.0.0"),
