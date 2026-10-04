@@ -11,6 +11,11 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
+
+# Policy files are arbitrary JSON from disk; every field is validated at runtime in
+# load_policy before use, so values are typed Any at this parse boundary only.
+JsonObject = dict[str, Any]
 
 REPORT_SUBTREE = Path("wiki/reports/agents")
 
@@ -68,7 +73,7 @@ PROFILE_KEYS = {
 }
 
 
-def _json(path: Path, *, optional: bool = False) -> dict:
+def _json(path: Path, *, optional: bool = False) -> JsonObject:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -79,10 +84,12 @@ def _json(path: Path, *, optional: bool = False) -> dict:
         raise ValueError(f"Cannot read access policy {path}: {exc}") from exc
     if not isinstance(data, dict):
         raise ValueError(f"{path}: access policy must be an object")
-    return data
+    # json.loads yields dict[Unknown, Unknown] after the isinstance narrowing; keys are
+    # str by the JSON grammar.
+    return cast(JsonObject, data)
 
 
-def load_policy(root: Path = ROOT) -> dict:
+def load_policy(root: Path = ROOT) -> JsonObject:
     """Local profiles replace matching tracked profiles; inheritance is explicit."""
     data = _json(root / "tools/access-profiles.json")
     local = _json(root / "tools/access.local.json", optional=True)
@@ -98,23 +105,26 @@ def load_policy(root: Path = ROOT) -> dict:
             source.get("defaults", {}), dict
         ):
             raise ValueError("Access profiles and defaults must be objects")
-    merged = {
+    merged: JsonObject = {
         "version": 1,
         "profiles": {**data.get("profiles", {}), **local.get("profiles", {})},
         "defaults": {**data.get("defaults", {}), **local.get("defaults", {})},
     }
-    for name, profile in merged["profiles"].items():
+    for name, raw_profile in merged["profiles"].items():
         if (
             not isinstance(name, str)
             or not NAME.fullmatch(name)
-            or not isinstance(profile, dict)
-            or set(profile) - PROFILE_KEYS
+            or not isinstance(raw_profile, dict)
+            or set(cast(JsonObject, raw_profile)) - PROFILE_KEYS
         ):
             raise ValueError(f"Invalid access profile {name!r}")
+        # Validated as an object above; narrowing leaves dict[Unknown, Unknown].
+        profile = cast(JsonObject, raw_profile)
         for key in ("read", "write", "deny_read", "research_domains"):
             value = profile.get(key, [])
             if not isinstance(value, list) or any(
-                not isinstance(item, str) or not item or "\0" in item for item in value
+                not isinstance(item, str) or not item or "\0" in item
+                for item in cast(list[object], value)
             ):
                 raise ValueError(f"{name}: {key} must be a list of nonempty strings")
         if "review_queue_metadata" in profile and not isinstance(
@@ -134,7 +144,9 @@ def load_policy(root: Path = ROOT) -> dict:
     return merged
 
 
-def _inherit(policy: dict, name: str, stack: tuple[str, ...] = ()) -> dict:
+def _inherit(
+    policy: JsonObject, name: str, stack: tuple[str, ...] = ()
+) -> JsonObject:
     if name in stack or name not in policy["profiles"]:
         raise ValueError(
             f"Unknown or cyclic access profile: {' -> '.join((*stack, name))}"
@@ -248,8 +260,9 @@ class RunScope:
         )
 
     def document_paths(self) -> list[Path]:
-        result = set()
+        result: set[Path] = set()
         for grant in self.read_paths:
+            candidates: list[Path]
             if grant.is_file():
                 candidates = [grant]
             elif grant.is_dir():
@@ -278,7 +291,7 @@ class RunScope:
             )
         return sorted(result)
 
-    def manifest(self) -> dict:
+    def manifest(self) -> JsonObject:
         return {
             "version": 1,
             "profile": self.name,
@@ -293,7 +306,7 @@ class RunScope:
 
     def project_directories(self) -> list[Path]:
         """Discover selected metadata without listing an unapproved parent folder."""
-        found = set()
+        found: set[Path] = set()
         for grant in self.read_paths:
             relative = grant.relative_to(self.root)
             if relative.parts[0] != "projects":
@@ -363,7 +376,7 @@ def resolve_scope(
         for value in profile.get("deny_read", [])
         for path in _expand(root, value, project)
     )
-    extra = []
+    extra: list[Path] = []
     for value in read_paths:
         path = Path(value)
         if path.is_absolute():

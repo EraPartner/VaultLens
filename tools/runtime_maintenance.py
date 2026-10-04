@@ -5,10 +5,18 @@ import fcntl
 import functools
 import os
 import stat
+from collections.abc import Callable, Generator
+from pathlib import Path
+from typing import Concatenate, ParamSpec, TypeVar
+
+from local_access import RunScope
+
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
 
 
 @contextlib.contextmanager
-def runtime_lock(root, *, exclusive=False):
+def runtime_lock(root: Path, *, exclusive: bool = False) -> Generator[None, None, None]:
     state = root / "tools/runtime-state"
     for parent in (state, *state.parents):
         if parent.is_symlink():
@@ -51,9 +59,11 @@ def runtime_lock(root, *, exclusive=False):
         os.close(directory)
 
 
-def shared_runtime(function):
+def shared_runtime(
+    function: Callable[Concatenate[RunScope, _P], Generator[_T, None, None]],
+) -> Callable[Concatenate[RunScope, _P], Generator[_T, None, None]]:
     @functools.wraps(function)
-    def guarded(scope, *args, **kwargs):
+    def guarded(scope: RunScope, *args: _P.args, **kwargs: _P.kwargs) -> Generator[_T, None, None]:
         with runtime_lock(scope.root):
             yield from function(scope, *args, **kwargs)
 
