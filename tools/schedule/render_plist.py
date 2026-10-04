@@ -8,7 +8,7 @@ import os
 import plistlib
 import sys
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from llm_provider import resolve_provider  # noqa: E402
@@ -22,14 +22,33 @@ PROVIDER_KEYS = (
 )
 
 
-def dispatcher_config_path(data: dict) -> Path:
+PlistDict = dict[str, object]
+
+
+def _plist_dict(data: object) -> PlistDict:
+    if not isinstance(data, dict):
+        raise ValueError("Scheduler plist must contain a dictionary")
+    return cast("PlistDict", data)  # plist dictionary keys are always strings
+
+
+def _environment(data: PlistDict) -> PlistDict | None:
+    """The EnvironmentVariables table, or None when it is not a dictionary."""
+    env = data.get("EnvironmentVariables", {})
+    if not isinstance(env, dict):
+        return None
+    return cast("PlistDict", env)  # plist dictionary keys are always strings
+
+
+def dispatcher_config_path(data: PlistDict) -> Path:
     """Locate configuration beside the dispatcher that launchd will execute."""
-    arguments = data.get("ProgramArguments")
-    if (
-        not isinstance(arguments, list)
-        or len(arguments) < 2
-        or any(not isinstance(argument, str) or not argument for argument in arguments)
-    ):
+    raw_arguments = data.get("ProgramArguments")
+    if not isinstance(raw_arguments, list):
+        raise ValueError("Scheduler ProgramArguments must include a dispatcher path")
+    items = cast("list[object]", raw_arguments)  # each item is checked below
+    arguments = [
+        argument for argument in items if isinstance(argument, str) and argument
+    ]
+    if len(arguments) < 2 or len(arguments) != len(items):
         raise ValueError("Scheduler ProgramArguments must include a dispatcher path")
     dispatcher = Path(arguments[1])
     if (
@@ -49,14 +68,14 @@ def dispatcher_config_path(data: dict) -> Path:
     return dispatcher.parent.parent / "llm.local.json"
 
 
-def validate_plist(data: dict, *, config_path: Path | None = None) -> str:
-    if not isinstance(data, dict):
-        raise ValueError("Scheduler plist must contain a dictionary")
-    env = data.get("EnvironmentVariables", {})
-    if not isinstance(env, dict) or any(not isinstance(v, str) for v in env.values()):
+def validate_plist(data: object, *, config_path: Path | None = None) -> str:
+    plist = _plist_dict(data)
+    table = _environment(plist)
+    if table is None or any(not isinstance(v, str) for v in table.values()):
         raise ValueError("Scheduler EnvironmentVariables must map names to strings")
+    env = cast("dict[str, str]", table)  # every value was checked to be a str
     overrides = {key: env[key] for key in PROVIDER_KEYS if key in env}
-    path = config_path if config_path is not None else dispatcher_config_path(data)
+    path = config_path if config_path is not None else dispatcher_config_path(plist)
     provider = resolve_provider(environ=overrides, path=path)
     enhancement = env.get("VAULTLENS_SCHEDULE_ENHANCE", "0").strip().lower()
     if enhancement not in {"0", "1", "true", "false", "yes", "no", "on", "off"}:
@@ -65,17 +84,17 @@ def validate_plist(data: dict, *, config_path: Path | None = None) -> str:
 
 
 def render_plist(
-    data: dict,
+    data: object,
     overrides: Mapping[str, str],
     *,
     config_path: Path | None = None,
     python_executable: str | None = None,
-) -> dict:
-    if not isinstance(data, dict):
-        raise ValueError("Scheduler plist must contain a dictionary")
-    if not isinstance(data.get("EnvironmentVariables", {}), dict):
+) -> PlistDict:
+    plist = _plist_dict(data)
+    table = _environment(plist)
+    if table is None:
         raise ValueError("Scheduler EnvironmentVariables must map names to strings")
-    result = dict(data)
+    result = dict(plist)
     if python_executable is not None:
         executable = Path(python_executable)
         if (
@@ -85,8 +104,10 @@ def render_plist(
         ):
             raise ValueError("Python executable must name an absolute executable file")
         dispatcher_config_path(result)
-        result["ProgramArguments"] = [str(executable), *data["ProgramArguments"][1:]]
-    env = dict(data.get("EnvironmentVariables", {}))
+        # dispatcher_config_path above proved ProgramArguments is a list of strings.
+        arguments = cast("list[str]", plist["ProgramArguments"])
+        result["ProgramArguments"] = [str(executable), *arguments[1:]]
+    env: PlistDict = dict(table)
     for key in PROVIDER_KEYS:
         env.pop(key, None)
         if key in overrides:

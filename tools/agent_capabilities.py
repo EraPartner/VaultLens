@@ -7,9 +7,15 @@ These legacy role classes describe tools; they never select actual file roots.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
 
-CAPABILITIES = {
+# Plain dict, not a TypedDict: untyped callers (agents/wiki-agent.py) still annotate
+# permissions as bare dict, and a TypedDict is not assignable to dict. Tighten once
+# those callers are typed.
+Capabilities = dict[str, object]
+
+CAPABILITIES: dict[str, Capabilities] = {
     "read": {"shell": False, "write": False, "writable_dirs": []},
     "read-shell": {"shell": True, "write": False, "writable_dirs": []},
     "wiki-write": {"shell": True, "write": True, "writable_dirs": ["wiki"]},
@@ -75,13 +81,13 @@ WRITE_SHELL_RULES = ("python3 tools/wiki.py *",)
 WRITE_SHELL_COMMANDS = ("touch", "mkdir", "mv", "cp", "sed", "awk")
 
 
-def profile_capabilities(profile: str) -> dict:
+def profile_capabilities(profile: str) -> Capabilities:
     if profile not in CAPABILITIES:
         raise ValueError(f"Unknown permission profile: {profile}")
     return deepcopy(CAPABILITIES[profile])
 
 
-def claude_tools(perms: dict, *, scoped_shell: bool = True) -> list[str]:
+def claude_tools(perms: Mapping[str, object], *, scoped_shell: bool = True) -> list[str]:
     """Grant qmd explicitly; native manifests list tools, CLI grants shell rules."""
     tools = ["Read", "Grep", "Glob", QMD_TOOLS]
     if perms["shell"]:
@@ -100,7 +106,7 @@ def claude_tools(perms: dict, *, scoped_shell: bool = True) -> list[str]:
     return tools
 
 
-def claude_builtin_tools(perms: dict) -> list[str]:
+def claude_builtin_tools(perms: Mapping[str, object]) -> list[str]:
     """Restrict CLI built-ins; MCP tools are controlled by separate rules.
 
     Claude's --tools accepts built-in names, not scoped permission rules or
@@ -114,5 +120,5 @@ def claude_builtin_tools(perms: dict) -> list[str]:
     ]
 
 
-def codex_sandbox(perms: dict) -> str:
+def codex_sandbox(perms: Mapping[str, object]) -> str:
     return "workspace-write" if perms["write"] else "read-only"
