@@ -17,6 +17,7 @@ import stat
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Protocol
 
 from local_access import REPORT_SUBTREE, RunScope
 
@@ -27,6 +28,20 @@ _DRAIN_SECONDS = 3.0
 _LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 
 
+class _Echo(Protocol):
+    """Where captured text is mirrored: a text stream such as ``sys.stdout``."""
+
+    def write(self, text: str, /) -> object: ...
+
+    def flush(self) -> object: ...
+
+
+class _Stream(Protocol):
+    """A byte or text source. Only ``read`` is required; pipes also expose ``fileno``."""
+
+    def read(self, size: int, /) -> bytes | str: ...
+
+
 class ReportCaptureError(RuntimeError):
     def __init__(
         self,
@@ -34,14 +49,15 @@ class ReportCaptureError(RuntimeError):
         *,
         report_path: Path | None = None,
         cleanup_unconfirmed: bool = False,
-    ):
+    ) -> None:
         super().__init__(message)
         self.report_path = report_path
         self.cleanup_unconfirmed = cleanup_unconfirmed
 
 
 def _label(value: str) -> str:
-    if not isinstance(value, str) or not _LABEL.fullmatch(value):
+    # Runtime validation: callers outside the type checker can pass any object.
+    if not isinstance(value, str) or not _LABEL.fullmatch(value):  # pyright: ignore[reportUnnecessaryIsInstance]
         raise ValueError(
             "Report role, provider and profile need simple labels of at most 64 characters"
         )
@@ -162,9 +178,9 @@ class Recorder:
         provider: str,
         *,
         max_bytes: int = MAX_REPORT_BYTES,
-    ):
+    ) -> None:
         if (
-            not isinstance(max_bytes, int)
+            not isinstance(max_bytes, int)  # pyright: ignore[reportUnnecessaryIsInstance] -- runtime validation
             or not _METADATA_BYTES < max_bytes <= MAX_REPORT_BYTES
         ):
             raise ValueError(
@@ -197,13 +213,14 @@ class Recorder:
                 self._errors.append(kind)
 
     @staticmethod
-    def _fileno(stream) -> int | None:
+    def _fileno(stream: _Stream) -> int | None:
         try:
-            return stream.fileno()
+            # getattr: the protocol requires only read(); pipes and files add fileno().
+            return getattr(stream, "fileno")()
         except (AttributeError, io.UnsupportedOperation, OSError, ValueError):
             return None
 
-    def _drain(self, stream, echo) -> None:
+    def _drain(self, stream: _Stream, echo: _Echo | None) -> None:
         decoder = codecs.getincrementaldecoder("utf-8")("replace")
         descriptor = self._fileno(stream)
 
@@ -237,14 +254,14 @@ class Recorder:
                     break
                 if isinstance(chunk, str):
                     retain(chunk)
-                elif isinstance(chunk, bytes):
+                elif isinstance(chunk, bytes):  # pyright: ignore[reportUnnecessaryIsInstance] -- duck-typed streams may return other types
                     retain(decoder.decode(chunk))
                 else:
                     raise TypeError("Report stream must return bytes or text")
         except Exception as exc:
             self._error(f"read-{type(exc).__name__}")
 
-    def consume(self, stream, echo) -> None:
+    def consume(self, stream: _Stream, echo: _Echo | None) -> None:
         """Drain synchronously. A capture error can still be saved by finish()."""
         if self._started or self._finished:
             raise ValueError("A recorder accepts one stdout stream")
@@ -253,7 +270,9 @@ class Recorder:
         if self._errors:
             raise ReportCaptureError("Headless report capture failed")
 
-    def pump_in_thread(self, stream, echo) -> threading.Thread:
+    def pump_in_thread(
+        self, stream: _Stream, echo: _Echo | None
+    ) -> threading.Thread:
         """Drain a subprocess pipe without blocking the parent's signal handling."""
         if self._started or self._finished:
             raise ValueError("A recorder accepts one stdout stream")
@@ -264,7 +283,7 @@ class Recorder:
             )
         self._started = True
 
-        def pump():
+        def pump() -> None:
             try:
                 self._drain(stream, echo)
             except Exception as exc:
@@ -272,7 +291,7 @@ class Recorder:
             finally:
                 if descriptor is not None:
                     try:
-                        stream.close()
+                        getattr(stream, "close")()  # pipes expose close() with fileno()
                     except Exception as exc:
                         self._error(f"close-{type(exc).__name__}")
 
@@ -286,7 +305,7 @@ class Recorder:
         """Save output after child cleanup; errors include any saved partial report."""
         if self._finished:
             raise ValueError("A report can only be finalized once")
-        if not isinstance(returncode, int) or isinstance(returncode, bool):
+        if not isinstance(returncode, int) or isinstance(returncode, bool):  # pyright: ignore[reportUnnecessaryIsInstance] -- runtime validation
             raise ValueError("Report result must be a process exit code")
         self._finished = True
         if self._thread is not None:
