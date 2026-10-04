@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Behavioral privacy profile tests over public synthetic note fixtures."""
 
-import copy
 import io
 import json
 import sys
@@ -13,32 +12,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import local_access as access
 from run_reports import Recorder
+from local_access import JsonObject, RunScope
 from scoped_search import ScopedSearch
 
 
 class AccessProfileTests(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="vaultlens-access-test-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         (self.root / "tools").mkdir()
-        self.policy = {
-            "version": 1,
-            "profiles": {
-                "selected-read": {"reports": "wiki/reports/agents"},
-                "wiki-read": {
-                    "extends": "selected-read",
-                    "read": ["wiki"],
-                    "deny_read": ["wiki/private", "wiki/reports/agents"],
-                },
-                "source-read": {"extends": "wiki-read", "read": ["raw/sources"]},
-                "wiki-write": {"extends": "source-read", "write": ["wiki"]},
-                "project-write": {
-                    "extends": "wiki-read",
-                    "read": ["projects/{project}"],
-                    "write": ["projects/{project}"],
-                },
+        self.profiles: dict[str, JsonObject] = {
+            "selected-read": {"reports": "wiki/reports/agents"},
+            "wiki-read": {
+                "extends": "selected-read",
+                "read": ["wiki"],
+                "deny_read": ["wiki/private", "wiki/reports/agents"],
             },
+            "source-read": {"extends": "wiki-read", "read": ["raw/sources"]},
+            "wiki-write": {"extends": "source-read", "write": ["wiki"]},
+            "project-write": {
+                "extends": "wiki-read",
+                "read": ["projects/{project}"],
+                "write": ["projects/{project}"],
+            },
+        }
+        self.policy: JsonObject = {
+            "version": 1,
+            "profiles": self.profiles,
             "defaults": {"search": "wiki-read", "ingest": "wiki-write"},
         }
         self.write_policy()
@@ -56,13 +57,15 @@ class AccessProfileTests(unittest.TestCase):
         ):
             self.note(relative)
 
-    def note(self, relative):
+    def note(self, relative: str) -> Path:
         path = self.root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("Public synthetic fixture: " + relative + "\n")
         return path
 
-    def write_policy(self, policy=None, *, local=False):
+    def write_policy(
+        self, policy: JsonObject | None = None, *, local: bool = False
+    ) -> None:
         path = (
             self.root
             / "tools"
@@ -70,11 +73,28 @@ class AccessProfileTests(unittest.TestCase):
         )
         path.write_text(json.dumps(self.policy if policy is None else policy))
 
-    def resolve(self, name="wiki-read", **kwargs):
-        return access.resolve_scope(self.root, name, **kwargs)
+    def policy_with(self, name: str, profile: JsonObject) -> JsonObject:
+        """Return a copy of the policy with one extra profile; the fixture stays untouched."""
+        return {**self.policy, "profiles": {**self.profiles, name: profile}}
 
-    def test_inheritance_combines_grants_and_keeps_denied_descendants(self):
-        self.policy["profiles"]["source-read"]["read"].append("wiki")
+    def resolve(
+        self,
+        name: str = "wiki-read",
+        *,
+        project: str | None = None,
+        read_paths: tuple[str, ...] = (),
+        capability: str | None = None,
+    ) -> RunScope:
+        return access.resolve_scope(
+            self.root,
+            name,
+            project=project,
+            read_paths=read_paths,
+            capability=capability,
+        )
+
+    def test_inheritance_combines_grants_and_keeps_denied_descendants(self) -> None:
+        self.profiles["source-read"]["read"].append("wiki")
         self.write_policy()
         scope = self.resolve("source-read", capability="read")
         self.assertTrue(scope.readable(self.root / "raw/sources/approved.txt"))
@@ -84,7 +104,7 @@ class AccessProfileTests(unittest.TestCase):
         self.assertEqual(scope.read_paths.count(self.root / "wiki"), 1)
         self.assertEqual(scope.write_paths, ())
 
-    def test_local_profile_replacement_can_narrow_tracked_defaults(self):
+    def test_local_profile_replacement_can_narrow_tracked_defaults(self) -> None:
         self.write_policy(
             {
                 "version": 1,
@@ -99,8 +119,8 @@ class AccessProfileTests(unittest.TestCase):
         self.assertEqual(access.default_profile("search", self.root), "wiki-read")
         self.assertEqual(access.default_profile("ingest", self.root), "wiki-read")
 
-    def test_policy_schema_and_version_reject_unknown_authority(self):
-        malformed = (
+    def test_policy_schema_and_version_reject_unknown_authority(self) -> None:
+        malformed: tuple[JsonObject, ...] = (
             {"version": 2, "profiles": {}, "defaults": {}},
             {"version": 1, "profiles": [], "defaults": {}},
             {"version": 1, "profiles": {}, "defaults": {"search": "absent"}},
@@ -116,7 +136,7 @@ class AccessProfileTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     access.load_policy(self.root)
 
-    def test_unknown_parent_and_cycles_fail_before_scope_creation(self):
+    def test_unknown_parent_and_cycles_fail_before_scope_creation(self) -> None:
         for profiles in (
             {"base": {"extends": "missing"}},
             {"base": {"extends": "child"}, "child": {"extends": "base"}},
@@ -126,7 +146,9 @@ class AccessProfileTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Unknown or cyclic"):
                     access.load_policy(self.root)
 
-    def test_invalid_note_paths_cannot_grant_tools_external_or_consent_data(self):
+    def test_invalid_note_paths_cannot_grant_tools_external_or_consent_data(
+        self,
+    ) -> None:
         for selection in (
             "..",
             "/etc",
@@ -138,13 +160,11 @@ class AccessProfileTests(unittest.TestCase):
             "wiki/.git/public.md",
         ):
             with self.subTest(selection=selection):
-                policy = copy.deepcopy(self.policy)
-                policy["profiles"]["invalid"] = {"read": [selection]}
-                self.write_policy(policy)
+                self.write_policy(self.policy_with("invalid", {"read": [selection]}))
                 with self.assertRaises(ValueError):
                     self.resolve("invalid")
 
-    def test_explicit_absolute_read_stays_selected_and_inside_vault(self):
+    def test_explicit_absolute_read_stays_selected_and_inside_vault(self) -> None:
         selected = self.root / "projects/alpha/notes/approved.md"
         scope = self.resolve("selected-read", read_paths=(str(selected),))
         self.assertTrue(scope.readable(selected))
@@ -156,10 +176,10 @@ class AccessProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "denied path"):
             self.resolve(read_paths=("wiki/private/hidden.md",))
 
-    def test_read_roles_cannot_elevate_to_writers(self):
+    def test_read_roles_cannot_elevate_to_writers(self) -> None:
         # Use a profile whose deny list permits its writer root so only the role
         # compatibility check decides whether an elevation is allowed.
-        self.policy["profiles"]["writer"] = {"write": ["wiki/concepts"]}
+        self.profiles["writer"] = {"write": ["wiki/concepts"]}
         self.write_policy()
         for capability in ("read", "read-shell"):
             with self.subTest(capability=capability):
@@ -168,7 +188,7 @@ class AccessProfileTests(unittest.TestCase):
         scope = self.resolve("writer", capability="wiki-write")
         self.assertTrue(scope.writable(self.root / "wiki/concepts/new.md"))
 
-    def test_writers_are_restricted_to_the_selected_layer_and_project(self):
+    def test_writers_are_restricted_to_the_selected_layer_and_project(self) -> None:
         scope = self.resolve(
             "project-write", project="alpha", capability="project-write"
         )
@@ -182,7 +202,7 @@ class AccessProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exactly one project"):
             self.resolve("wiki-write", project="alpha", capability="project-write")
 
-    def test_write_root_must_be_exact_and_never_raw(self):
+    def test_write_root_must_be_exact_and_never_raw(self) -> None:
         for write in (
             "raw/sources",
             "projects",
@@ -191,20 +211,18 @@ class AccessProfileTests(unittest.TestCase):
             "wiki/*",
         ):
             with self.subTest(write=write):
-                policy = copy.deepcopy(self.policy)
-                policy["profiles"]["bad-write"] = {"write": [write]}
-                self.write_policy(policy)
+                self.write_policy(self.policy_with("bad-write", {"write": [write]}))
                 with self.assertRaises(ValueError):
                     self.resolve("bad-write", project="alpha")
 
-    def test_project_template_requires_a_single_valid_slug(self):
+    def test_project_template_requires_a_single_valid_slug(self) -> None:
         for project in (None, "../alpha", "alpha/beta", "", ".", "alpha\\beta"):
             with self.subTest(project=project):
                 with self.assertRaisesRegex(ValueError, "valid project slug"):
                     self.resolve("project-write", project=project)
 
-    def test_read_globs_select_only_matching_metadata(self):
-        self.policy["profiles"]["metadata"] = {"read": ["projects/*/project.md"]}
+    def test_read_globs_select_only_matching_metadata(self) -> None:
+        self.profiles["metadata"] = {"read": ["projects/*/project.md"]}
         self.write_policy()
         scope = self.resolve("metadata")
         self.assertEqual(
@@ -221,8 +239,8 @@ class AccessProfileTests(unittest.TestCase):
         self.assertFalse(scope.readable(self.root / "projects/alpha/notes/approved.md"))
         self.assertFalse(scope.readable(self.root / "projects"))
 
-    def test_denied_globs_cannot_freeze_exclusions_to_existing_matches(self):
-        self.policy["profiles"]["filtered-writer"] = {
+    def test_denied_globs_cannot_freeze_exclusions_to_existing_matches(self) -> None:
+        self.profiles["filtered-writer"] = {
             "read": ["wiki"],
             "write": ["wiki"],
             "deny_read": ["wiki/private/*.md"],
@@ -230,7 +248,7 @@ class AccessProfileTests(unittest.TestCase):
         self.write_policy()
         with self.assertRaisesRegex(ValueError, "never snapshot globs"):
             self.resolve("filtered-writer", capability="wiki-write")
-        self.policy["profiles"]["filtered-writer"]["deny_read"] = ["wiki/private"]
+        self.profiles["filtered-writer"]["deny_read"] = ["wiki/private"]
         self.write_policy()
         scope = self.resolve("filtered-writer", capability="wiki-write")
         self.note("wiki/private/future.md")
@@ -239,7 +257,7 @@ class AccessProfileTests(unittest.TestCase):
         self.assertFalse(scope.writable(self.root / "wiki/private/hidden.md"))
         self.assertTrue(scope.writable(self.root / "wiki/concepts/approved.md"))
 
-    def test_document_selection_excludes_instructions_and_symlink_aliases(self):
+    def test_document_selection_excludes_instructions_and_symlink_aliases(self) -> None:
         (self.root / "wiki/concepts/linked.md").symlink_to(
             self.root / "raw/review-inbox/consent.md"
         )
@@ -257,15 +275,17 @@ class AccessProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "symbolic links"):
             self.resolve("selected-read", read_paths=("wiki/concepts/linked.md",))
 
-    def test_future_write_paths_cannot_cross_a_symlink_parent(self):
+    def test_future_write_paths_cannot_cross_a_symlink_parent(self) -> None:
         (self.root / "projects/alias").symlink_to(
             self.root / "projects/alpha", target_is_directory=True
         )
         with self.assertRaisesRegex(ValueError, "symbolic links"):
             self.resolve("project-write", project="alias", capability="project-write")
 
-    def test_denied_children_and_protected_instruction_files_remain_closed(self):
-        self.policy["profiles"]["writer"] = {
+    def test_denied_children_and_protected_instruction_files_remain_closed(
+        self,
+    ) -> None:
+        self.profiles["writer"] = {
             "read": ["wiki"],
             "write": ["wiki"],
             "deny_read": ["wiki/private"],
@@ -277,7 +297,9 @@ class AccessProfileTests(unittest.TestCase):
         for name in access.PROTECTED_NAMES:
             self.assertFalse(scope.writable(self.root / "wiki/concepts" / name), name)
 
-    def test_secret_path_rules_cover_credentials_and_backups_without_reading_them(self):
+    def test_secret_path_rules_cover_credentials_and_backups_without_reading_them(
+        self,
+    ) -> None:
         # These are path objects only. Never materialize or open any credential
         # file; the values verify matching logic and compiled runtime policy.
         for name in (
@@ -312,8 +334,10 @@ class AccessProfileTests(unittest.TestCase):
                     access.forbidden(self.root / "wiki/concepts" / name, self.root)
                 )
 
-    def test_forbidden_directories_and_consent_queue_apply_to_broad_raw_reads(self):
-        self.policy["profiles"]["raw-read"] = {"read": ["raw"]}
+    def test_forbidden_directories_and_consent_queue_apply_to_broad_raw_reads(
+        self,
+    ) -> None:
+        self.profiles["raw-read"] = {"read": ["raw"]}
         self.write_policy()
         scope = self.resolve("raw-read", capability="read")
         self.assertTrue(scope.readable(self.root / "raw/sources/approved.txt"))
@@ -323,7 +347,7 @@ class AccessProfileTests(unittest.TestCase):
                 scope.readable(self.root / "raw" / directory / "public.md"), directory
             )
 
-    def test_research_domains_are_opt_in_and_reports_stay_dedicated(self):
+    def test_research_domains_are_opt_in_and_reports_stay_dedicated(self) -> None:
         self.assertEqual(self.resolve().research_domains, ())
         for domain in (
             "*",
@@ -334,12 +358,12 @@ class AccessProfileTests(unittest.TestCase):
             "../example.org",
         ):
             with self.subTest(domain=domain):
-                policy = copy.deepcopy(self.policy)
-                policy["profiles"]["research"] = {"research_domains": [domain]}
-                self.write_policy(policy)
+                self.write_policy(
+                    self.policy_with("research", {"research_domains": [domain]})
+                )
                 with self.assertRaisesRegex(ValueError, "explicit HTTPS"):
                     self.resolve("research")
-        self.policy["profiles"]["research"] = {"research_domains": ["example.org:443"]}
+        self.profiles["research"] = {"research_domains": ["example.org:443"]}
         self.write_policy()
         self.assertEqual(
             self.resolve("research").research_domains, ("example.org:443",)
@@ -352,18 +376,18 @@ class AccessProfileTests(unittest.TestCase):
             "wiki/reports/isolated-agent",
         ):
             with self.subTest(reports=reports):
-                policy = copy.deepcopy(self.policy)
-                policy["profiles"]["bad-reports"] = {"reports": reports}
-                self.write_policy(policy)
+                self.write_policy(self.policy_with("bad-reports", {"reports": reports}))
                 with self.assertRaises(ValueError):
                     self.resolve("bad-reports")
 
-    def test_private_report_output_cannot_enter_another_agents_notes_or_search(self):
-        self.policy["profiles"]["isolated-read"] = {
+    def test_private_report_output_cannot_enter_another_agents_notes_or_search(
+        self,
+    ) -> None:
+        self.profiles["isolated-read"] = {
             "read": ["raw/sources/approved.txt"],
             "reports": "wiki/reports/agents/isolated",
         }
-        self.policy["profiles"]["whole-wiki"] = {"read": ["wiki"]}
+        self.profiles["whole-wiki"] = {"read": ["wiki"]}
         self.write_policy()
         producer = self.resolve("isolated-read")
         recorder = Recorder(producer, "search", "codex")
