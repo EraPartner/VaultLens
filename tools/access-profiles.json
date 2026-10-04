@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "defaults": {
+    "quality": "wiki-read", "verify": "source-read", "search": "wiki-read",
+    "contradict": "wiki-read", "challenge": "wiki-read", "connect": "wiki-read",
+    "emerge": "wiki-read", "discover": "wiki-read", "cos": "cos-read",
+    "ingest": "wiki-write", "enhance": "wiki-write", "project-run": "project-write"
+  },
+  "profiles": {
+    "selected-read": {
+      "description": "Only explicitly selected files, plus trusted operating instructions.",
+      "read": [], "write": [], "deny_read": [], "research_domains": [],
+      "reports": "wiki/reports/agents", "review_queue_metadata": false
+    },
+    "wiki-read": {
+      "extends": "selected-read", "description": "Read the wiki and produce reports.",
+      "read": ["wiki"], "deny_read": ["wiki/reports/agents"]
+    },
+    "source-read": {
+      "extends": "wiki-read", "description": "Check wiki claims against approved sources.",
+      "read": ["raw/sources", "raw/sources-text"]
+    },
+    "cos-read": {
+      "extends": "wiki-read", "description": "Read project planning documents and approved inbox material.",
+      "read": ["projects/*/project.md", "projects/*/TODO.md", "projects/*/AGENDA.md", "raw/inbox"],
+      "review_queue_metadata": true
+    },
+    "wiki-write": {
+      "extends": "source-read", "description": "Edit wiki pages; source material stays protected.",
+      "read": ["raw/inbox"], "write": ["wiki"]
+    },
+    "project-write": {
+      "extends": "wiki-read", "description": "Edit exactly one project; research requires a separate profile.",
+      "read": ["projects/{project}"], "write": ["projects/{project}"]
+    }
+  }
+}

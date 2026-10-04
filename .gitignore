@@ -36,6 +36,13 @@ wiki-log-*.json
 .claude/worktrees/
 .ruff_cache
 __pycache__
+# Machine-local provider preference; shared code remains provider-neutral.
+tools/llm.local.json
+tools/host-repair-backups/
+tools/access.local.json
+tools/runtime-node/
+tools/runtime-state/
+tools/runtime/migration/
 
 # Obsidian: ignore workspace state and personal UI preferences. Carve out
 # scaffold-relevant plugin settings (Templater folder templates) so they
