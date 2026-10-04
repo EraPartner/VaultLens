@@ -37,7 +37,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 import local_runtime  # noqa: E402
 import runtime_verification as verification  # noqa: E402
-from local_access import resolve_scope  # noqa: E402
+from local_access import JsonObject, resolve_scope  # noqa: E402
 from process_control import (  # noqa: E402
     ProcessCleanupError,
     launch_supervised,
@@ -1568,7 +1568,7 @@ def run_case(root: Path, case: str) -> list[dict]:
 def probe(source: Path = ROOT) -> dict:
     """Run real SRT or fail before creating fixtures; never accept an emulator."""
     source = source.resolve()
-    report = {
+    report: JsonObject = {
         "version": 1,
         "runtime_version": local_runtime.SRT_VERSION,
         "os_isolation_verified": False,

@@ -15,9 +15,10 @@ import re
 import stat
 import sys
 from pathlib import Path
-from typing import TextIO
+from collections.abc import Callable
+from typing import TextIO, cast
 
-from local_access import PROTECTED_NAMES, RunScope
+from local_access import PROTECTED_NAMES, JsonObject, RunScope
 
 MAX_MANIFEST_BYTES = 1024 * 1024
 MAX_DOCUMENT_BYTES = 1024 * 1024
@@ -28,6 +29,23 @@ MAX_RESULTS = 50
 MAX_GET_CHARS = 64 * 1024
 MAX_MESSAGE_CHARS = 128 * 1024
 TOKEN = re.compile(r"\w+", re.UNICODE)
+
+
+def _items(value: object) -> list[object] | None:
+    """Return a JSON array's items, or None for any other value."""
+    if not isinstance(value, list):
+        return None
+    # isinstance narrows to list[Unknown]; callers validate each item.
+    return cast(list[object], value)
+
+
+def _strings(value: object) -> list[str] | None:
+    """Return the list only when every item is a string."""
+    items = _items(value)
+    if items is None:
+        return None
+    strings = [item for item in items if isinstance(item, str)]
+    return strings if len(strings) == len(items) else None
 
 
 def load_scope(manifest_path: Path) -> RunScope:
@@ -43,8 +61,12 @@ def load_scope(manifest_path: Path) -> RunScope:
             payload = stream.read(MAX_MANIFEST_BYTES + 1)
         if len(payload) > MAX_MANIFEST_BYTES:
             raise ValueError("Scope manifest exceeds the size limit")
-        data = json.loads(payload)
-        if not isinstance(data, dict) or data.get("version") != 1:
+        parsed: object = json.loads(payload)
+        if not isinstance(parsed, dict):
+            raise ValueError("Scope manifest requires version 1")
+        # JSON object keys are strings; the fields are validated individually below.
+        data = cast(JsonObject, parsed)
+        if data.get("version") != 1:
             raise ValueError("Scope manifest requires version 1")
         root = Path(data["root"])
         if (
@@ -54,12 +76,10 @@ def load_scope(manifest_path: Path) -> RunScope:
             or root != root.resolve()
         ):
             raise ValueError("Scope root must be an absolute real directory")
-        groups = []
+        groups: list[tuple[Path, ...]] = []
         for key in ("read", "write", "deny_read"):
-            values = data[key]
-            if not isinstance(values, list) or any(
-                not isinstance(v, str) for v in values
-            ):
+            values = _strings(data[key])
+            if values is None:
                 raise ValueError(f"Scope {key} must be a list of paths")
             paths = tuple(Path(value) for value in values)
             if any(
@@ -72,19 +92,23 @@ def load_scope(manifest_path: Path) -> RunScope:
             groups.append(paths)
         profile = data["profile"]
         reports = data["reports"]
-        domains = data.get("research_domains", [])
+        raw_domains: object = data.get("research_domains", [])
         if (
             not isinstance(profile, str)
             or not isinstance(reports, str)
-            or not isinstance(domains, list)
+            or _items(raw_domains) is None
         ):
             raise ValueError("Malformed scope metadata")
-        if any(not isinstance(domain, str) for domain in domains):
+        domains = _strings(raw_domains)
+        if domains is None:
             raise ValueError("Malformed scope research domains")
+        read, write, deny_read = groups
         return RunScope(
             root,
             profile,
-            *groups,
+            read,
+            write,
+            deny_read,
             tuple(domains),
             Path(reports),
             data.get("review_queue_metadata", False),
@@ -102,7 +126,7 @@ def _read_document(scope: RunScope, path: Path) -> str:
     ):
         raise ValueError("Document is unavailable in this access profile")
     relative = path.relative_to(scope.root)
-    descriptors = []
+    descriptors: list[int] = []
     try:
         # Ancestors need path traversal, not directory listings. Linux O_PATH
         # and macOS O_SEARCH keep descriptor walks valid under narrow read
@@ -147,23 +171,24 @@ def _bounded_int(value: object, *, default: int, maximum: int) -> int:
     return value
 
 
-def _queries(arguments: dict) -> list[str]:
+def _queries(arguments: JsonObject) -> list[str]:
     query = arguments.get("query")
     searches = arguments.get("searches")
     if query is not None:
-        values = [query]
-    elif isinstance(searches, list) and 1 <= len(searches) <= 10:
+        values: list[object] = [query]
+    elif (items := _items(searches)) is not None and 1 <= len(items) <= 10:
         values = [
-            item.get("query") if isinstance(item, dict) else item for item in searches
+            cast(JsonObject, item).get("query") if isinstance(item, dict) else item
+            for item in items
         ]
     else:
         raise ValueError("Provide query or a nonempty list of searches")
-    if any(
-        not isinstance(value, str) or not value.strip() or len(value) > MAX_QUERY_CHARS
-        for value in values
+    strings = [value for value in values if isinstance(value, str)]
+    if len(strings) != len(values) or any(
+        not value.strip() or len(value) > MAX_QUERY_CHARS for value in strings
     ):
         raise ValueError("Queries must be nonempty strings within the size limit")
-    return values
+    return strings
 
 
 def _title(text: str, path: Path) -> str:
@@ -174,7 +199,7 @@ def _title(text: str, path: Path) -> str:
 
 
 class ScopedSearch:
-    def __init__(self, scope: RunScope):
+    def __init__(self, scope: RunScope) -> None:
         self.scope = scope
 
     def _path(self, identifier: object) -> Path:
@@ -195,7 +220,7 @@ class ScopedSearch:
             raise ValueError("Document is unavailable in this access profile")
         return path
 
-    def search(self, arguments: dict) -> dict:
+    def search(self, arguments: JsonObject) -> JsonObject:
         queries = _queries(arguments)
         terms = list(
             dict.fromkeys(
@@ -206,7 +231,7 @@ class ScopedSearch:
             raise ValueError("Queries must contain searchable words")
         limit = _bounded_int(arguments.get("limit"), default=10, maximum=MAX_RESULTS)
         paths = self.scope.document_paths()
-        results = []
+        results: list[JsonObject] = []
         consumed = 0
         truncated = len(paths) > MAX_DOCUMENTS
         skipped = 0
@@ -251,7 +276,7 @@ class ScopedSearch:
             "skipped_documents": skipped,
         }
 
-    def get(self, arguments: dict) -> dict:
+    def get(self, arguments: JsonObject) -> JsonObject:
         path = self._path(
             arguments.get("path", arguments.get("file", arguments.get("docid")))
         )
@@ -269,11 +294,18 @@ class ScopedSearch:
             "truncated": len(text) > max_chars,
         }
 
-    def multi_get(self, arguments: dict) -> dict:
-        paths = arguments.get("paths", arguments.get("files", arguments.get("docids")))
-        if isinstance(paths, str):
-            paths = [value.strip() for value in paths.split(",")]
-        if not isinstance(paths, list) or not 1 <= len(paths) <= 10:
+    def multi_get(self, arguments: JsonObject) -> JsonObject:
+        requested: object = arguments.get(
+            "paths", arguments.get("files", arguments.get("docids"))
+        )
+        if isinstance(requested, str):
+            paths: list[object] = [value.strip() for value in requested.split(",")]
+        elif isinstance(requested, list):
+            # isinstance narrows to list[Unknown]; each path is validated by get().
+            paths = list(cast(list[object], requested))
+        else:
+            raise ValueError("Provide between 1 and 10 approved document paths")
+        if not 1 <= len(paths) <= 10:
             raise ValueError("Provide between 1 and 10 approved document paths")
         # Reject the whole request on any excluded path; no partial disclosure.
         max_chars = _bounded_int(
@@ -285,7 +317,7 @@ class ScopedSearch:
         ]
         return {"documents": documents, "mode": "lexical"}
 
-    def status(self, arguments: dict | None = None) -> dict:
+    def status(self, arguments: JsonObject | None = None) -> JsonObject:
         paths = self.scope.document_paths()
         return {
             "mode": "lexical",
@@ -296,25 +328,26 @@ class ScopedSearch:
             "persistent_index": False,
         }
 
-    def call(self, name: str, arguments: dict) -> dict:
+    def call(self, name: object, arguments: object) -> JsonObject:
         if not isinstance(arguments, dict):
             raise ValueError("Tool arguments must be an object")
-        operations = {
+        # JSON object keys are strings; isinstance only narrows to dict[Unknown, Unknown].
+        tool_arguments = cast(JsonObject, arguments)
+        operations: dict[str, Callable[[JsonObject], JsonObject]] = {
             "search": self.search,
             "query": self.search,
             "get": self.get,
             "multi_get": self.multi_get,
             "status": self.status,
         }
-        try:
-            operation = operations[name]
-        except KeyError as exc:
-            raise ValueError("Unknown scoped search tool") from exc
-        return operation(arguments)
+        if not isinstance(name, str) or name not in operations:
+            raise ValueError("Unknown scoped search tool")
+        operation = operations[name]
+        return operation(tool_arguments)
 
 
-def _tools() -> list[dict]:
-    query_schema = {
+def _tools() -> list[JsonObject]:
+    query_schema: JsonObject = {
         "type": "object",
         "properties": {
             "query": {"type": "string"},
@@ -331,7 +364,7 @@ def _tools() -> list[dict]:
             "limit": {"type": "integer", "minimum": 1, "maximum": MAX_RESULTS},
         },
     }
-    definitions = [
+    definitions: list[tuple[str, str, JsonObject]] = [
         (
             "search",
             "Lexical search over approved current Markdown/text documents.",
@@ -399,7 +432,7 @@ def _tools() -> list[dict]:
 def serve_mcp(
     search: ScopedSearch, input_stream: TextIO, output_stream: TextIO
 ) -> None:
-    def send(payload: dict) -> None:
+    def send(payload: JsonObject) -> None:
         output_stream.write(json.dumps(payload, ensure_ascii=False) + "\n")
         output_stream.flush()
 
@@ -422,7 +455,7 @@ def serve_mcp(
             )
             continue
         try:
-            message = json.loads(line)
+            decoded: object = json.loads(line)
         except json.JSONDecodeError:
             send(
                 {
@@ -432,8 +465,10 @@ def serve_mcp(
                 }
             )
             continue
+        # JSON object keys are strings; isinstance only narrows to dict[Unknown, Unknown].
+        message = cast(JsonObject, decoded) if isinstance(decoded, dict) else None
         if (
-            not isinstance(message, dict)
+            message is None
             or message.get("jsonrpc") != "2.0"
             or not isinstance(message.get("method"), str)
         ):
@@ -449,10 +484,12 @@ def serve_mcp(
             continue
         identifier = message["id"]
         method = message["method"]
-        parameters = message.get("params", {})
+        raw_parameters: object = message.get("params", {})
         try:
-            if not isinstance(parameters, dict):
+            if not isinstance(raw_parameters, dict):
                 raise ValueError("Parameters must be an object")
+            parameters = cast(JsonObject, raw_parameters)  # keys are JSON strings
+            result: JsonObject
             if method == "initialize":
                 result = {
                     "protocolVersion": parameters.get("protocolVersion", "2024-11-05"),
