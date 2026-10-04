@@ -13,13 +13,16 @@ import json
 import signal
 import subprocess
 import sys
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from types import FrameType
+from typing import cast
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 from local_access import resolve_scope  # noqa: E402
 from local_runtime import (  # noqa: E402
-    _verify_preflight,
+    _verify_preflight,  # pyright: ignore[reportPrivateUsage] -- no public preflight entry point; this smoke check runs the same verification
     native_executable,
     prepared_run,
     runtime_command,
@@ -33,9 +36,14 @@ from provider_commands import ProviderCommandRequest, build_provider_command  # 
 
 MARKER = "VAULTLENS_NATIVE_PROVIDER_SMOKE"
 
+# What signal.signal accepts and returns for a handler.
+_SignalHandler = (
+    Callable[[int, FrameType | None], object] | int | signal.Handlers | None
+)
+
 
 class _SmokeInterrupted(BaseException):
-    def __init__(self, signum: int):
+    def __init__(self, signum: int) -> None:
         self.signum = signum
 
 
@@ -65,7 +73,9 @@ def command(
     )
 
 
-def _invoke(argv: list[str], root: Path, env: dict[str, str], timeout: int):
+def _invoke(
+    argv: list[str], root: Path, env: dict[str, str], timeout: int
+) -> subprocess.CompletedProcess[str]:
     process = launch_supervised(
         argv,
         run=Path(env["VAULTLENS_RUNTIME_MANIFEST"]).parent,
@@ -75,16 +85,19 @@ def _invoke(argv: list[str], root: Path, env: dict[str, str], timeout: int):
         stderr=subprocess.PIPE,
         text=True,
     )
-    previous = {}
+    previous: dict[signal.Signals, _SignalHandler] = {}
 
-    def stop(signum, _frame):
+    def stop(signum: int, _frame: FrameType | None) -> None:
         raise _SmokeInterrupted(signum)
 
     try:
         for signum in (signal.SIGTERM, signal.SIGINT):
             previous[signum] = signal.signal(signum, stop)
         stdout, stderr = process.communicate(timeout=timeout)
-        return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+        returncode = process.returncode
+        if returncode is None:
+            returncode = process.wait()
+        return subprocess.CompletedProcess(argv, returncode, stdout, stderr)
     finally:
         try:
             for signum in previous:
@@ -104,15 +117,15 @@ def run(
     execute: bool,
     timeout: int,
     *,
-    profile="wiki-read",
-    project=None,
-    read_paths=(),
-) -> dict:
+    profile: str = "wiki-read",
+    project: str | None = None,
+    read_paths: Sequence[str] = (),
+) -> dict[str, str]:
     if not 1 <= timeout <= 600:
         raise ValueError("Timeout must be between 1 and 600 seconds")
     root = root.resolve()
     scope = resolve_scope(root, profile, project=project, read_paths=tuple(read_paths))
-    result = {
+    result: dict[str, str] = {
         "filesystem_boundaries": "unverified",
         "provider": provider,
         "authenticated_provider": "skipped (pass --run-provider)",
@@ -142,13 +155,17 @@ def run(
             status = _invoke(
                 wrapped(status_command), directory / "workspace", env, min(timeout, 30)
             )
-            payload = json.loads(status.stdout)
+            payload: object = json.loads(status.stdout)
+            # json.loads yields str keys; isinstance alone leaves them Unknown.
+            fields = (
+                cast("dict[str, object]", payload) if isinstance(payload, dict) else None
+            )
             valid = (
                 status.returncode == 0
-                and isinstance(payload, dict)
-                and payload.get("mode") == "lexical"
-                and payload.get("persistent_index") is False
-                and payload.get("embeddings") is False
+                and fields is not None
+                and fields.get("mode") == "lexical"
+                and fields.get("persistent_index") is False
+                and fields.get("embeddings") is False
             )
             result["scoped_search"] = (
                 "passed (lexical scope; no global index or embeddings)"

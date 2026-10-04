@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from local_runtime import verify_active_boundary  # noqa: E402
 
 
-def main():
+def main() -> int:
     try:
         verify_active_boundary()
         scratch = Path(os.environ["TMPDIR"]) / "preflight.txt"

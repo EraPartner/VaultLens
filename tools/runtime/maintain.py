@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import urllib.request
+from collections.abc import Sequence
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -27,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 VERSION = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\Z")
 
 
-def latest_release():
+def latest_release() -> str:
     # Public metadata only. Do not import ambient proxy credentials or npmrc.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with opener.open(
@@ -43,7 +44,7 @@ def latest_release():
     return version
 
 
-def validate_pins(root):
+def validate_pins(root: Path) -> str:
     version = local_runtime.SRT_VERSION
     if (
         not VERSION.fullmatch(version)
@@ -56,7 +57,7 @@ def validate_pins(root):
     return version
 
 
-def needs_install(root):
+def needs_install(root: Path) -> bool:
     try:
         local_runtime.runtime_executable(root)
     except ValueError:
@@ -64,7 +65,7 @@ def needs_install(root):
     return False
 
 
-def maintain(root, *, check=False):
+def maintain(root: Path, *, check: bool = False) -> None:
     version = validate_pins(root)
     if check:
         local_runtime.runtime_executable(root)
@@ -129,7 +130,7 @@ def maintain(root, *, check=False):
         print(f"{root.name}: full isolation verified; reports saved in {reports}")
 
 
-def main(argv=None):
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument(

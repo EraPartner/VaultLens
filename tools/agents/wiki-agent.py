@@ -18,6 +18,7 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
+from types import FrameType
 from urllib.parse import unquote
 
 
@@ -28,6 +29,7 @@ sys.path.insert(0, str(TOOLS_DIR))
 from llm_provider import BACKENDS  # noqa: E402
 from agent_profiles import AGENT_FILES, load_role, resolve_role_settings  # noqa: E402
 from agent_capabilities import (  # noqa: E402
+    Capabilities,
     claude_tools,
     profile_capabilities,
 )
@@ -40,12 +42,13 @@ from local_runtime import (  # noqa: E402
 from provider_commands import ProviderCommandRequest, build_provider_command  # noqa: E402
 from process_control import (  # noqa: E402
     ProcessCleanupError as AgentCleanupError,
-    signal_group as _signal_agent_group,  # noqa: F401 - compatibility seam for cancellation probes
+    # Compatibility seam: cancellation probes in tests call agent._signal_agent_group.
+    signal_group as _signal_agent_group,  # noqa: F401  # pyright: ignore[reportUnusedImport]
     terminate_group as _terminate_agent_group,
 )
 
 
-def _enter_runtime(args, argv) -> int | None:
+def _enter_runtime(args: argparse.Namespace, argv: list[str]) -> int | None:
     """Wrap this entire launcher before any live document reads; never fall back."""
     try:
         if active_scope() is None:
@@ -117,7 +120,7 @@ AGENT_PERMISSIONS = {
 }
 
 
-def _agent_permissions(agent: str) -> dict:
+def _agent_permissions(agent: str) -> Capabilities:
     """Return canonical role capabilities, defaulting unknown names to read-only."""
     return AGENT_PERMISSIONS.get(agent, profile_capabilities("read"))
 
@@ -727,19 +730,23 @@ def _prepare_system_prompt(agent_file: Path, system_addon: str) -> str:
     return f"{agent_instructions}\n\nAdditional context:\n{system_addon}"
 
 
-def _build_allowed_tools(perms: dict[str, object]) -> list[str]:
+# Kept as a module attribute that tests call directly.
+def _build_allowed_tools(  # pyright: ignore[reportUnusedFunction]
+    perms: Capabilities,
+) -> list[str]:
     """Return explicit permission grants for an unattended Claude launch."""
     return claude_tools(perms)
 
 
-_ACTIVE_AGENT_PROCESS: subprocess.Popen | None = None
+_ACTIVE_AGENT_PROCESS: subprocess.Popen[bytes] | None = None
 
 
 def _run_agent_command(cmd: list[str], *, cwd: Path, timeout: int) -> int:
     """Inherit output, but own a process group for timeout and cancellation."""
     global _ACTIVE_AGENT_PROCESS
     process = subprocess.Popen(cmd, cwd=cwd, start_new_session=True)
-    _ACTIVE_AGENT_PROCESS = process
+    # Mutable module state (tests read it by this name), so the constant-style name stays.
+    _ACTIVE_AGENT_PROCESS = process  # pyright: ignore[reportConstantRedefinition]
     try:
         result = process.wait(timeout=timeout)
         if result < 0 or result in (128 + signal.SIGINT, 128 + signal.SIGTERM):
@@ -750,7 +757,7 @@ def _run_agent_command(cmd: list[str], *, cwd: Path, timeout: int) -> int:
     finally:
         # Tools may outlive a successful leader too. A second stop signal must
         # not interrupt cleanup, and the outer lock is held until this finishes.
-        _ACTIVE_AGENT_PROCESS = None
+        _ACTIVE_AGENT_PROCESS = None  # pyright: ignore[reportConstantRedefinition]
         try:
             _terminate_agent_group(process)
         finally:
@@ -764,7 +771,7 @@ def invoke_agent(
     effort: str | None,
     prompt: str,
     system_addon: str,
-    extra_args: list,
+    extra_args: list[str],
     debug: bool = False,
     live_context: str = "",
     timeout: int = 3600,
@@ -850,7 +857,7 @@ def build_cli_command(
     effort: str | None,
     role_prompt: str,
     task_prompt: str,
-    perms: dict,
+    perms: Capabilities,
 ) -> list[str]:
     """Delegate syntax to native adapters; access always comes from the runtime."""
     scope = active_scope()
@@ -923,14 +930,18 @@ def _verify_ingest_result(pdf: Path, before: dict[Path, bytes]) -> bool:
             continue
         text = content.decode("utf-8")
         metadata, body = parse_frontmatter(text)
-        if any(
-            not isinstance(metadata.get(field), str) or not metadata[field].strip()
-            for field in required
-        ):
+        # Every required field must be a non-blank scalar; this also narrows
+        # the str | list[str] frontmatter values for the checks below.
+        fields: dict[str, str] = {}
+        for field in required:
+            value = metadata.get(field)
+            if isinstance(value, str) and value.strip():
+                fields[field] = value
+        if len(fields) != len(required):
             continue
-        if metadata["type"] != "source" or metadata["status"] != "active":
+        if fields["type"] != "source" or fields["status"] != "active":
             continue
-        if metadata["source_type"] not in {
+        if fields["source_type"] not in {
             "article",
             "paper",
             "book",
@@ -942,18 +953,18 @@ def _verify_ingest_result(pdf: Path, before: dict[Path, bytes]) -> bool:
             "other",
         }:
             continue
-        if metadata["source_id"] != path.stem or not re.fullmatch(
+        if fields["source_id"] != path.stem or not re.fullmatch(
             r"src-\d{4}-\d{2}-\d{2}-\d{3,}", path.stem
         ):
             continue
         try:
             if any(
-                not re.fullmatch(r"\d{4}-\d{2}-\d{2}", metadata[field])
+                not re.fullmatch(r"\d{4}-\d{2}-\d{2}", fields[field])
                 for field in ("created", "updated", "ingested_on")
             ):
                 continue
             dates = {
-                field: _dt.date.fromisoformat(metadata[field])
+                field: _dt.date.fromisoformat(fields[field])
                 for field in ("created", "updated", "ingested_on")
             }
         except ValueError:
@@ -961,7 +972,7 @@ def _verify_ingest_result(pdf: Path, before: dict[Path, bytes]) -> bool:
         if dates["updated"] < dates["created"] or not body.strip():
             continue
         citations = {normalize_link_target(link) for link in extract_wikilinks(body)}
-        citation_lines = []
+        citation_lines: list[str] = []
         in_code = False
         for line in body.splitlines():
             if line.strip().startswith("```"):
@@ -985,7 +996,7 @@ def _verify_ingest_result(pdf: Path, before: dict[Path, bytes]) -> bool:
     return False
 
 
-def run_agent(args, strategy: str | None = None) -> int:
+def run_agent(args: argparse.Namespace, strategy: str | None = None) -> int:
     """Run the specified agent."""
     # Build prompt
     page = args.page or ""
@@ -1007,7 +1018,7 @@ def run_agent(args, strategy: str | None = None) -> int:
     effort = args.effort
 
     # Build extra args based on agent — resolve to absolute paths for -f flags
-    extra_args = []
+    extra_args: list[str] = []
     if args.agent == "quality" and args.page:
         extra_args = [str((ROOT / args.page).resolve())]
     elif args.agent == "verify" and args.source:
@@ -1029,7 +1040,7 @@ def run_agent(args, strategy: str | None = None) -> int:
         )
     elif args.agent == "enhance":
         # Attach whatever is relevant: target wiki page(s) + extracted source markdown.
-        targets = []
+        targets: list[str] = []
         pdf_path = args.pdf or (
             args.source if args.source and args.source.endswith(".pdf") else ""
         )
@@ -1121,15 +1132,15 @@ def run_agent(args, strategy: str | None = None) -> int:
     return rc
 
 
-_STOP_REQUESTED = False
+_STOP_REQUESTED = False  # mutable flag; tests and handlers use this name
 
 
 def _install_signal_handlers() -> None:
     """Stop between iterations, or cancel the owned process group during a run."""
 
-    def _handler(signum, _frame):
+    def _handler(signum: int, _frame: FrameType | None) -> None:
         global _STOP_REQUESTED
-        _STOP_REQUESTED = True
+        _STOP_REQUESTED = True  # pyright: ignore[reportConstantRedefinition]
         name = signal.Signals(signum).name
         if _ACTIVE_AGENT_PROCESS is not None:
             print(f"\n[wiki-agent] {name} received; stopping agent and its tools.")
@@ -1166,7 +1177,7 @@ def _ts() -> str:
     return _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
@@ -1325,7 +1336,7 @@ def main(argv=None) -> int:
     # indefinitely, since the consecutive-FAILURE guard never trips on rc==0.
     _log_md = ROOT / "wiki" / "log.md"
 
-    def _log_sig():
+    def _log_sig() -> tuple[int, float] | None:
         try:
             st = _log_md.stat()
             return (st.st_size, st.st_mtime)
