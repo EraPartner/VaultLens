@@ -30,14 +30,17 @@ import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Callable, Generator, Iterator, Mapping
+from http.client import HTTPMessage
 from pathlib import Path
+from types import FrameType
+from typing import IO, TYPE_CHECKING
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 import local_runtime  # noqa: E402
 import runtime_verification as verification  # noqa: E402
-from local_access import JsonObject, resolve_scope  # noqa: E402
+from local_access import JsonObject, RunScope, resolve_scope  # noqa: E402
 from process_control import (  # noqa: E402
     ProcessCleanupError,
     launch_supervised,
@@ -54,6 +57,14 @@ from runtime_probe_checks import (  # noqa: E402
     expected_checks as expected_checks,
 )
 from scoped_search import ScopedSearch  # noqa: E402
+
+if TYPE_CHECKING:
+    import ctypes
+
+# One probe check result: check name, status and optional detail, all strings.
+CheckResult = dict[str, str]
+# A named child check; a failed check raises, the return value is ignored.
+Check = tuple[str, Callable[[], object]]
 
 PUBLIC_HOST = "registry.npmjs.org"
 PUBLIC_URL = "https://" + PUBLIC_HOST + "/"
@@ -100,13 +111,15 @@ def _write(path: Path, value: str) -> None:
     path.write_text(value, encoding="utf-8")
 
 
-def make_fixture(source: Path, base: Path, baseline: dict) -> tuple[Path, dict]:
+def make_fixture(
+    source: Path, base: Path, baseline: JsonObject
+) -> tuple[Path, JsonObject]:
     """Copy only reviewed tooling; every document and index is generated here."""
     source = source.resolve()
     base = base.resolve()
     root = base / "synthetic-vault"
     root.mkdir(mode=0o700)
-    hashes = {}
+    hashes: dict[str, str] = {}
     for relative in TRUSTED_FILES:
         data = _regular_source(source / relative)
         destination = root / relative
@@ -184,7 +197,7 @@ def make_fixture(source: Path, base: Path, baseline: dict) -> tuple[Path, dict]:
         except OSError as exc:
             hardlinks = False
             hardlink_reason = f"Host filesystem could not create a synthetic hardlink: errno {exc.errno}"
-    metadata = {
+    metadata: JsonObject = {
         "version": 1,
         "synthetic": True,
         "hardlinks": hardlinks,
@@ -198,7 +211,7 @@ def make_fixture(source: Path, base: Path, baseline: dict) -> tuple[Path, dict]:
     return root, metadata
 
 
-def _macos_host_metadata() -> dict:
+def _macos_host_metadata() -> JsonObject:
     import ctypes
 
     from macos_processes import AuditKernel
@@ -213,13 +226,16 @@ def _macos_host_metadata() -> dict:
                 "Required public credential-service baseline is unavailable"
             )
         system.mach_port_deallocate(self_port, port.value)
+    token = AuditKernel().token(os.getpid())
+    if token is None:
+        raise ValueError("Cannot read the probe's own audit session")
     return {
-        "host_audit_session": AuditKernel().token(os.getpid())[6],
+        "host_audit_session": token[6],
         "escape_job_label": "com.vaultlens.probe.escape." + uuid.uuid4().hex,
     }
 
 
-def _macos_ipc_library():
+def _macos_ipc_library() -> ctypes.CDLL:
     import ctypes
 
     library = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
@@ -232,13 +248,13 @@ def _macos_ipc_library():
     return library
 
 
-def _macos_ipc_create() -> dict:
+def _macos_ipc_create() -> dict[str, str]:
     """Create private synthetic IPC objects before the sandbox session exists."""
     import ctypes
 
     library = _macos_ipc_library()
     suffix = uuid.uuid4().hex[:16]
-    data = {"host_shm": "/vl-shm-" + suffix, "host_sem": "/vl-sem-" + suffix}
+    data: dict[str, str] = {"host_shm": "/vl-shm-" + suffix, "host_sem": "/vl-sem-" + suffix}
     descriptor = library.shm_open(
         data["host_shm"].encode(), os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600
     )
@@ -263,13 +279,13 @@ def _macos_ipc_create() -> dict:
     return data
 
 
-def _macos_ipc_cleanup(data: dict) -> None:
+def _macos_ipc_cleanup(data: dict[str, str]) -> None:
     library = _macos_ipc_library()
     library.shm_unlink(data["host_shm"].encode())
     library.sem_unlink(data["host_sem"].encode())
 
 
-def _macos_job_absent(root: Path) -> dict:
+def _macos_job_absent(root: Path) -> CheckResult:
     metadata = json.loads((root / "tools/runtime/probe-fixture.json").read_text())
     service = f"gui/{os.getuid()}/{metadata['escape_job_label']}"
     result = _subprocess(["/bin/launchctl", "print", service])
@@ -286,7 +302,7 @@ def _macos_job_absent(root: Path) -> dict:
     }
 
 
-def _denied(operation) -> None:
+def _denied(operation: Callable[[], object]) -> None:
     try:
         operation()
     except PermissionError as exc:
@@ -317,9 +333,9 @@ def _subprocess(
     command: list[str],
     *,
     stdin: str | None = None,
-    env: dict | None = None,
+    env: Mapping[str, str] | None = None,
     timeout: float = 5,
-) -> subprocess.CompletedProcess:
+) -> subprocess.CompletedProcess[str]:
     """Children inherit this sandbox and process group; their leader is bounded."""
     return subprocess.run(
         command, input=stdin, capture_output=True, text=True, env=env, timeout=timeout
@@ -358,14 +374,14 @@ def _scratch(path: Path) -> None:
     )
 
 
-def _profile_write(scope, path: Path) -> None:
+def _profile_write(scope: RunScope, path: Path) -> None:
     if scope.writable(path):
         _scratch(path)
     else:
         _deny_write(path)
 
 
-def _profile_note_write(scope, path: Path) -> None:
+def _profile_note_write(scope: RunScope, path: Path) -> None:
     if scope.writable(path):
         with path.open("ab") as stream:
             stream.write(b"ALLOWED_SYNTHETIC_WRITE\n")
@@ -373,7 +389,7 @@ def _profile_note_write(scope, path: Path) -> None:
         _deny_write(path)
 
 
-def _profile_read(scope, path: Path, token: str) -> None:
+def _profile_read(scope: RunScope, path: Path, token: str) -> None:
     if scope.readable(path):
         _allowed_read(path, token)
     else:
@@ -381,7 +397,7 @@ def _profile_read(scope, path: Path, token: str) -> None:
 
 
 def _new_link_escape(
-    directory: Path, outside: Path, *, hardlink: bool, metadata: dict
+    directory: Path, outside: Path, *, hardlink: bool, metadata: JsonObject
 ) -> None:
     if hardlink and not metadata["hardlinks"]:
         raise SkippedCheck(metadata["hardlink_reason"])
@@ -400,13 +416,13 @@ def _new_link_escape(
     _deny_write(alias)
 
 
-def _old_hardlink(operation, metadata: dict) -> None:
+def _old_hardlink(operation: Callable[[], object], metadata: JsonObject) -> None:
     if not metadata["hardlinks"]:
         raise SkippedCheck(metadata["hardlink_reason"])
     operation()
 
 
-def _search_results(payload: dict, token: str, *, present: bool) -> None:
+def _search_results(payload: JsonObject, token: str, *, present: bool) -> None:
     found = any(token in item.get("snippet", "") for item in payload.get("results", []))
     assert found == present, "Scoped search returned the wrong synthetic corpus"
 
@@ -437,7 +453,7 @@ def _search_cli(root: Path) -> None:
 
 
 def _search_mcp(root: Path) -> None:
-    requests = [
+    requests: list[JsonObject] = [
         {
             "jsonrpc": "2.0",
             "id": 0,
@@ -546,16 +562,24 @@ def network_error_kind(exc: BaseException) -> str:
     return "unavailable"
 
 
-def _public_request() -> dict:
+def _public_request() -> JsonObject:
     class NoRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):
+        def redirect_request(
+            self,
+            req: urllib.request.Request,
+            fp: IO[bytes],
+            code: int,
+            msg: str,
+            headers: HTTPMessage,
+            newurl: str,
+        ) -> urllib.request.Request | None:
             return None
 
     try:
         # Keep the public fixture request on this literal endpoint.
         # Use the runtime's explicit proxy variables, never ambient macOS
         # proxy settings. The host baseline has a minimal, proxy-free env.
-        proxies = {
+        proxies: dict[str, str] = {
             scheme: os.environ[scheme.upper() + "_PROXY"]
             for scheme in ("http", "https")
             if scheme.upper() + "_PROXY" in os.environ
@@ -592,7 +616,7 @@ def _public_request() -> dict:
         }
 
 
-def public_baseline() -> dict:
+def public_baseline() -> JsonObject:
     command = [
         "/usr/bin/curl",
         "--disable",
@@ -646,7 +670,7 @@ def public_baseline() -> dict:
         terminate_group(child, grace=0.1)
 
 
-def _require_baseline(metadata: dict) -> dict:
+def _require_baseline(metadata: JsonObject) -> JsonObject:
     baseline = metadata["network_baseline"]
     if baseline.get("status") != "passed":
         raise SkippedCheck(
@@ -655,7 +679,7 @@ def _require_baseline(metadata: dict) -> dict:
     return baseline
 
 
-def _network_http(metadata: dict, *, shell: bool = False) -> None:
+def _network_http(metadata: JsonObject, *, shell: bool = False) -> None:
     _require_baseline(metadata)
     try:
         if shell:
@@ -689,7 +713,7 @@ def _network_http(metadata: dict, *, shell: bool = False) -> None:
         )
 
 
-def _network_socket(metadata: dict) -> None:
+def _network_socket(metadata: JsonObject) -> None:
     baseline = _require_baseline(metadata)
     public_ip = baseline.get("public_ip")
     if not public_ip or not ipaddress.ip_address(public_ip).is_global:
@@ -729,7 +753,7 @@ def _clean_provider_environment(run: Path) -> None:
     )
 
 
-def _macos_guard_checks(metadata: dict) -> list[tuple[str, object]]:
+def _macos_guard_checks(metadata: JsonObject) -> list[Check]:
     """Attempt finite escapes using public kernel metadata and empty jobs only."""
     import ctypes
 
@@ -756,22 +780,22 @@ def _macos_guard_checks(metadata: dict) -> list[tuple[str, object]]:
     security = ctypes.CDLL("/System/Library/Frameworks/Security.framework/Security")
     information = AuditInfo()
 
-    def require(condition, message):
+    def require(condition: object, message: str) -> None:
         if not condition:
             raise AssertionError(message)
 
-    def session():
+    def session() -> int:
         require(
             system.getaudit_addr(ctypes.byref(information), ctypes.sizeof(information))
             == 0,
             "Cannot read synthetic process audit session",
         )
-        return information.session
+        return int(information.session)
 
     before = session()
     require(before != metadata["host_audit_session"], "Workload inherited host session")
 
-    def reassign():
+    def reassign() -> None:
         session()
         information.session = 0xFFFFFFFF
         ctypes.set_errno(0)
@@ -783,7 +807,7 @@ def _macos_guard_checks(metadata: dict) -> list[tuple[str, object]]:
             "Audit session assignment did not return the required permission denial",
         )
 
-    def foreign_port():
+    def foreign_port() -> None:
         port = ctypes.c_uint()
         ctypes.set_errno(0)
         result = system.audit_session_port(
@@ -794,13 +818,13 @@ def _macos_guard_checks(metadata: dict) -> list[tuple[str, object]]:
             "Foreign audit session port did not return the required permission denial",
         )
 
-    def operation_denied(operation):
+    def operation_denied(operation: str) -> None:
         require(
             system.sandbox_check(os.getpid(), operation.encode(), 0) > 0,
             "Required sandbox operation was permitted: " + operation,
         )
 
-    def service_denied(name):
+    def service_denied(name: str) -> None:
         bootstrap = ctypes.c_uint.in_dll(system, "bootstrap_port").value
         destination = ctypes.c_uint()
         result = system.bootstrap_look_up(
@@ -808,7 +832,7 @@ def _macos_guard_checks(metadata: dict) -> list[tuple[str, object]]:
         )
         require(result == 1100, "Existing credential service lookup was not denied")
 
-    def job_denied():
+    def job_denied() -> None:
         target = Path(os.environ["TMPDIR"]) / "synthetic-escape.plist"
         target.write_bytes(
             plistlib.dumps(
@@ -827,7 +851,7 @@ def _macos_guard_checks(metadata: dict) -> list[tuple[str, object]]:
         )
         require(result.returncode != 0, "Synthetic external job bootstrap succeeded")
 
-    def shared_memory(write):
+    def shared_memory(write: bool) -> None:
         library = _macos_ipc_library()
         descriptor = library.shm_open(
             metadata["host_shm"].encode(), os.O_RDWR if write else os.O_RDONLY, 0
@@ -847,14 +871,14 @@ def _macos_guard_checks(metadata: dict) -> list[tuple[str, object]]:
         finally:
             os.close(descriptor)
 
-    def semaphore_open():
+    def semaphore_open() -> None:
         library = _macos_ipc_library()
         pointer = library.sem_open(metadata["host_sem"].encode(), 0)
         if pointer in (None, ctypes.c_void_p(-1).value):
             raise OSError(ctypes.get_errno(), "Synthetic host semaphore access")
         library.sem_close(pointer)
 
-    return [
+    checks: list[Check] = [
         ("macos.audit-reassignment", reassign),
         ("macos.foreign-session-port", foreign_port),
         (
@@ -894,9 +918,10 @@ def _macos_guard_checks(metadata: dict) -> list[tuple[str, object]]:
         ),
         ("macos.host-semaphore-open", lambda: _denied(semaphore_open)),
     ]
+    return checks
 
 
-def child_checks(scope, metadata: dict, case: str) -> list[tuple[str, object]]:
+def child_checks(scope: RunScope, metadata: JsonObject, case: str) -> list[Check]:
     root = scope.root
     run = Path(os.environ["VAULTLENS_RUNTIME_MANIFEST"]).parent
     outside = root.parent / "excluded.md"
@@ -914,7 +939,7 @@ def child_checks(scope, metadata: dict, case: str) -> list[tuple[str, object]]:
     symlink = aliases / "external-symlink.md"
     hardlink = aliases / "external-hardlink.md"
     search = ScopedSearch(scope)
-    checks = [
+    checks: list[Check] = [
         ("active-boundary", local_runtime.verify_active_boundary),
         ("clean-provider-environment", lambda: _clean_provider_environment(run)),
         ("notes.python-read", lambda: _allowed_read(approved, "APPROVEDPROBETOKEN")),
@@ -1098,7 +1123,7 @@ def run_child(case: str) -> int:
         )
     output = Path(os.environ["TMPDIR"]) / "probe-results.json"
     checks = child_checks(scope, metadata, case)
-    results = []
+    results: list[CheckResult] = []
     for name, operation in checks:
         try:
             operation()
@@ -1116,7 +1141,7 @@ def run_child(case: str) -> int:
     return 1 if any(item["status"] == "failed" for item in results) else 0
 
 
-def _synthetic_scope():
+def _synthetic_scope() -> tuple[RunScope, Path]:
     scope = local_runtime.verify_active_boundary()
     metadata = json.loads((scope.root / "tools/runtime/probe-fixture.json").read_text())
     if metadata.get("synthetic") is not True or metadata.get("version") != 1:
@@ -1186,6 +1211,7 @@ def lifecycle_spawner(kind: str, *, cancellation: str | None = None) -> int:
         not heartbeat.is_file() and time.monotonic() < deadline and child.poll() is None
     ):
         time.sleep(0.02)
+    group: int | None
     try:
         group = os.getpgid(child.pid)
     except ProcessLookupError:
@@ -1228,7 +1254,12 @@ def inner_lifecycle(kind: str, *, cancellation: bool = False) -> int:
         command.extend(["--cancel-case", "inner"])
     # The actual invocation/error/cleanup path executes a public fixture command
     # instead of a native provider. Its OS guard is never mocked or bypassed.
-    launcher.build_cli_command = lambda *_args, **_kwargs: command
+
+    def build_cli_command(*_args: object, **_kwargs: object) -> list[str]:
+        return command
+
+    # ModuleType declares no attribute assignment; this stands in for the native command.
+    setattr(launcher, "build_cli_command", build_cli_command)
     return launcher.invoke_agent(
         "search",
         "synthetic-lifecycle",
@@ -1242,12 +1273,14 @@ def inner_lifecycle(kind: str, *, cancellation: bool = False) -> int:
 
 
 @contextlib.contextmanager
-def _bounded_launcher(seconds: float, *, cancellation_marker: Path | None = None):
+def _bounded_launcher(
+    seconds: float, *, cancellation_marker: Path | None = None
+) -> Generator[None, None, None]:
     previous = signal.getsignal(signal.SIGALRM)
     original_termination = signal.getsignal(signal.SIGTERM)
     deadline = time.monotonic() + seconds
 
-    def expired(_signum, _frame):
+    def expired(_signum: int, _frame: FrameType | None) -> None:
         if time.monotonic() >= deadline:
             raise TimeoutError("Synthetic lifecycle launcher exceeded its deadline")
         if cancellation_marker is not None and cancellation_marker.is_file():
@@ -1273,7 +1306,7 @@ def _bounded_launcher(seconds: float, *, cancellation_marker: Path | None = None
             signal.setitimer(signal.ITIMER_REAL, *timer)
 
 
-def _owned_fixture_process(record: dict) -> bool:
+def _owned_fixture_process(record: JsonObject) -> bool:
     pid = record.get("pid")
     if not isinstance(pid, int) or pid <= 1:
         raise ProcessCleanupError(
@@ -1301,7 +1334,7 @@ def _owned_fixture_process(record: dict) -> bool:
     return True
 
 
-def _cleanup_fixture_process(record: dict) -> None:
+def _cleanup_fixture_process(record: JsonObject) -> None:
     if not _owned_fixture_process(record):
         return
     for signum, grace in ((signal.SIGTERM, 0.15), (signal.SIGKILL, 0.2)):
@@ -1323,7 +1356,7 @@ def _cleanup_fixture_process(record: dict) -> None:
     )
 
 
-def _stopped_heartbeat(record: dict, heartbeat: Path) -> None:
+def _stopped_heartbeat(record: JsonObject, heartbeat: Path) -> None:
     if record.get("status") == "denied":
         assert record.get("errno") in {errno.EACCES, errno.EPERM}, (
             "Missing OS descendant-creation denial evidence"
@@ -1347,7 +1380,7 @@ def _stopped_heartbeat(record: dict, heartbeat: Path) -> None:
     )
 
 
-def _synthetic_gate_blocks(root: Path, scope) -> None:
+def _synthetic_gate_blocks(root: Path, scope: RunScope) -> None:
     gate = root / "tools/runtime-state/cancellation-unconfirmed.json"
     assert gate.is_file() and not gate.is_symlink(), (
         "Cancellation did not persist the synthetic vault gate"
@@ -1365,20 +1398,24 @@ def _synthetic_gate_blocks(root: Path, scope) -> None:
         raise AssertionError("Persistent cancellation gate admitted another launch")
 
 
-def _lifecycle_case(root: Path, boundary: str, kind: str, cancellation: bool) -> dict:
+def _lifecycle_case(
+    root: Path, boundary: str, kind: str, cancellation: bool
+) -> CheckResult:
     name = f"lifecycle.{boundary}.{kind}.{'cancellation' if cancellation else 'normal-success'}"
     scope = resolve_scope(root, "probe-selected-read")
-    item = {
+    item: CheckResult = {
         "check": name,
         "status": "passed",
         "detail": "Tracked public descendant stopped before expiry; no writes after return",
     }
-    expected_error = None
+    expected_error: ProcessCleanupError | None = None
     try:
         with local_runtime.prepared_run(
             scope, None, snapshot=False, require_verification=False
         ) as (executable, run, env):
-            local_runtime._verify_preflight(executable, run, env, root)
+            # The probe drives the runtime's internal preflight/execute path with the exact
+            # settings; no public wrapper exists, so the private access is deliberate.
+            local_runtime._verify_preflight(executable, run, env, root)  # pyright: ignore[reportPrivateUsage]
             marker = run / "scratch" / ("lifecycle-" + kind + "-spawn.json")
             heartbeat = run / "scratch" / ("lifecycle-" + kind + "-heartbeat.json")
             command = [
@@ -1393,8 +1430,8 @@ def _lifecycle_case(root: Path, boundary: str, kind: str, cancellation: bool) ->
                     if boundary == "inner"
                     else ["--cancel-case", "outer"]
                 )
-            record = None
-            result = None
+            record: JsonObject | None = None
+            result: int | None = None
             try:
                 try:
                     with _bounded_launcher(
@@ -1403,7 +1440,7 @@ def _lifecycle_case(root: Path, boundary: str, kind: str, cancellation: bool) ->
                         if cancellation and boundary == "outer"
                         else None,
                     ):
-                        result = local_runtime._execute_prepared(
+                        result = local_runtime._execute_prepared(  # pyright: ignore[reportPrivateUsage]
                             command, executable, run, env, root
                         )
                 except ProcessCleanupError as exc:
@@ -1413,7 +1450,8 @@ def _lifecycle_case(root: Path, boundary: str, kind: str, cancellation: bool) ->
                         "Synthetic lifecycle start handshake missing; descendants cannot be confirmed",
                         group_id=expected_error.group_id if expected_error else None,
                     )
-                record = json.loads(marker.read_text())
+                loaded: JsonObject = json.loads(marker.read_text())
+                record = loaded
                 if not cancellation:
                     assert result == 0 and expected_error is None, (
                         "Synthetic lifecycle parent did not finish normally"
@@ -1458,16 +1496,16 @@ def _lifecycle_case(root: Path, boundary: str, kind: str, cancellation: bool) ->
     return item
 
 
-def lifecycle_checks(root: Path) -> Iterator[dict]:
+def lifecycle_checks(root: Path) -> Iterator[CheckResult]:
     for case in LIFECYCLE_CASES:
         yield _lifecycle_case(root, *case)
 
 
-def run_case(root: Path, case: str) -> list[dict]:
+def run_case(root: Path, case: str) -> list[CheckResult]:
     scope = resolve_scope(
         root, "probe-" + case, project="selected" if case == "project-write" else None
     )
-    results = []
+    results: list[CheckResult] = []
     with local_runtime.prepared_run(
         scope, None, snapshot=False, require_verification=False
     ) as (
@@ -1476,7 +1514,8 @@ def run_case(root: Path, case: str) -> list[dict]:
         env,
     ):
         try:
-            local_runtime._verify_preflight(executable, run, env, root)
+            # Private access is deliberate here too: no public preflight wrapper exists.
+            local_runtime._verify_preflight(executable, run, env, root)  # pyright: ignore[reportPrivateUsage]
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             return [
                 {
@@ -1523,7 +1562,7 @@ def run_case(root: Path, case: str) -> list[dict]:
             text=True,
         )
         problem = ""
-        escape_job = None
+        escape_job: CheckResult | None = None
         try:
             try:
                 _stdout, stderr = child.communicate(timeout=45)
@@ -1565,7 +1604,7 @@ def run_case(root: Path, case: str) -> list[dict]:
     return results
 
 
-def probe(source: Path = ROOT) -> dict:
+def probe(source: Path = ROOT) -> JsonObject:
     """Run real SRT or fail before creating fixtures; never accept an emulator."""
     source = source.resolve()
     report: JsonObject = {
@@ -1646,7 +1685,8 @@ def probe(source: Path = ROOT) -> dict:
             report["fixture_retained"] = str(temporary)
         state = source / "tools/runtime-state"
         try:
-            local_runtime._private_directory(state, source)
+            # Private access is deliberate: reuse the runtime's own state-directory guard.
+            local_runtime._private_directory(state, source)  # pyright: ignore[reportPrivateUsage]
             marker = state / "cancellation-unconfirmed.json"
             data = {
                 "kind": "synthetic-isolation-probe",
