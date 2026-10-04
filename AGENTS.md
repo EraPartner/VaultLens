@@ -32,7 +32,7 @@ Maintain a durable wiki in `wiki/` from immutable source material in `raw/`.
 If `wiki/entities/user-background.md` exists (referenced vault-wide as `[[user-background]]`), it is the
 profile of the person this Brain serves: background, current focus, goals, and how they want agents to
 work. Any agent producing advice, a brief, a status report, or project guidance for the operator should
-read it first (it is qmd-indexed and surfaces on a `qmd search "operator profile"`) to calibrate tone and
+read it first when it is included in the selected access profile to calibrate tone and
 priorities. It is gitignored (personal), so it ships only in this operator's vault, not the public
 template. The Chief of Staff launcher injects it automatically into its live context.
 
@@ -79,14 +79,20 @@ PDFs, `python3 tools/wiki.py preprocess` pre-extracts `raw/sources/*.pdf` → `r
 
 ## Tool permissions
 
-Reads are auto-approved; writes require confirmation and the role's write profile. Interactive
-clients apply their own controls. Headless roles are mapped by `wiki-agent.py`, and may never spawn
-another agent. Tool allowlists are best-effort; the matching egress-locked container mount is the
-hard read/write boundary. See `.devcontainer/README.md` and `.agents/skills/wiki-agents/SKILL.md`.
+Launch agents through `tools/local_runtime.py` or the `brain-*` wrappers. The runtime resolves a
+versioned access profile before running the native Claude or Codex client. Profiles define approved
+read paths, writable output paths, protected paths, and network access independently of model choice.
+The whole-process sandbox applies to file tools, shell commands, hooks, and local search servers;
+provider tool permissions add a second layer. Missing runtime support or invalid policy stops the
+launch. A direct operator request authorizes the scoped edits and checks needed for that request.
+Headless roles are mapped by `wiki-agent.py`, and may never spawn another agent. Interactive native
+subagents inherit the parent process's access boundary; narrower role instructions do not create a
+new operating-system sandbox. See `.agents/skills/wiki-agents/SKILL.md`.
 
-`raw/` may contain symlinks to files/dirs outside the vault, so existing data need not be duplicated.
-Headless inbox previews never follow directory or file links, because those links could bypass
-the review-inbox consent gate. Other authorized reads still follow the normal source workflow.
+`raw/` may contain symlinks to files/dirs outside the vault. An access profile never grants the
+outside target implicitly. Headless inbox previews never follow directory or file links, because
+those links could bypass the review-inbox consent gate. Restricted material must also be absent
+from the search index. Runtime search uses the selected files rather than a shared vault index.
 
 ## Projects layer
 
@@ -125,12 +131,16 @@ Canonical custom roles live in `.agents/roles/`; provider adapters are generated
 change, run `python3 tools/agents/generate-adapters.py`. Role selection, read/write behavior,
 handoffs, models, effort, and launcher commands live in `.agents/skills/wiki-agents/SKILL.md`.
 
-## Devcontainer sandbox
+## Local agent runtime
 
-Agents run in the hardened, egress-locked devcontainer. Launch them from the host with `brain-wiki`
-or `brain-cos`; `wiki-agent.py` refuses host execution. Provider state, mount profiles, configuration
-sync, and troubleshooting are documented in `.devcontainer/README.md`. Repository configuration in
-this file, `.agents/`, `.claude/`, and `.codex/` lives in the mounted workspace.
+Interactive, headless, and scheduled agents use the same local runtime with narrow access profiles.
+Use `brain-agent`, `brain-claude`, or `brain-codex` interactively, `brain-wiki <agent>` for headless
+work, and `brain-cos` for briefs. Direct `wiki-agent.py` invocations wrap themselves in the runtime.
+`brain-shell` opens a scoped shell. Deterministic `wiki.py` commands run directly as explicit
+operator actions. No container is required or launched. Provider login state is isolated from
+unrelated host credentials; the runtime grants only the endpoints selected by the profile.
+Local execution still sends selected context to the chosen model provider. Preview access before
+sharing personal material. The runtime and profile workflow are documented in `README.md`.
 
 ## Scheduled agents
 
@@ -156,25 +166,22 @@ opt-in. Scheduling, recovery, gates, provider selection, and installation are de
 ## Search
 
 [qmd](https://www.npmjs.com/package/@tobilu/qmd) is the primary engine — hybrid BM25 + vector +
-LLM-rerank over `wiki/` and `raw/`. **All search-using agents prefer qmd over `wiki.py search` when
-available** (see the devcontainer caveat in `projects/AGENTS.md`). `qmd mcp` exposes
-`mcp__qmd__*` tools (stdio; registered for Claude in `.mcp.json` and for Codex in
-`.codex/config.toml`). `python3 tools/wiki.py search "<query>"` is
-the substring fallback that always works without setup. One-time host setup + re-index live in
-`tools/scripts/setup-qmd.sh`; `qmd status` / `qmd collection list` for health.
+LLM-rerank for explicit operator search. Agent runs use an isolated lexical search service with the
+qmd-compatible CLI and MCP tool names over their approved files. It does not reuse the host's full
+vault index or vector models. This keeps excluded material out of retrieval results and permits
+search without an additional provider. **All search-using agents prefer the scoped qmd tools when
+available.** `python3 tools/wiki.py search "<query>"` is the substring fallback inside the same
+boundary. One-time full-vault host setup and re-indexing remain explicit operator actions in
+`tools/scripts/setup-qmd.sh`.
 
-In Codex cloud (`CODEX_SESSION_ENV=cloud`), lead with `qmd search "<keywords>"`. Cloud setup builds
-the keyword index but intentionally does not download or build semantic embeddings. Do not use
-`qmd query`, `qmd vsearch`, or the equivalent semantic MCP tools until `qmd embed` has completed
-successfully in that environment.
 
 ## Obsidian skills
 
 Prefer the `obsidian:` skill family for vault-native operations (`obsidian-markdown` for page
 edits, `defuddle` for URL → clean markdown into `raw/inbox/`, `obsidian-cli` / `json-canvas` /
 `obsidian-bases` as needed). There is no Obsidian MCP server. `obsidian-cli` and `defuddle` are
-host-only (need the `obs` binary, a running Obsidian app, or network) — inside the egress-locked
-sandbox use `obsidian-markdown` for formatting plus the normal file tools.
+host-only (need the `obs` binary, a running Obsidian app, or network). Scoped agent runs use
+`obsidian-markdown` for formatting plus file tools available within their access profile.
 
 ## Command index
 
@@ -184,19 +191,6 @@ Day-to-day core — everything else lives in the per-operation runbooks under
 ```bash
 python3 tools/wiki.py lint                       # fast health check (links, metadata, staleness)
 python3 tools/wiki.py search "term"              # substring search (qmd preferred — see Search)
-qmd search "<keywords>"                          # BM25; `qmd query "<question>" --format json` for hybrid
-qmd update                                       # re-index after content changes
+qmd search "<keywords>"                          # scoped lexical search in agent runs
+qmd update                                       # full-vault re-index: explicit operator workflow
 ```
-
-## Cloud sessions
-
-Run `bash .codex/cloud/setup.sh` as the Codex cloud environment setup command. Cloud sessions work
-only with the tracked VaultLens template and example content. Brain is private, local-only, and
-must never be copied, mounted, fetched, indexed, or inferred in a cloud session. The bootstrap
-builds only the keyword index; semantic embeddings remain an explicit optional step. In cloud
-sessions, do not publish with shell Git commands, configure Git credentials, or create a pull
-request with `gh`. The platform-managed **Open pull request** action may create a pull request, and
-the connected GitHub integration may update the same branch for pull-request-linked follow-ups.
-When the user explicitly requests it, that integration may merge the pull request after all
-required checks and approvals pass and no blocking review remains. Do not use an admin bypass or
-directly update a default or protected branch outside that approved merge.

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -140,6 +141,9 @@ def gather_context(
     project_filter: str | None,
     budget: int,
     today: dt.date,
+    *,
+    scope=None,
+    review_queue=(),
 ) -> str:
     """Collect full mandatory data and all task candidates before selection."""
     from project_state import project_status
@@ -147,7 +151,11 @@ def gather_context(
     required = ["## Live context", f"Date: {today.isoformat()}", CONSENT]
     profile = root / "wiki/entities/user-background.md"
     try:
-        profile_text = profile.read_text(encoding="utf-8")
+        profile_text = (
+            profile.read_text(encoding="utf-8")
+            if scope is None or scope.readable(profile)
+            else None
+        )
     except FileNotFoundError:
         profile_text = None
     except (OSError, UnicodeError) as exc:
@@ -161,8 +169,15 @@ def gather_context(
     sources: list[ContextSource] = []
     projects = root / "projects"
     required.append("## Project overview (all selected projects)")
-    for project in sorted(projects.iterdir()) if projects.is_dir() else []:
-        if not project.is_dir() or project.name.startswith("."):
+    candidates = (
+        scope.project_directories()
+        if scope
+        else sorted(projects.iterdir())
+        if projects.is_dir()
+        else []
+    )
+    for project in candidates:
+        if not project.is_dir() or project.name.startswith(".") or project.is_symlink():
             continue
         if project_filter and project.name != project_filter:
             continue
@@ -178,6 +193,8 @@ def gather_context(
             status or "unknown (project metadata missing, unreadable or malformed)"
         )
         try:
+            if scope and not scope.readable(todo):
+                raise PermissionError("TODO not selected")
             todo_text = todo.read_text(encoding="utf-8")
         except (OSError, UnicodeError):
             required.append(
@@ -213,20 +230,48 @@ def gather_context(
         import agenda
 
         # This is the complete structured status overview, never a sliced prefix.
-        desks = agenda.desk_status(projects, today)
+        selected = (
+            frozenset(p.name for p in candidates if scope.readable(p / "AGENDA.md"))
+            if scope
+            else None
+        )
+        desks = agenda.desk_status(projects, today, selected_projects=selected)
         if project_filter:
             desks = [desk for desk in desks if desk.get("slug") == project_filter]
         required.append(agenda.format_desk_status(desks))
 
     for queue in ("raw/inbox", "raw/review-inbox"):
+        if scope and queue.endswith("review-inbox"):
+            required.append(
+                f"## Queue overview: {queue}/ ({len(review_queue)} entries)"
+            )
+            required.extend(
+                f"{item['name']} ({item['size']} bytes)" for item in review_queue
+            )
+            continue
         directory = root / queue
-        entries = (
-            sorted(p for p in directory.iterdir() if not p.name.startswith("."))
-            if directory.is_dir()
-            else []
-        )
+        entries = []
+        sizes = {}
+        if (
+            not directory.is_symlink()
+            and directory.is_dir()
+            and (scope is None or scope.readable(directory))
+        ):
+            for path in sorted(directory.iterdir()):
+                if path.name.startswith(".") or (scope and not scope.readable(path)):
+                    continue
+                try:
+                    metadata = path.lstat()
+                except OSError:
+                    continue
+                if stat.S_ISLNK(metadata.st_mode) or (
+                    stat.S_ISREG(metadata.st_mode) and metadata.st_nlink != 1
+                ):
+                    continue
+                entries.append(path)
+                sizes[path] = metadata.st_size
         required.append(f"## Queue overview: {queue}/ ({len(entries)} entries)")
-        names = [f"{p.name} ({p.stat().st_size} bytes)" for p in entries]
+        names = [f"{p.name} ({sizes[p]} bytes)" for p in entries]
         if queue.endswith("review-inbox"):
             required.extend(names)  # names only; do not open review content
         else:
@@ -260,7 +305,7 @@ def gather_context(
 
     if mode in ("brief", "surface", "status"):
         path = root / "wiki/log.md"
-        if path.is_file():
+        if path.is_file() and (scope is None or scope.readable(path)):
             lines = path.read_text().splitlines()
             start = max(0, len(lines) - 60)
             sources.append(
@@ -278,6 +323,8 @@ def gather_context(
         path = root / "wiki/reports/schedule-status.md"
         source_path = "wiki/reports/schedule-status.md"
         try:
+            if scope and not scope.readable(path):
+                raise PermissionError("Scheduler status not selected")
             lines = path.read_text(encoding="utf-8").splitlines()
         except (OSError, UnicodeError):
             required.append(

@@ -1,0 +1,55 @@
+--- a/.agents/skills/wiki-agents/SKILL.md
++++ b/.agents/skills/wiki-agents/SKILL.md
+@@ -6,7 +6,7 @@
+ # Wiki agents — picking and running
+ 
+ Canonical role definitions live in `.agents/roles/*.md`; generated adapters under
+-`.agents/roles/` and `.codex/agents/` expose them to each client. Headless and batch runs go
++`.claude/agents/` and `.codex/agents/` expose them to each client. Headless and batch runs go
+ through `wiki-agent.py`, which supports both `claude` and `codex`. The agents are **orthogonal** —
+ pick by what you have and what you want:
+ 
+@@ -61,19 +61,31 @@
+ `brain-wiki`, not bare `wiki-agent.py`). Resolve its clarifications with the `wiki-project-clarify` skill;
+ manage agendas with `wiki.py project agenda …` (see `.agents/skills/wiki-projects/SKILL.md`).
+ 
+-**Models (headless `wiki-agent.py` only):** `--model` is an optional provider-specific override.
+-Claude defaults to `sonnet`; Codex leaves the model unpinned so the active workspace/account default
+-can evolve without changing this repository.
+-**Effort:** `low` / `medium` / `high` (default) / `xhigh` via `--effort`. Codex maps this to
+-`model_reasoning_effort`; Claude currently accepts the flag for a uniform interface but inherits its
+-configured effort.
++**Models and effort:** canonical roles declare provider-neutral `model_profile` (`standard`
++or `deep`) and `reasoning_effort`. Both headless runs and generated interactive adapters use
++these settings. `tools/model-profiles.json` maps profiles to provider-specific model names:
++Claude defaults to `sonnet`/`opus`; Codex to `gpt-6-luna`/`gpt-6.1-sol`, with role effort.
++Override either provider's mappings with `profiles` in gitignored `tools/llm.local.json`.
++An empty model mapping means native model selection. Model names pass through unchanged.
+ 
+-**Interactive subagent runs ignore those flags** — `wiki-agent.py` strips the frontmatter, so the
+-CLI values apply only to headless runs. Invoked by name in a session, generated adapters map each
+-canonical role's `permission_profile`, `model_profile`, and `reasoning_effort` to provider settings.
+-Claude maps `standard`/`deep` to `sonnet`/`opus`. Codex intentionally inherits the current model and
+-sets the role's reasoning effort and sandbox mode. Regenerate adapters after role metadata changes:
+-`python3 tools/agents/generate-adapters.py`.
++For headless runs, `--model` overrides `VAULTLENS_LLM_MODEL`, saved provider `models`, local
++`profiles`, and tracked mappings, in that order. Explicit `--model ""` selects native defaults.
++`--effort` overrides the canonical role effort for either provider. Scheduled jobs retain
++explicit effort overrides and freeze resolved role models for each batch. Plain interactive
++sessions retain their native/global model selection.
++
++**Interactive subagent runs ignore headless flags.** Generated adapters are configuration
++snapshots of per-provider settings, excluding launch-scoped environment overrides. Regenerate
++after changing role metadata or provider mappings: `python3 tools/agents/generate-adapters.py`.
++A concrete adapter model/effort overrides the parent session; empty model mappings inherit its
++model. Some models may reject a role's effort level; adjust the role or explicitly override
++headless effort when selecting such a model. The CLI reports unsupported combinations.
++
++**Project research:** both providers can execute Python project scripts and use Python HTTP
++requests. The headless Claude launcher grants `Bash(python3 *)` only to the project runner;
++Codex enables network access for that role's workspace sandbox. The per-project container mount
++limits writes and the container proxy limits reachable hosts. Other headless roles retain their
++narrower permissions.
+ 
+ For interactive Codex agents, the role's file scope is an instruction boundary; a parent session
+ can override the generated sandbox default. Use `wiki-agent.py` through the matching container

@@ -13,7 +13,13 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-from project_state import FROZEN_STATUS
+if sys.version_info < (3, 11):
+    sys.stderr.write(
+        "VaultLens requires Python 3.11 or newer. Use Homebrew Python or set BRAIN_PYTHON for host wrappers.\n"
+    )
+    raise SystemExit(2)
+
+from project_state import FROZEN_STATUS  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +35,7 @@ IGNORE_FILES = {
     "_index.md",
     "log.md",
     "AGENTS.md",
+    "CLAUDE.md",
     "AGENTS.override.md",
 }
 SPECIAL_LINK_TARGETS = {

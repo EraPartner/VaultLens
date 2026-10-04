@@ -47,9 +47,10 @@ provider-specific slash or dollar command; a plain-language request is enough.
    - Do **not** hand-edit `status::`, `next_due::`, the `questions::` block, or the
      `## Clarifications` entry — the next step does that mechanically.
 
-   If a task turns out to need a non-allowlisted network host, that is not a clarification — leave
-   it for the runner to mark `blocked` (or tell the operator to add the host to
-   `.devcontainer/allowlist.extra.txt` and rebuild). If the operator decides a task is not worth
+   If a task needs a host absent from the selected access profile's `research_domains`, leave
+   it for the runner to mark `blocked`. The operator can approve a separate research profile
+   in `tools/access.local.json` and select it for a later run; the current run cannot widen
+   its own permissions. If the operator decides a task is not worth
    doing, set `status:: paused` (or delete the block) instead of resolving it.
 
 4. **Flip it back to clear:**

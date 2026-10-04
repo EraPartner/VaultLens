@@ -108,7 +108,7 @@ Structure (single file, distinct from `TODO.md` so it never pollutes the Obsidia
 
 The runner edits the working tree but **never commits**; the dispatcher snapshots
 `projects/<slug>/` to `~/.brain/project-snapshots/<date>/` before each run, and the morning roll-up
-(`wiki/reports/scheduled-project-runner-<date>.md`) carries the restore command (since `projects/`
+(`wiki/reports/agents/scheduled/scheduled-project-runner-<date>.md`) carries the restore command (since `projects/`
 is gitignored, the snapshot — not git — is the undo).
 
 `project agenda <sub>` subcommands (CLI is `tools/agenda.py`; pure-python, host-runnable):

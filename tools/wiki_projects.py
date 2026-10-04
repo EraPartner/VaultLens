@@ -127,7 +127,13 @@ Write only inside this project directory. Never modify `wiki/` or `raw/`.
   - a referenced concept page is shallow → recommend `wiki-enhancer`
   - a needed source isn't in the wiki yet → recommend `wiki-ingest` with the candidate path
   - the question turns out to need no project context → suggest `wiki-search` instead
+
 """
+
+
+# Claude versions/settings can disable native AGENTS.md discovery. Import the
+# shared instructions without copying their content into a second source.
+CLAUDE_MD_TEMPLATE = "@AGENTS.md\n"
 
 
 # Per-project TODO seed. Plain checkboxes in the Obsidian Tasks plugin emoji
@@ -264,6 +270,7 @@ def _project_new(slug: str) -> int:
         encoding="utf-8",
     )
     (project_dir / "AGENTS.md").write_text(AGENTS_MD_TEMPLATE, encoding="utf-8")
+    (project_dir / "CLAUDE.md").write_text(CLAUDE_MD_TEMPLATE, encoding="utf-8")
     (project_dir / "TODO.md").write_text(
         TODO_TEMPLATE.format(slug=cleaned), encoding="utf-8"
     )
@@ -274,6 +281,7 @@ def _project_new(slug: str) -> int:
     print(
         "  - AGENTS.md      (provider-neutral project instructions; read project.md first)"
     )
+    print("  - CLAUDE.md      (imports AGENTS.md for Claude compatibility)")
     print(
         "  - TODO.md        (per-project todo; embedded into projects/TODO.md, P1 items surface in projects/TODO-widget.md)"
     )

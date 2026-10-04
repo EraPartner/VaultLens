@@ -683,7 +683,12 @@ def append_inbox_items(
 _FROM_RE = re.compile(r"^\s*-?\s*\[from:([^\]]+)\]")
 
 
-def desk_status(projects_dir: str | Path, today: dt.date) -> list[dict]:
+def desk_status(
+    projects_dir: str | Path,
+    today: dt.date,
+    *,
+    selected_projects: frozenset[str] | None = None,
+) -> list[dict]:
     """Per-project ("desk") status snapshot for the CoS brief — one dict per
     `projects/*/AGENDA.md`. Pure / read-only. Each dict: slug, enabled, due (clear &
     due), needs_clarification, blocked, done, inbox_total (groomable lines),
@@ -694,6 +699,11 @@ def desk_status(projects_dir: str | Path, today: dt.date) -> list[dict]:
     if not root.is_dir():
         return out
     for agenda_path in sorted(root.glob("*/AGENDA.md")):
+        if (
+            selected_projects is not None
+            and agenda_path.parent.name not in selected_projects
+        ):
+            continue
         if is_frozen_project(agenda_path.parent):
             continue
         try:
@@ -786,9 +796,9 @@ tags: [agenda, project-runner]
 > `/project-clarify` (it never guesses overnight). Set `enabled: true` in the
 > frontmatter to turn nightly runs on (off by default). The runner edits this
 > project's files for real but **never commits**; a morning roll-up at
-> `wiki/reports/scheduled-project-runner-<date>.md` lists every change and a one-line
+> `wiki/reports/agents/scheduled/scheduled-project-runner-<date>.md` lists every change and a one-line
 > restore command. It writes only inside this project, and network use is bounded by
-> the devcontainer egress allowlist (a task needing a non-allowlisted host is marked
+> its explicit local access profile (a task needing an unapproved host is marked
 > `blocked`, never run silently).
 >
 > Statuses: `clear` · `needs-clarification` · `blocked` · `done` · `paused`.
