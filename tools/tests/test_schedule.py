@@ -11,6 +11,7 @@ system. Run with:
 from __future__ import annotations
 
 import os
+import json
 import sys
 import tempfile
 from datetime import datetime, timedelta
@@ -95,6 +96,19 @@ def main() -> int:
         "other -> transient",
         dispatch.classify_failure(1, "connection reset") == "transient",
     )
+    for response in (
+        "You've hit your session limit. Try again later.",
+        "You've hit your limit · resets 6pm (Europe/Helsinki)",
+        "You’ve hit your weekly limit",
+        "Monthly spend limit reached",
+        "Extra usage spending limit reached",
+        "Credit balance is too low",
+        '{"error":{"type":"usage_limit","message":"Try again later"}}',
+    ):
+        check(
+            f"Claude limit -> quota: {response}",
+            dispatch.classify_failure(1, response) == "quota",
+        )
 
     print("backend availability / cooldown:")
     led = fresh_ledger()
@@ -186,37 +200,17 @@ def main() -> int:
         dispatch._slugify("Cryptology and Error Correction")
         == "cryptology-and-error-correction",
     )
-    # The bug: a wiki/sources page already cites the PDF -> never re-ingest it,
-    # even when no literal-stem extracted text exists.
     check(
         "PDF with a wiki source page is skipped",
         dispatch._select_ingest_pdfs(
             ["Cryptology and Error Correction.pdf"],
-            set(),
             {"Cryptology and Error Correction.pdf"},
         )
         == [],
     )
-    # Extracted text under the slugified name also counts as processed.
-    check(
-        "slugified extracted text skips PDF",
-        dispatch._select_ingest_pdfs(
-            ["Cryptology and Error Correction.pdf"],
-            {"cryptology-and-error-correction"},
-            set(),
-        )
-        == [],
-    )
-    # ...as does extracted text under the literal stem (preprocess's naming).
-    check(
-        "literal-stem extracted text skips PDF",
-        dispatch._select_ingest_pdfs(["Foo Bar.pdf"], {"Foo Bar"}, set()) == [],
-    )
-    # A genuinely new PDF (no page, no text) is still selected.
     check(
         "new PDF is selected",
-        dispatch._select_ingest_pdfs(["Brand New.pdf"], set(), set())
-        == ["Brand New.pdf"],
+        dispatch._select_ingest_pdfs(["Brand New.pdf"], set()) == ["Brand New.pdf"],
     )
 
     print("scheduler status summary:")
@@ -253,23 +247,213 @@ def main() -> int:
     s_lim = dispatch.format_schedule_status(healthy, accts, meta, nowt)
     check(
         "backend cooldown surfaced",
-        "Backend limited" in s_lim and dispatch.BACKEND_IDENTITY in s_lim,
+        "Backend limited" in s_lim and "1 backend(s)" in s_lim,
     )
 
     print("backend command selection:")
+    native_prefix = [
+        dispatch.PYTHON,
+        str(dispatch.ROOT / "tools" / "agents" / "wiki-agent.py"),
+    ]
     original_cli, original_model = dispatch.CLI, dispatch.MODEL
+    original_role_models = dispatch.ROLE_MODELS
     try:
         dispatch.CLI, dispatch.MODEL = "claude", "sonnet"
         claude_parts = dispatch.build_brain_wiki_args(["search"], "high")
+        check("native Python entrypoint selected", claude_parts[:2] == native_prefix)
         check("Claude backend selected", claude_parts[-6:-4] == ["--cli", "claude"])
         check("Claude model pinned", claude_parts[-2:] == ["--model", "sonnet"])
 
         dispatch.CLI, dispatch.MODEL = "codex", ""
+        dispatch.ROLE_MODELS = {"search": ""}
         codex_parts = dispatch.build_brain_wiki_args(["search"], "medium")
         check("Codex backend selected", "codex" in codex_parts)
-        check("Codex default model unpinned", "--model" not in codex_parts)
+        check(
+            "Codex default model frozen for the batch",
+            codex_parts[-2:] == ["--model", ""],
+        )
+        dispatch.ROLE_MODELS = {"search": "custom-standard", "enhance": "custom-deep"}
+        check(
+            "scheduled role model selected",
+            dispatch.build_brain_wiki_args(["enhance"], "low")[-2:]
+            == ["--model", "custom-deep"],
+        )
+        check(
+            "scheduled effort overrides role effort",
+            dispatch.build_brain_wiki_args(["enhance"], "low")[-4:-2]
+            == ["--effort", "low"],
+        )
+        for model_args in (
+            ["--model", "caller-model"],
+            ["--model=caller-model"],
+            ["--model", ""],
+            ["--model="],
+        ):
+            caller_args = ["search", *model_args]
+            parts = dispatch.build_brain_wiki_args(caller_args, "low")
+            check(
+                f"caller model override retained {model_args!r}",
+                parts
+                == [
+                    *native_prefix,
+                    *caller_args,
+                    "--access-profile",
+                    "wiki-read",
+                    "--cli",
+                    "codex",
+                    "--effort",
+                    "low",
+                ],
+            )
+        for effort_args in (["--effort", "high"], ["--effort=xhigh"]):
+            caller_args = ["search", *effort_args]
+            parts = dispatch.build_brain_wiki_args(caller_args, "low")
+            check(
+                f"caller effort override retained {effort_args!r}",
+                parts
+                == [
+                    *native_prefix,
+                    *caller_args,
+                    "--access-profile",
+                    "wiki-read",
+                    "--cli",
+                    "codex",
+                    "--model",
+                    "custom-standard",
+                ],
+            )
+        for cli_args in (["--cli", "codex"], ["--cli=codex"]):
+            caller_args = ["search", *cli_args]
+            check(
+                f"matching caller provider retained {cli_args!r}",
+                dispatch.build_brain_wiki_args(caller_args, "low")
+                == [
+                    *native_prefix,
+                    *caller_args,
+                    "--access-profile",
+                    "wiki-read",
+                    "--effort",
+                    "low",
+                    "--model",
+                    "custom-standard",
+                ],
+            )
+        for cli_args in (["--cli", "claude"], ["--cli=claude"]):
+            try:
+                dispatch.build_brain_wiki_args(["search", *cli_args], "low")
+            except ValueError:
+                mismatch_rejected = True
+            else:
+                mismatch_rejected = False
+            check(
+                "caller cannot mix a provider with the batch's model mapping",
+                mismatch_rejected,
+            )
+        for role, access in (
+            ("cos", "cos-read"),
+            ("contradict", "wiki-read"),
+            ("emerge", "wiki-read"),
+            ("discover", "wiki-read"),
+            ("ingest", "wiki-write"),
+            ("enhance", "wiki-write"),
+            ("project-run", "project-write"),
+        ):
+            parts = dispatch.build_brain_wiki_args([role], "low")
+            check(
+                f"scheduled {role} access profile is explicit",
+                parts[parts.index("--access-profile") + 1] == access,
+            )
+        explicit_access = dispatch.build_brain_wiki_args(
+            ["search", "--access-profile", "custom-report"], "low"
+        )
+        check(
+            "explicit caller access profile retained",
+            explicit_access.count("--access-profile") == 1
+            and explicit_access[explicit_access.index("--access-profile") + 1]
+            == "custom-report",
+        )
+        source_parts = dispatch.build_brain_wiki_args(
+            ["ingest", "--source", "raw/inbox/approved source.pdf"], "low"
+        )
+        check(
+            "scheduled ingest grants its exact selected source",
+            source_parts[source_parts.index("--read-path") + 1]
+            == "raw/inbox/approved source.pdf",
+        )
     finally:
         dispatch.CLI, dispatch.MODEL = original_cli, original_model
+        dispatch.ROLE_MODELS = original_role_models
+
+    print("scheduled model configuration snapshots:")
+    with tempfile.TemporaryDirectory() as temporary:
+        fixture_root = Path(temporary)
+        role_dir = fixture_root / ".agents" / "roles"
+        role_dir.mkdir(parents=True)
+        for filename in dispatch.AGENT_FILES.values():
+            source = dispatch.ROOT / ".agents" / "roles" / filename
+            (role_dir / filename).write_text(
+                source.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+        config_path = fixture_root / "llm.local.json"
+        profiles_path = fixture_root / "model-profiles.json"
+        profile_models = {
+            provider: {"standard": f"{provider}-standard", "deep": f"{provider}-deep"}
+            for provider in ("claude", "codex")
+        }
+        profiles_path.write_text(json.dumps(profile_models), encoding="utf-8")
+        config_path.write_text(
+            json.dumps({"profiles": {"claude": {"standard": "local-standard"}}}),
+            encoding="utf-8",
+        )
+        config_snapshot = dispatch.load_config(config_path)
+        profiles_snapshot = dispatch.load_profile_models(profiles_path)
+        env_snapshot = {}
+        for provider in ("claude", "codex"):
+            frozen = dispatch.freeze_role_models(
+                provider,
+                root=fixture_root,
+                environ=env_snapshot,
+                config=config_snapshot,
+                profile_models=profiles_snapshot,
+            )
+            check(
+                f"{provider} standard and deep mappings selected",
+                frozen["search"]
+                == ("local-standard" if provider == "claude" else "codex-standard")
+                and frozen["enhance"] == f"{provider}-deep",
+            )
+        config_path.write_text(
+            json.dumps({"models": {"claude": "changed-global"}}), encoding="utf-8"
+        )
+        profiles_path.write_text(
+            json.dumps(
+                {
+                    provider: {"standard": "changed-standard", "deep": "changed-deep"}
+                    for provider in ("claude", "codex")
+                }
+            ),
+            encoding="utf-8",
+        )
+        original_env_model = os.environ.get("VAULTLENS_LLM_MODEL")
+        try:
+            os.environ["VAULTLENS_LLM_MODEL"] = "changed-environment"
+            frozen_again = dispatch.freeze_role_models(
+                "claude",
+                root=fixture_root,
+                environ=env_snapshot,
+                config=config_snapshot,
+                profile_models=profiles_snapshot,
+            )
+            check(
+                "batch snapshots ignore later config and environment changes",
+                frozen_again["search"] == "local-standard"
+                and frozen_again["enhance"] == "claude-deep",
+            )
+        finally:
+            if original_env_model is None:
+                os.environ.pop("VAULTLENS_LLM_MODEL", None)
+            else:
+                os.environ["VAULTLENS_LLM_MODEL"] = original_env_model
 
     print("agent report stream selection:")
     check(
@@ -352,6 +536,10 @@ def main() -> int:
         "qmd embedding remains manual",
         "qmd-embed" not in scheduled_names,
     )
+    check(
+        "every model step gates on native runtime availability",
+        all("runtime" in step.gates for step in scheduled if step.kind == "llm"),
+    )
 
     print("_record failure semantics:")
     led7 = fresh_ledger()
@@ -373,9 +561,7 @@ def main() -> int:
         "lint-report.md",
         ".gitkeep",
     ]
-    prune = dispatch._reports_to_prune(
-        names, 14, dispatch.REPORT_RETENTION_BY_TYPE
-    )
+    prune = dispatch._reports_to_prune(names, 14, dispatch.REPORT_RETENTION_BY_TYPE)
     check(
         "daily cos briefs retain only the latest generated report",
         sum("cos-brief" in n for n in prune) == 19,
@@ -479,14 +665,14 @@ def main() -> int:
 
     print("cos proposal routing destination:")
     # Self-contained: resolve_proposal_dest takes an explicit projects_dir and its
-    # only side-effect is a `.exists()` check, so build a throwaway `projects/` tree
+    # only reads scoped metadata, so build a throwaway `projects/` tree
     # rather than reaching into the developer's real vault (gitignored, so absent in
     # CI). The subdir is literally named `projects` to keep the suffix assertion true.
     with tempfile.TemporaryDirectory() as tmp:
         projects_dir = Path(tmp) / "projects"
         (projects_dir / "fleet-health").mkdir(parents=True)
         (projects_dir / "fleet-health" / "AGENDA.md").write_text(
-            "# fleet-health AGENDA\n", encoding="utf-8"
+            "---\nenabled: true\n---\n# fleet-health AGENDA\n", encoding="utf-8"
         )
         (projects_dir / "fleet-health" / "project.md").write_text(
             "---\nstatus: active\n---\n", encoding="utf-8"

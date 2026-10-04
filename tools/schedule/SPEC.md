@@ -6,26 +6,12 @@ power rule), `install.sh` (installer), `../tests/test_schedule.py` (dispatcher t
 Activate with `tools/schedule/install.sh` + the `sudo pmset repeat wake` and
 sudoers commands it prints. This file remains the design rationale.
 
-> **2026-06-02 — backend migrated to the Claude plan.**
-> The copilot accounts (`talicaddy`, `Noortjekjzecbkjzcebkjczeh`) are no longer
-> usable. LLM jobs now run on `--cli claude --model sonnet` (the logged-in
-> `claude` CLI = the Claude plan subscription). The two-account failover
-> collapsed to a single identity (`ACCOUNTS = ["claude-plan"]`): a Claude
-> usage-limit error marks it limited and defers the batch (no second account to
-> switch to). The copilot prose below is kept as historical rationale; where it
-> says "copilot / gpt-5.2 / two accounts," read "claude / sonnet / one identity."
->
-> **2026-06-20 — reactivated and live.** The LaunchAgent is loaded
-> (`launchctl list | grep com.brain`) and `pmset repeat wake 01:25` is restored;
-> the nightly batch runs (the ledger shows recent `lint`/`index`/`cos-brief`
-> successes). The "Deactivation / reactivation" section at the bottom remains the
-> procedure if it is ever paused again.
->
-> **2026-08-17 — Codex container migration complete.**
-> The dispatcher now reads `VAULTLENS_LLM_CLI=claude|codex` and optional model,
-> health-host, and identity overrides. The LockBox-derived `brain-wiki` launcher
-> supports Codex with private per-profile login state. The installer can either
-> enable a selected backend immediately or prepare it in a disabled state.
+**2026-10-03 — native runtime migration.** Scheduled model jobs invoke the
+repository's Python launcher directly. Claude and Codex share named access
+profiles enforced by Anthropic's whole-process sandbox runtime. The dispatcher
+does not start a service or select another execution backend when isolation is
+unavailable. Source defaults live in `tools/access-profiles.json`; private
+operator overrides live in gitignored `tools/access.local.json`.
 
 ## Lid-closed runs (AC-gated keep-awake)
 
@@ -37,7 +23,7 @@ clamshell mode irrelevant. Per tick:
 - **self-heal** first: `pmset -a disablesleep 0` (clears a flag left stuck by a
   hard-killed prior run; no-op otherwise).
 - engage only if `on AC AND lid closed (ioreg AppleClamshellState) AND an LLM step
-  is due AND online AND container`: `pmset -a disablesleep 1`, run the batch, then in
+  is due AND online AND runtime available`: `pmset -a disablesleep 1`, run the batch, then in
   a `finally` `pmset -a disablesleep 0` and (if still lid-closed) `pmset sleepnow`.
 - battery / lid-open / nothing-due -> never touches `disablesleep`.
 
@@ -51,17 +37,22 @@ pmset call still needs a password. `sudo -n` is used so a missing rule fails fas
 ## Locked decisions
 
 1. **Mechanism:** a host-side *catch-up dispatcher* fired by a launchd
-   LaunchAgent. Not fixed calendar jobs, not the in-container `--forever` loop.
+   LaunchAgent. Its ledger controls catch-up and bounded daily work.
 2. **Overnight:** forced wakes via `pmset repeat wake`, but heavy jobs run
    **only on AC** (the dispatcher gates on power; pmset itself cannot).
 3. **Offline:** LLM jobs **defer until online** (no ollama fallback). Pure-python
    maintenance (Tier 0) runs offline regardless.
 4. Read-only agents never write their own reports; the **dispatcher** captures
    their stdout and writes the dated report. Keeps the agents read-only.
-5. **Backend (current):** one explicit provider runs an entire batch. The
-   dispatcher reads `VAULTLENS_LLM_CLI=claude|codex`; Codex is the default and
-   leaves its model unpinned unless
-   `VAULTLENS_LLM_MODEL` is set. It never falls back across providers mid-batch.
+5. **Backend (current):** one provider and a snapshot of resolved role models run an entire batch. The
+   dispatcher resolves environment overrides, then shared `tools/llm.local.json`, then
+   the Claude default. Roles select standard/deep provider mappings; Codex defaults to Luna for standard roles and Sol for deep roles.
+   It never falls back across providers or rereads model preferences mid-batch.
+   Invalid provider configuration, model mappings or canonical roles block all
+   LLM jobs before their gates or builders run. Status and the mirrored health
+   report show the configuration error. Host maintenance, cancellation
+   acknowledgement and recovery of a stuck lid-close override remain available;
+   blocked jobs stay due for the next tick after the configuration is corrected.
 6. **Single backend identity (current):** the ledger identity defaults to
    `<cli>-plan` and can be overridden with `VAULTLENS_LLM_IDENTITY`. A usage or
    rate limit marks that identity `limited_until` and **defers the rest of the
@@ -76,43 +67,64 @@ pmset call still needs a password. `sudo -n` is used so a missing rule fails fas
 
 ## Backend and model
 
-- Invocation shape: `fish -lc "brain-wiki <agent> --cli <claude|codex>
-  [--model <model>] --effort <low|medium|high>"`.
-- Configuration: `VAULTLENS_LLM_CLI`, with optional
-  `VAULTLENS_LLM_MODEL`, `VAULTLENS_LLM_HEALTH_HOST`, and
-  `VAULTLENS_LLM_IDENTITY`. Broad nightly wiki enhancement has a separate
-  explicit opt-in, `VAULTLENS_SCHEDULE_ENHANCE=1`. `install.sh` copies these
-  into the installed LaunchAgent. Re-run it when changing providers or this opt-in.
-- Defaults: Claude uses `sonnet` and `api.anthropic.com`; Codex leaves model
-  selection to its workspace configuration and uses `chatgpt.com` for the
-  coarse online gate.
-- Auth is owned by the selected CLI's logged-in session. Verify the chosen CLI
-  non-interactively from a launchd-spawned login `fish` before relying on it.
-- `brain-wiki` selects the same least-privilege container profiles for either
-  provider. Every Codex profile used by unattended jobs must complete its
-  one-time login before the scheduler is enabled.
+- Invocation shape: `<dispatcher-python> tools/agents/wiki-agent.py <agent>
+  --access-profile <profile> --cli <claude|codex> --model <model> --effort <effort>`.
+  The executable and script path are absolute argument-vector entries; there is
+  no login shell or shell command interpolation. The launcher applies the access
+  boundary before collecting role context or opening the selected notes.
+- Shared configuration: `brain-provider claude|codex` or
+  `python3 tools/llm_provider.py select claude|codex` writes gitignored
+  `tools/llm.local.json`. Optional `--model MODEL` saves a separate model per provider.
+  The next dispatcher process picks up the preference without reinstalling launchd.
+- Overrides: `VAULTLENS_LLM_CLI`, `VAULTLENS_LLM_MODEL`,
+  `VAULTLENS_LLM_HEALTH_HOST`, and `VAULTLENS_LLM_IDENTITY` take precedence over
+  shared configuration. `install.sh` copies only explicitly supplied override variables
+  into the LaunchAgent. Clear a previous provider pin by preparing the plist with these
+  variables unset. Broad nightly wiki enhancement has a separate opt-in,
+  `VAULTLENS_SCHEDULE_ENHANCE=1`; changing that installed flag requires preparation again.
+- Preview only: `tools/schedule/install.sh --render /tmp/brain-schedule.plist` validates and
+  renders a plist without installing or loading it. Invalid provider configuration fails
+  before the installer changes an existing job. Validation reads `tools/llm.local.json`
+  beside the dispatcher targeted by `ProgramArguments`, even when the installer runs
+  from another checkout. Missing or ambiguous dispatcher targets are rejected.
+  The installer requires Python 3.11 or newer and renders the selected executable
+  (`BRAIN_PYTHON`, when supplied) into the LaunchAgent. `RunAtLoad` starts the first
+  gate check after bootstrap; installation does not kill and restart that run.
+- Dispatcher preview: `python3 tools/schedule/dispatch.py run --dry-run` probes due work
+  and existing gates. It does not request iCloud downloads, write logs,
+  acquire a persistent lock, or change the ledger. An unavailable runtime remains a
+  failed gate in this preview.
+- Defaults: Claude role profiles select Sonnet or Opus; Codex selects GPT-6 Luna or GPT-6.1 Sol.
+  `tools/model-profiles.json` defines the mappings; local `profiles` in `tools/llm.local.json`
+  override them per provider. Global model overrides still take precedence. Scheduled effort
+  overrides remain explicit, and all resolved role models are frozen for the batch.
+  Claude uses `api.anthropic.com` and Codex uses `chatgpt.com` for the coarse online gate.
+- Auth is owned by the selected CLI's login. The native runtime stages the
+  minimum provider login state; unrelated credentials remain outside its read
+  boundary. Verify a bounded native run from the launchd environment before
+  enabling unattended jobs. Credentials are never selected by the scheduler.
 
-### Historical Copilot account selection and failover
+### Scheduled access profiles
 
-This section records the pre-2026-06-02 design only; it is not current behavior.
-`bin/agent` minted the token **at exec time**: `gh auth token --user
-${BRAIN_GH_ACCOUNT:-talicaddy}` -> name-only `-e COPILOT_GITHUB_TOKEN` on
-`compose exec` (verified, lines ~178-186/226). Consequence: **switching accounts
-is cheap** — the dispatcher just sets `BRAIN_GH_ACCOUNT` for the next
-`brain-wiki` invocation; same running container, different token, no rebuild / no
-qmd reseed.
+The launcher owns policy compilation. The dispatcher uses the centralized
+`default_access_profile` mapping and passes the chosen name explicitly.
 
-- Accounts, in priority order: `["talicaddy", "Noortjekjzecbkjzcebkjczeh"]`
-  (both confirmed present in `gh auth status`; kept in `ACCOUNTS` in dispatch.py).
-- The dispatcher picks the first account **not** in cooldown, sets
-  `BRAIN_GH_ACCOUNT`, runs the job. Account choice is **sticky** within and across
-  nights (don't split a batch) until the active account hits a limit.
-- On a rate-limit/quota error: mark the current account `limited_until` in the
-  ledger, switch to the next healthy account, **retry the same job once**.
-- If **all** accounts are limited: defer the job and the rest of the LLM batch;
-  notify "all copilot accounts limited."
-- VERIFY at build: copilot honors the per-exec `COPILOT_GITHUB_TOKEN` over any
-  cached in-container auth state, so the switch actually takes effect.
+| Jobs | Access profile | Output authority |
+|---|---|---|
+| contradict, emerge, discover | `wiki-read` | Advisory stdout; host files the report |
+| cos-brief | `cos-read` | Approved operator/project context; advisory stdout |
+| ingest, enhance | `wiki-write` | Wiki changes only; approved sources stay protected |
+| project-runner | `project-write` with `--project <slug>` | That one project only |
+| verify (manual) | `source-read` | Approved source and wiki context; advisory stdout |
+
+Scheduled ingest also grants its exact selected source using `--read-path`.
+Its builder ignores source and inbox links, including linked directories, so a
+link cannot turn consent-queue material into an approved input. A source PDF
+remains due until a wiki source page cites it; ingest does not promote or move
+raw files. Network research is separate policy and is disabled unless explicitly
+configured. Every profile's search index must contain only the material exposed
+to that run. Scheduled host `qmd update`/`cleanup` maintain the operator's index;
+they do not grant it to a model session.
 
 ## Rate limits and request budget
 
@@ -129,13 +141,17 @@ The dispatcher classifies CLI exit output and recovery state as follows:
 | Transient / network | 5xx or ordinary CLI failure | retry next tick (ledger not advanced) |
 | **Unconfirmed cancellation** | deadline, signal death, interruption, or unresolved prior invocation | cancel the host process group when possible; preserve logs; persist a latch blocking remaining and later LLM work |
 | Short rate-limit | 429 / "rate limit" | mark backend identity `limited_until` (backoff 30m -> 1h -> 2h); defer |
-| **Quota exhausted** | "quota" / "premium request" / "upgrade" | mark backend identity `limited_until` (probe again in ~24h; do not compute an exact reset); defer |
+| **Quota exhausted** | "quota" / "premium request" / "upgrade", Claude session/weekly/usage limits, "hit your limit", or spend/credit limits | mark backend identity `limited_until` (probe again in ~24h; do not compute an exact reset); defer |
 | **Backend limited** | selected identity is cooling down | defer the job and rest of the LLM batch; notify |
 
 There is one configured backend identity. The dispatcher never switches provider
 or credentials automatically.
 
-On a dispatcher deadline, the fish wrapper and local descendants receive SIGTERM, then SIGKILL.
+Scheduled launchers run from the dispatcher's checkout root, through the absolute
+`tools/agents/wiki-agent.py` path. A missing launcher fails in that checkout; caller
+shell configuration cannot select another private vault as a fallback.
+
+On a dispatcher deadline, the native launcher's process group receives SIGTERM, then SIGKILL.
 Output goes to private temporary log files under the schedule log directory, so descendants cannot
 hold a captured pipe open indefinitely. Partial stdout/stderr paths are recorded in the persistent
 `cancellation_pending` ledger entry. Successful invocations remove these extra capture files;
@@ -146,10 +162,10 @@ completion. A dispatcher interruption or restart with that marker blocks unatten
 a signal-terminated wrapper also retains the block. An existing unreadable or corrupt ledger
 fails closed instead of resetting scheduler state. Recover that ledger explicitly before resuming.
 
-Host process exit does not establish that detached container work stopped. The dispatcher therefore
-blocks the remaining LLM batch and future unattended LLM invocations. It does not stop a reused
-interactive container merely because its name starts with `brain-`. Normal non-LLM health steps
-may still run. Existing end-of-tick cleanup remains separate and does not clear the latch.
+Host process exit alone does not establish that every descendant stopped. The
+dispatcher therefore keeps the same conservative latch for the remaining batch
+and future unattended model runs. Normal host health steps may still run. No
+global process-name search or unrelated session shutdown is part of cancellation.
 
 Recovery requires the operator to inspect the partial logs, verify that the timed-out inner
 workload has stopped (and inspect any partial project edits), then run:
@@ -218,7 +234,7 @@ next eligible tick. Sleep / offline / closed-lid become non-events.
 
 | # | Component | Path | Notes |
 |---|---|---|---|
-| 1 | LaunchAgent plist | `~/Library/LaunchAgents/com.brain.schedule.plist` | **User agent, not a daemon** — only the GUI session has Keychain, iCloud, and the apple/container runtime. **No `StartInterval` polling** (work runs at most once/day). `RunAtLoad` + `StartCalendarInterval` anchors spanning the windows (nightly 01:30/04, morning 07:05, catch-up 09/10). launchd reruns a missed anchor on the next wake; the spread anchors give same-day retry if a gate was temporarily down. |
+| 1 | LaunchAgent plist | `~/Library/LaunchAgents/com.brain.schedule.plist` | User LaunchAgent in the GUI session for provider login and iCloud access. `RunAtLoad` + `StartCalendarInterval` anchors span the nightly and morning windows. launchd reruns missed anchors on wake; later anchors permit same-day gate retries. |
 | 2 | Dispatcher | `tools/schedule/dispatch.py` | stdlib only (matches the rest of `tools/`). Reads job table, checks gates, runs due jobs, writes ledger, captures + files output. |
 | 3 | Ledger + lock | `~/.brain/schedule-state.json` | per-job last-run timestamps + a `flock` so dispatcher ticks never overlap. Outside the iCloud vault to avoid sync conflict copies. |
 | 4 | Job table | inline in `dispatch.py` (or sibling `jobs.json`) | declarative: command, cadence, window, gates, invocation path. |
@@ -227,39 +243,56 @@ next eligible tick. Sleep / offline / closed-lid become non-events.
 ## Invocation paths
 
 - **Tier 0 (pure python):** dispatcher calls `python3 tools/wiki.py <cmd>` directly
-  on the host. No container, no network, no fish. Maximally robust.
-- **LLM agents:** dispatcher calls `fish -lc "brain-wiki <agent> …"` (login shell
-  so the `brain-*` autoloaded functions + PATH + Keychain resolve). `brain-wiki`
-  already maps each command to its container profile (reader / author / project),
-  so the dispatcher does not re-implement profiles. `brain-wiki` also sets
-  `BRAIN_SCAN_SCOPE=none` for the read-only thinking agents
-  (`contradict`/`emerge`/`discover`) so they mount **no** external coursework/source
-  dirs — they reason over `wiki/` only. Readers that do read across projects (CoS)
-  keep the default scan. So every scheduled container is least-privilege on both
-  axes: writes scoped to the profile's hole, reads scoped to what the agent uses.
-- **VERIFY before build:** selected-CLI session access from a launchd-spawned
-  `fish` in the Aqua session (confirm `brain-wiki` can authenticate
-  non-interactively).
+  on the host. No provider session is involved.
+- **LLM agents:** dispatcher calls the native Python launcher with its frozen
+  provider, model and effort, plus a named access profile. The launcher creates a
+  selected workspace and applies the sandbox before document context is read.
+  The policy and provider adapters are shared with interactive Brain launchers.
+- **Preflight:** runtime availability is a read-only gate. A missing runtime,
+  unsupported pinned version or invalid access configuration defers model jobs;
+  the dispatcher never installs a dependency or substitutes unconfined execution.
+
+## Completion and native session lifetime
+
+A source PDF remains due for ingestion until a `wiki/sources/` page cites that
+PDF. Files in `raw/sources-text/` only show that preprocessing ran; they do not
+prove that a source page or concept updates were produced.
+
+Scheduled lint emits JSON. Exit code 1 with a valid report containing lint
+errors counts as a completed check and triggers the findings notification.
+Other nonzero exits, malformed reports, missing executables, timeouts, and
+failed index or qmd commands retain the prior `last_ok`, increase the failure
+streak, and remain eligible for retry. Index failures must not be treated as
+content findings.
+
+Every scheduled model invocation owns its native launcher process group. It does
+not discover global runtime sessions or stop concurrent interactive work. The
+process group is the cancellation target; unresolved descendant termination
+still requires explicit recovery, as described above. There is no shared service
+lifetime to manage between scheduled jobs.
 
 ## Job table (WHICH + WHEN)
 
 | Job | Command | Cadence / window | Gates | Output |
 |---|---|---|---|---|
-| lint | `wiki.py lint` | **nightly** (batch step 1) | offline-ok, host-native | notify only on errors |
+| lint | `wiki.py lint --json` | **nightly** (batch step 1) | offline-ok, host-native | notify only on errors |
 | index | `wiki.py index` (→ `--rebuild` if stale) | **nightly** (batch step 1) | offline-ok, host-native | log |
 | qmd update | `qmd update` | **nightly** (batch step 1) | offline-ok, host-native | lexical search index |
 | qmd cleanup | `qmd cleanup` | **weekly**, after update | offline-ok, host-native, **AC** | remove inactive documents/orphan chunks; compact derived index |
 | qmd embed | `qmd embed` | **manual only** | run explicitly on a suitable machine | semantic vectors |
 | links | `wiki.py links --fix` | weekly *(manual — not in the dispatcher; writes wiki/, needs the author profile)* | offline-ok, host-native | log |
 | coverage snapshot | `wiki.py coverage --json` | weekly *(manual — not in the dispatcher)* | offline-ok, host-native | feeds enhance |
-| **cos brief** | `brain-wiki cos --mode brief` | daily, 07:00 window | online, container, icloud, battery-ok | `wiki/reports/` + macOS notify |
-| contradict | `brain-wiki contradict` | weekly, overnight AC window | online, container, icloud, **AC** | `wiki/reports/` |
-| emerge | `brain-wiki emerge` | weekly | online, container, icloud | `wiki/reports/` + notify |
-| discover | `brain-wiki discover` | weekly | online, container, icloud | `wiki/reports/` + notify |
-| verify *(optional)* | `brain-wiki verify --source <changed>` | weekly, on recently-changed source pages | online, container, icloud | report |
-| ingest | `brain-wiki ingest --source <new>` | **nightly**, only if `raw/inbox` / `raw/sources` has unprocessed files | online, container, icloud, **AC** | wiki + promote inbox PDF |
-| project-runner | `brain-wiki project-run --project <slug>` (one per due, opted-in project) | **nightly**, after the digests | online, container, icloud, **AC** | writes `projects/<slug>/` (applied-not-committed; pre-run snapshot) + roll-up `wiki/reports/` |
-| enhance *(opt-in)* | `brain-wiki enhance --iterations 5 --strategy alternate` | nightly only when `VAULTLENS_SCHEDULE_ENHANCE=1`, last nightly step; cycles global sparse-coverage, source-gap, random-page, and stub strategies | online, container, icloud, **AC** | writes wiki directly |
+| **cos brief** | native `cos --mode brief` | daily, 07:00 window | online, runtime, icloud, battery-ok | `wiki/reports/agents/scheduled/` + macOS notify |
+| contradict | native `contradict` | weekly, overnight AC window | online, runtime, icloud, **AC** | `wiki/reports/agents/scheduled/` |
+| emerge | native `emerge` | weekly | online, runtime, icloud | `wiki/reports/agents/scheduled/` + notify |
+| discover | native `discover` | weekly | online, runtime, icloud | `wiki/reports/agents/scheduled/` + notify |
+| verify *(optional)* | native `verify --source <changed>` | weekly, on recently-changed source pages | online, runtime, icloud | report |
+| ingest | native `ingest --source <new>` | nightly, only if approved source/inbox files are unprocessed | online, runtime, icloud, **AC** | wiki changes; source protected |
+| project-runner | native `project-run --project <slug>` (one per due, opted-in project) | nightly, after the digests | online, runtime, icloud, **AC** | one project (applied without commit; pre-run snapshot) + roll-up |
+| enhance *(opt-in)* | native `enhance --iterations 5 --strategy alternate` | nightly only when `VAULTLENS_SCHEDULE_ENHANCE=1`, last nightly step | online, runtime, icloud, **AC** | wiki changes |
+
+In this table, **native** means the absolute Python launcher invocation described
+above, with the matching named access profile and frozen batch arguments.
 
 **Scheduled (in `build_steps`), in run order:** lint, index, qmd update, qmd cleanup, ingest,
 contradict, emerge, discover, project-runner, optional enhance, cos brief. **Documented but not yet wired into the
@@ -274,12 +307,26 @@ awaiting grooming (`agenda.project_is_due` / `inbox_has_groomable_content`) — 
 CoS proposals and ad-hoc Inbox dumps are picked up the next night even before they have
 been groomed into Tasks. The dispatcher
 clones each project to `~/.brain/project-snapshots/<date>/` before the run (the apply-don't-commit
-undo, since `projects/` is gitignored) and writes one aggregated roll-up. **Egress note:**
-research tasks fetch via in-container `python3` bound by the squid allowlist — a task needing a
-non-allowlisted host is marked `blocked`, not run. **Host note:** `project-run` routing lives in
-the host fish function `~/.config/fish/functions/brain-wiki.fish` (it selects the `project` mount
-profile + `BRAIN_WRITE_PATH=projects/<slug>`); that file is outside the vault repo, so re-apply it
-after a host reset alongside the reactivation steps below.
+undo, since `projects/` is gitignored) and writes one aggregated roll-up. Snapshots are staged
+and published only after a complete copy. A sibling `.<project>.complete.json` marker
+records the published directory's identity; reuse requires that matching marker.
+Existing legacy snapshots without a marker, malformed markers, and marker publication
+failures defer the writer and preserve existing snapshot contents for operator review.
+The marker stays outside the snapshot tree so restoration contains only project files.
+A failed snapshot defers that project's writer
+and records `snapshot-failed`; other projects with valid snapshots may still run.
+The roll-up prints a `tools/schedule/restore_project.py --snapshot ... --project ...`
+command for each executed project. The helper first copies the complete snapshot into a
+staging directory, then retains the current project under `projects/.restore-backups/`
+and replaces the whole project tree. This restores removed files and removes run-created
+files from the active tree while preserving current operator edits in the retained backup.
+Copy failures leave the current project untouched; installation failures attempt to restore
+it immediately. Retained restore backups are never pruned by the dispatcher.
+**Egress note:** research domains belong to an explicit access-profile policy.
+An ordinary note-analysis run permits only configured provider/login endpoints.
+A task requiring another host stays blocked until an approved research profile
+permits it. Project write scope comes from `--project <slug>` and the runtime
+policy, so scheduler operation does not depend on host shell functions.
 **On-demand only — never scheduled** (need human input): `challenge` (a position),
 `connect` (two domains), `search` (a query). `emerge`/`discover` may *suggest*
 running these, but never auto-fire them.
@@ -289,7 +336,7 @@ running these, but never auto-fire them.
 | Gate | Detection | Behavior when failing |
 |---|---|---|
 | online | `nc -z -G 5 $VAULTLENS_LLM_HEALTH_HOST 443` (provider default if unset) | **defer** LLM jobs (ledger not advanced → retried next tick). Tier 0 unaffected. |
-| container | `container system status` exits 0 | `container system start` + bounded wait (~60s); else defer LLM jobs. Tier 0 still runs. |
+| runtime | `local_runtime.runtime_available(root=ROOT, cli=CLI)` validates the installed native boundary | Defer model jobs; never auto-install, start a service or fall back. Host maintenance still runs. |
 | icloud | `find <input> -flags +dataless` empty, else `brctl download <path>` | defer until materialized. |
 | AC | `pmset -g batt` shows `AC Power` | heavy jobs (enhance, contradict) defer; light jobs proceed. |
 | battery-ok | battery ≥ ~20% | defer heavy; allow light (cos brief, lint). |
@@ -307,18 +354,30 @@ running these, but never auto-fire them.
   catch-up of whatever is overdue. Forced wakes (`pmset repeat wake`) exist only
   to guarantee the overnight heavy window; the AC gate means a battery wake
   (e.g. in a bag) does nothing and the Mac re-sleeps. PowerNap micro-wakes are
-  ignored (the container runtime is down / uptime window too small).
+  do not create extra runs; the ledger still controls whether work is due.
 
 ## Output, notifications, failure
 
-- **Reports:** dispatcher writes `wiki/reports/scheduled-<job>-<YYYY-MM-DD>.md`
-  from successful agent stdout only. Container and runtime diagnostics on stderr
+- **Reports:** dispatcher writes `wiki/reports/agents/scheduled/scheduled-<job>-<YYYY-MM-DD>.md`
+  from successful agent stdout only. Launcher and runtime diagnostics on stderr
   stay out of successful reports; both streams remain available when a run fails.
-  (The vault `wiki/reports/` is gitignored personal content.)
+  The reserved `wiki/reports/agents/` subtree is excluded from every access
+  profile and scoped search. The readable `wiki/reports/schedule-status.md`
+  contains health metadata only; raw errors and cancellation output remain in
+  host diagnostics. (The vault `wiki/reports/` is gitignored personal content.)
 - **Retention:** each tick the dispatcher prunes dated `scheduled-<type>-*.md` to
   the latest `REPORT_RETENTION` (14) per type, except `cos-brief`, which retains
-  only the latest generated report. Only `scheduled-*` files are touched — never
-  `schedule-status.md` or hand-written synthesis reports.
+  only the latest generated report. Only regular `scheduled-*` files inside
+  `wiki/reports/agents/scheduled/` are touched; linked files, older reports in
+  `wiki/reports/`, `schedule-status.md`, and hand-written reports are untouched.
+  During migration, archive reviewed legacy dated outputs under
+  `wiki/reports/agents/scheduled/legacy/` with recoverable copies and a hash ledger.
+  That archive is excluded from agent reads and is outside automatic retention.
+- **Host write scope:** report writes require this deployment's real
+  `wiki/reports/` directory. Content writes use its `agents/scheduled/` subtree;
+  only the metadata status page uses the parent directory. Directory descriptors
+  and atomic replacement reject linked directories and report targets. Model
+  output cannot choose a filename or redirect a host report write.
 - **Notifications:** `osascript -e 'display notification …'` (or `terminal-notifier`
   if present) on completion of cos brief / emerge / discover, and on any job error.
 - **Logs:** `~/.brain/logs/schedule-<date>.log`; LaunchAgent `StandardOutPath` /
@@ -341,7 +400,8 @@ pass. The dispatcher routes them through `_route_work_items` and one per-tick
 - self-handoffs are blocked;
 - direct reciprocal edges within one tick are blocked;
 - total routed items per tick are capped by `MAX_ROUTED_PER_TICK`;
-- frozen, unknown, and missing project targets are not routed.
+- only real, non-frozen projects with `AGENDA.md enabled: true` receive handoffs;
+- path traversal, absolute targets and links in project/agenda paths are rejected.
 
 Items carry `[from:<source>]` provenance. A handoff only queues into an inbox
 picked up by an already-scheduled project run; it never triggers another ad-hoc
@@ -353,13 +413,14 @@ in `test_schedule.py`; inbox append and due-state behavior in `test_agenda.py`.
 
 ## Open implementation questions / risks
 
-1. Keychain reachable from launchd-spawned `fish` (verify before relying on it).
-2. Per-profile container cold-start cost (qmd / safe-chain / claude re-seed on
-   first launch of each `${devcontainerId}` profile) — the first scheduled
-   reader/author run of the day pays this; acceptable, but log it.
+1. Provider login and runtime executable discovery in launchd's reduced
+   environment need a bounded deployment check.
+2. Standalone sandbox runtime behavior and platform support remain a deployment
+   requirement. Fixture tests establish routing and recovery logic; they do not
+   prove operating-system isolation or provider authentication.
 3. `pmset repeat wake` needs one-time sudo and cannot itself be AC-conditioned;
    the AC gate in the dispatcher is what enforces "AC only."
-4. iCloud eviction of report-target dirs — ensure `wiki/reports/` is materialized
+4. iCloud eviction of report-target dirs — ensure `wiki/reports/agents/scheduled/` is materialized
    before writing.
 
 ## Rejected / out of scope
@@ -383,13 +444,14 @@ sudo pmset repeat cancel                             # stop the nightly 01:25 wa
 To reactivate an already prepared scheduler:
 
 ```sh
-tools/schedule/install.sh --enable-prepared         # loads the backend stored in the plist
+tools/schedule/install.sh --enable-prepared         # validates then loads the prepared job
 sudo pmset repeat wakeorpoweron MTWRFSU 01:25:00     # restore the overnight wake
 launchctl list | grep com.brain                      # confirm loaded
 python3 tools/schedule/dispatch.py status            # confirm ledger + backend identity health
 ```
 
-To change and prepare a backend without starting it, run
+To switch the shared backend without starting it, run `brain-provider claude|codex`.
+To prepare an explicitly pinned backend without starting it, run
 `VAULTLENS_LLM_CLI=<claude|codex> tools/schedule/install.sh --prepare-disabled`.
 The least-privilege lid-close sudoers rule, if installed, is untouched by
 deactivation and needs no action.
