@@ -444,10 +444,6 @@ def set_frontmatter_field(text: str, key: str, value: str | list[str]) -> str:
     return "---\n" + "\n".join(new_lines) + f"\n---\n{body}"
 
 
-# Alias kept so tests/test_wiki.py, which calls the old private name, keeps working.
-_set_frontmatter_field = set_frontmatter_field
-
-
 def generate_source_id(today: dt.date | None = None) -> str:
     """Return the next unused source ID for a date without reusing gaps."""
     day = (today or dt.date.today()).isoformat()
