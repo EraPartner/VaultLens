@@ -13,11 +13,12 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import io
-import importlib.util
 import sys
 import tempfile
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -28,18 +29,30 @@ import wiki_links  # noqa: E402
 import wiki_log  # noqa: E402
 import wiki_projects  # noqa: E402
 import wiki_query  # noqa: E402
+from _loader import load_module  # noqa: E402
 
-PASSED = 0
-FAILED = 0
+# These tests exercise module-internal helpers directly. Each is bound once here so the
+# private access is justified in one place; there is no public equivalent to use instead.
+parse_frontmatter_value = wiki._parse_frontmatter_value  # pyright: ignore[reportPrivateUsage]
+coerce_str_list = wiki._coerce_str_list  # pyright: ignore[reportPrivateUsage]
+render_log_frontmatter = wiki_log._render_frontmatter  # pyright: ignore[reportPrivateUsage]
+project_new = wiki_projects._project_new  # pyright: ignore[reportPrivateUsage]
+project_freeze = wiki_projects._project_freeze  # pyright: ignore[reportPrivateUsage]
+project_list = wiki_projects._project_list  # pyright: ignore[reportPrivateUsage]
+find_project = wiki_projects._find_project  # pyright: ignore[reportPrivateUsage]
+rebuild_deadlines = wiki_projects._rebuild_deadlines  # pyright: ignore[reportPrivateUsage]
+
+passed = 0
+failed = 0
 
 
 def check(name: str, condition: bool, detail: str = "") -> None:
-    global PASSED, FAILED
+    global passed, failed
     if condition:
-        PASSED += 1
+        passed += 1
         print(f"  PASS  {name}")
     else:
-        FAILED += 1
+        failed += 1
         print(f"  FAIL  {name}  {detail}")
 
 
@@ -185,7 +198,7 @@ def test_runtime_log_excluded() -> None:
 
 def test_defects() -> None:
     print("defects (each fixture trips exactly its rule):")
-    cases = [
+    cases: list[tuple[str, Callable[[Path], None]]] = [
         (
             "missing_fields",
             lambda r: write_page(
@@ -381,16 +394,18 @@ def test_project_provider_scaffold() -> None:
     print("project-provider-scaffold:")
     saved_root = wiki_projects.ROOT
     saved_projects = wiki_projects.PROJECTS_DIR
-    saved_rebuild = wiki_projects._rebuild_projects_todo
+    rebuild_patch = mock.patch.object(
+        wiki_projects, "_rebuild_projects_todo", lambda: None
+    )
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         projects = root / "projects"
         projects.mkdir()
         wiki_projects.ROOT = root
         wiki_projects.PROJECTS_DIR = projects
-        wiki_projects._rebuild_projects_todo = lambda: None
+        rebuild_patch.start()
         try:
-            rc = wiki_projects._project_new("model-agnostic")
+            rc = project_new("model-agnostic")
             project = projects / "model-agnostic"
             agents_text = (project / "AGENTS.md").read_text(encoding="utf-8")
             check("project scaffold succeeds", rc == 0)
@@ -402,19 +417,17 @@ def test_project_provider_scaffold() -> None:
         finally:
             wiki_projects.ROOT = saved_root
             wiki_projects.PROJECTS_DIR = saved_projects
-            wiki_projects._rebuild_projects_todo = saved_rebuild
+            rebuild_patch.stop()
 
 
 def test_provider_adapter_generation() -> None:
     print("provider-adapter-generation:")
-    spec = importlib.util.spec_from_file_location(
-        "fixture_adapter_generator",
+    module_name = "fixture_adapter_generator"
+    generator = load_module(
+        module_name,
         Path(__file__).resolve().parents[1] / "agents" / "generate-adapters.py",
+        register=True,
     )
-    assert spec is not None and spec.loader is not None
-    generator = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = generator
-    spec.loader.exec_module(generator)
     try:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -494,7 +507,7 @@ def test_provider_adapter_generation() -> None:
             check("Claude check detects a stale adapter", claude_checked == 1)
             check("Codex-only check ignores Claude outputs", codex_checked == 0)
     finally:
-        del sys.modules[spec.name]
+        del sys.modules[module_name]
 
 
 def test_project_freeze() -> None:
@@ -502,7 +515,9 @@ def test_project_freeze() -> None:
     saved_root = wiki_projects.ROOT
     saved_projects = wiki_projects.PROJECTS_DIR
     saved_wiki_projects = wiki.PROJECTS_DIR
-    saved_rebuild = wiki_projects._rebuild_projects_todo
+    rebuild_patch = mock.patch.object(
+        wiki_projects, "_rebuild_projects_todo", lambda: None
+    )
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         projects = root / "projects"
@@ -531,28 +546,29 @@ def test_project_freeze() -> None:
         wiki_projects.ROOT = root
         wiki_projects.PROJECTS_DIR = projects
         wiki.PROJECTS_DIR = projects
-        wiki_projects._rebuild_projects_todo = lambda: None
+        rebuild_patch.start()
         try:
             check(
                 "freeze command succeeds",
-                wiki_projects._project_freeze("cryptopals", True) == 0,
+                project_freeze("cryptopals", True) == 0,
             )
+            frozen = find_project("cryptopals")
             check(
                 "project status becomes frozen",
-                wiki_projects._find_project("cryptopals").status == "frozen",
+                frozen is not None and frozen.status == "frozen",
             )
             visible = io.StringIO()
             with contextlib.redirect_stdout(visible):
-                wiki_projects._project_list(False, slugs_only=True)
+                project_list(False, slugs_only=True)
             check("default project list excludes frozen", visible.getvalue() == "")
             all_projects = io.StringIO()
             with contextlib.redirect_stdout(all_projects):
-                wiki_projects._project_list(False, include_frozen=True, slugs_only=True)
+                project_list(False, include_frozen=True, slugs_only=True)
             check(
                 "administrative list can include frozen",
                 all_projects.getvalue().strip() == "cryptopals",
             )
-            wiki_projects._rebuild_deadlines()
+            rebuild_deadlines()
             check(
                 "deadline query is created from tracked template",
                 deadlines.is_file(),
@@ -564,9 +580,9 @@ def test_project_freeze() -> None:
             )
             check(
                 "unfreeze command succeeds",
-                wiki_projects._project_freeze("cryptopals", False) == 0,
+                project_freeze("cryptopals", False) == 0,
             )
-            wiki_projects._rebuild_deadlines()
+            rebuild_deadlines()
             check(
                 "unfreeze removes deadline exclusion",
                 "path does not include projects/cryptopals/TODO.md"
@@ -576,32 +592,32 @@ def test_project_freeze() -> None:
             wiki_projects.ROOT = saved_root
             wiki_projects.PROJECTS_DIR = saved_projects
             wiki.PROJECTS_DIR = saved_wiki_projects
-            wiki_projects._rebuild_projects_todo = saved_rebuild
+            rebuild_patch.stop()
 
 
 def test_frontmatter_list_parsing() -> None:
     # Normal comma-separated arrays parse to N items (unchanged behavior).
     check(
         "comma list parses to N items",
-        wiki._parse_frontmatter_value("[a, b, c]") == ["a", "b", "c"]
-        and wiki._coerce_str_list("[a, b, c]") == ["a", "b", "c"],
+        parse_frontmatter_value("[a, b, c]") == ["a", "b", "c"]
+        and coerce_str_list("[a, b, c]") == ["a", "b", "c"],
     )
     # Recovery: an array reflowed to whitespace-separated with no commas — as the
     # host Obsidian app can do to frontmatter a CLI just wrote — still parses to N
     # items instead of one joined blob, so the next write self-heals it.
     check(
         "whitespace-reflowed list recovers to N items",
-        wiki._parse_frontmatter_value("[a b c]") == ["a", "b", "c"]
-        and wiki._coerce_str_list("[a b c]") == ["a", "b", "c"],
+        parse_frontmatter_value("[a b c]") == ["a", "b", "c"]
+        and coerce_str_list("[a b c]") == ["a", "b", "c"],
     )
     # Guard: quoted multi-word items (aliases/requires) are never split mid-value.
     check(
         "quoted multi-word items are not split",
-        wiki._parse_frontmatter_value('["machine learning", "deep learning"]')
+        parse_frontmatter_value('["machine learning", "deep learning"]')
         == ["machine learning", "deep learning"],
     )
-    check("single-item list", wiki._parse_frontmatter_value("[a]") == ["a"])
-    check("empty list", wiki._parse_frontmatter_value("[]") == [])
+    check("single-item list", parse_frontmatter_value("[a]") == ["a"])
+    check("empty list", parse_frontmatter_value("[]") == [])
 
 
 def test_frontmatter_eof_and_round_trip() -> None:
@@ -610,8 +626,8 @@ def test_frontmatter_eof_and_round_trip() -> None:
     check("frontmatter closing delimiter at EOF parses", fm["title"] == "Original")
     check("frontmatter at EOF has an empty body", body == "")
 
-    changed = wiki._set_frontmatter_field(text, "title", "Changed")
-    changed = wiki._set_frontmatter_field(changed, "tags", ["one", "two"])
+    changed = wiki.set_frontmatter_field(text, "title", "Changed")
+    changed = wiki.set_frontmatter_field(changed, "tags", ["one", "two"])
     round_trip, round_body = wiki.parse_frontmatter(changed)
     check(
         "frontmatter setter round-trips updated and appended fields",
@@ -733,7 +749,7 @@ def test_bounded_cli_output_defaults() -> None:
 
 
 def test_log_frontmatter_is_stdlib_and_yaml_safe() -> None:
-    rendered = wiki_log._render_frontmatter(
+    rendered = render_log_frontmatter(
         {
             "date": "2026-08-17",
             "title": "Codex: migration",
@@ -768,8 +784,8 @@ def main() -> int:
     test_source_id_stats_and_sampling()
     test_bounded_cli_output_defaults()
     test_log_frontmatter_is_stdlib_and_yaml_safe()
-    print(f"\n{PASSED} passed, {FAILED} failed")
-    return 1 if FAILED else 0
+    print(f"\n{passed} passed, {failed} failed")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

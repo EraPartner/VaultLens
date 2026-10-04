@@ -20,17 +20,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import wiki  # noqa: E402
 import wiki_query  # noqa: E402
 
-PASSED = 0
-FAILED = 0
+passed = 0
+failed = 0
 
 
 def check(name: str, condition: bool, detail: str = "") -> None:
-    global PASSED, FAILED
+    global passed, failed
     if condition:
-        PASSED += 1
+        passed += 1
         print(f"  PASS  {name}")
     else:
-        FAILED += 1
+        failed += 1
         print(f"  FAIL  {name}  {detail}")
 
 
@@ -180,7 +180,7 @@ def test_limit() -> None:
                 filler(sizes[name]) + " " + " ".join(others),
                 **base_fields(title=name),
             )
-        rows, mode = rank_for(root, limit=2)
+        rows, _mode = rank_for(root, limit=2)
         check("limit truncates fallback", len(rows) == 2, str(len(rows)))
         check(
             "limit keeps the weakest first",
@@ -193,8 +193,8 @@ def main() -> int:
     test_absolute_path()
     test_relative_fallback()
     test_limit()
-    print(f"\n{PASSED} passed, {FAILED} failed")
-    return 1 if FAILED else 0
+    print(f"\n{passed} passed, {failed} failed")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

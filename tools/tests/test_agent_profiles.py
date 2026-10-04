@@ -3,13 +3,13 @@
 
 from __future__ import annotations
 
-import importlib.util
 import io
 import json
 import shutil
 import sys
 import tempfile
 import unittest
+from collections.abc import Mapping
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -20,10 +20,11 @@ sys.path.insert(0, str(TOOLS))
 import agent_profiles as profiles  # noqa: E402
 import brain_launch  # noqa: E402
 import llm_provider  # noqa: E402
+from _loader import load_module  # noqa: E402
 
 
 class RoleProfileTests(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         fixture = tempfile.TemporaryDirectory()
         self.addCleanup(fixture.cleanup)
         self.root = Path(fixture.name)
@@ -38,14 +39,28 @@ class RoleProfileTests(unittest.TestCase):
         shutil.copy2(TOOLS / "access-profiles.json", self.root / "tools")
         self.config = self.root / "tools" / "llm.local.json"
 
-    def resolve(self, agent="search", **kwargs):
-        kwargs.setdefault("environ", {})
-        return profiles.resolve_role_settings(agent, root=self.root, **kwargs)
+    def resolve(
+        self,
+        agent: str = "search",
+        *,
+        cli: str | None = None,
+        model: str | None = None,
+        effort: str | None = None,
+        environ: Mapping[str, str] | None = None,
+    ) -> tuple[llm_provider.Provider, str]:
+        return profiles.resolve_role_settings(
+            agent,
+            cli,
+            model,
+            effort,
+            root=self.root,
+            environ={} if environ is None else environ,
+        )
 
-    def save(self, data):
+    def save(self, data: object) -> None:
         self.config.write_text(json.dumps(data))
 
-    def test_bundled_roles_preserve_model_and_effort_policy(self):
+    def test_bundled_roles_preserve_model_and_effort_policy(self) -> None:
         for agent in profiles.AGENT_FILES:
             role = profiles.load_role(self.roles / profiles.AGENT_FILES[agent])
             for cli in ("claude", "codex"):
@@ -62,7 +77,7 @@ class RoleProfileTests(unittest.TestCase):
         self.assertEqual(self.resolve("search")[1], "medium")
         self.assertEqual(self.resolve("enhance")[1], "xhigh")
 
-    def test_provider_profile_mapping_changes_only_its_provider(self):
+    def test_provider_profile_mapping_changes_only_its_provider(self) -> None:
         self.save({"profiles": {"codex": {"standard": "economy", "deep": "reasoner"}}})
         self.assertEqual(self.resolve(cli="codex")[0].model, "economy")
         self.assertEqual(self.resolve("enhance", cli="codex")[0].model, "reasoner")
@@ -71,7 +86,7 @@ class RoleProfileTests(unittest.TestCase):
         self.assertEqual(self.resolve("enhance")[0].model, "custom-deep")
         self.assertEqual(self.resolve()[0].model, "sonnet")
 
-    def test_overrides_and_explicit_empty_preserve_precedence(self):
+    def test_overrides_and_explicit_empty_preserve_precedence(self) -> None:
         self.save(
             {
                 "models": {"claude": "saved"},
@@ -90,12 +105,12 @@ class RoleProfileTests(unittest.TestCase):
         self.save({"profiles": {"claude": {"standard": ""}}})
         self.assertEqual(self.resolve()[0].model, "")
 
-    def test_model_names_round_trip_as_opaque_values(self):
+    def test_model_names_round_trip_as_opaque_values(self) -> None:
         model = 'custom "model" \\ name'
         self.save({"profiles": {"codex": {"standard": model}}})
         self.assertEqual(self.resolve(cli="codex")[0].model, model)
 
-    def test_invalid_metadata_and_config_fail_closed(self):
+    def test_invalid_metadata_and_config_fail_closed(self) -> None:
         source = self.roles / profiles.AGENT_FILES["search"]
         original = source.read_text()
         for old, new in (
@@ -106,12 +121,13 @@ class RoleProfileTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.resolve()
         source.write_text(original)
-        for invalid in (
+        invalid_configs: tuple[object, ...] = (
             {"profiles": []},
             {"profiles": {"other": {}}},
             {"profiles": {"claude": {"standard": None}}},
             {"profiles": {"codex": {"unknown": "x"}}},
-        ):
+        )
+        for invalid in invalid_configs:
             self.save(invalid)
             with self.assertRaises(ValueError):
                 self.resolve(model="explicit")
@@ -120,14 +136,14 @@ class RoleProfileTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.resolve()
 
-    def test_selecting_provider_preserves_role_mappings(self):
+    def test_selecting_provider_preserves_role_mappings(self) -> None:
         mappings = {"codex": {"standard": "economy"}}
         self.save({"profiles": mappings})
         llm_provider.select_provider("codex", path=self.config)
         self.assertEqual(llm_provider.load_config(self.config)["profiles"], mappings)
         self.assertEqual(self.resolve()[0].model, "economy")
 
-    def test_host_freezes_resolved_role_settings_and_keeps_overrides(self):
+    def test_host_freezes_resolved_role_settings_and_keeps_overrides(self) -> None:
         for agent, model, effort in (
             ("search", "sonnet", "medium"),
             ("enhance", "opus", "xhigh"),
@@ -145,12 +161,8 @@ class RoleProfileTests(unittest.TestCase):
         self.assertNotIn("--model", command)
         self.assertNotIn("--effort", command)
 
-    def test_headless_entrypoint_applies_role_defaults_and_flags(self):
-        spec = importlib.util.spec_from_file_location(
-            "profile_wiki_agent", TOOLS / "agents" / "wiki-agent.py"
-        )
-        agent = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(agent)
+    def test_headless_entrypoint_applies_role_defaults_and_flags(self) -> None:
+        agent = load_module("profile_wiki_agent", TOOLS / "agents" / "wiki-agent.py")
         with (
             mock.patch.object(agent, "ROOT", self.root),
             mock.patch.object(agent, "_enter_runtime", return_value=None),
@@ -173,12 +185,10 @@ class RoleProfileTests(unittest.TestCase):
             args = run.call_args.args[0]
             self.assertEqual((args.model, args.effort), ("", "low"))
 
-    def test_adapters_share_mappings_and_escape_names(self):
-        spec = importlib.util.spec_from_file_location(
+    def test_adapters_share_mappings_and_escape_names(self) -> None:
+        generator = load_module(
             "profile_generator", TOOLS / "agents" / "generate-adapters.py"
         )
-        generator = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(generator)
         generator.ROOT = self.root
         name = 'custom "model" \\ name'
         self.save(

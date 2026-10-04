@@ -10,7 +10,6 @@ no CLI is spawned. Run:
 
 from __future__ import annotations
 
-import importlib.util
 import argparse
 import json
 import re
@@ -19,24 +18,46 @@ import sys
 import tempfile
 import tomllib
 from pathlib import Path
+from typing import Any, cast
 
-_spec = importlib.util.spec_from_file_location(
-    "wiki_agent", str(Path(__file__).resolve().parents[1] / "agents" / "wiki-agent.py")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _loader import load_module  # noqa: E402
+
+wa = load_module(
+    "wiki_agent", Path(__file__).resolve().parents[1] / "agents" / "wiki-agent.py"
 )
-wa = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(wa)
 
-PASSED = 0
-FAILED = 0
+# Parsed TOML documents are dynamically typed; callers index them with string keys.
+TomlDocument = dict[str, Any]
+
+passed = 0
+failed = 0
+
+
+def _table(value: object) -> dict[str, object] | None:
+    """Narrow a parsed JSON/TOML value to a string-keyed table, or None."""
+    if not isinstance(value, dict):
+        return None
+    # Parsed JSON/TOML tables always have string keys; isinstance leaves them Unknown.
+    return cast(dict[str, object], value)
+
+
+def _items(value: object) -> list[object] | None:
+    """Narrow a parsed JSON/TOML value to a list, or None."""
+    if not isinstance(value, list):
+        return None
+    # isinstance leaves the element type Unknown; items are inspected as object.
+    return cast(list[object], value)
 
 
 def check(name: str, condition: bool, detail: str = "") -> None:
-    global PASSED, FAILED
+    global passed, failed
     if condition:
-        PASSED += 1
+        passed += 1
         print(f"  PASS  {name}")
     else:
-        FAILED += 1
+        failed += 1
         print(f"  FAIL  {name}  {detail}")
 
 
@@ -239,8 +260,8 @@ def main() -> int:
         {path.name for path in manifest_paths} == expected_manifests,
         str(sorted(path.name for path in manifest_paths)),
     )
-    parsed_agents = []
-    parse_errors = []
+    parsed_agents: list[TomlDocument] = []
+    parse_errors: list[str] = []
     for path in manifest_paths:
         try:
             parsed_agents.append(tomllib.loads(path.read_text(encoding="utf-8")))
@@ -270,15 +291,11 @@ def main() -> int:
         not conflict_copies,
         ", ".join(conflict_copies),
     )
-    boundary_agents = parsed_agents
+    boundary_agents: list[TomlDocument] = parsed_agents
     if options.skip_adapter_drift:
         # Check current generation even when protected provider directories
         # cannot be synchronized in this desktop permission profile.
-        generator_spec = importlib.util.spec_from_file_location(
-            "adapter_generator", generator
-        )
-        generator_module = importlib.util.module_from_spec(generator_spec)
-        generator_spec.loader.exec_module(generator_module)
+        generator_module = load_module("adapter_generator", generator)
         boundary_agents = [
             tomllib.loads(generator_module.codex_manifest(role))
             for role in generator_module.load_roles()
@@ -335,18 +352,18 @@ def main() -> int:
         except (json.JSONDecodeError, tomllib.TOMLDecodeError, KeyError) as error:
             mcp_errors.append(f"{project.name}: {error}")
             continue
-        if not isinstance(claude_servers, dict) or not isinstance(codex_servers, dict):
+        claude_servers = _table(claude_servers)
+        codex_servers = _table(codex_servers)
+        if claude_servers is None or codex_servers is None:
             mcp_errors.append(f"{project.name}: MCP server tables must be objects")
             continue
         if set(claude_servers) != set(codex_servers):
             mcp_errors.append(f"{project.name}: provider server names differ")
             continue
         for name in sorted(claude_servers):
-            claude_server = claude_servers[name]
-            codex_server = codex_servers[name]
-            if not isinstance(claude_server, dict) or not isinstance(
-                codex_server, dict
-            ):
+            claude_server = _table(claude_servers[name])
+            codex_server = _table(codex_servers[name])
+            if claude_server is None or codex_server is None:
                 mcp_errors.append(
                     f"{project.name}/{name}: server config must be an object"
                 )
@@ -368,8 +385,8 @@ def main() -> int:
 
     arxiv_errors: list[str] = []
     for project_name, server in arxiv_servers:
-        args = server.get("args", [])
-        if server.get("command") != "uvx" or not isinstance(args, list) or not args:
+        args = _items(server.get("args", []))
+        if server.get("command") != "uvx" or not args:
             arxiv_errors.append(f"{project_name}: arxiv must launch with uvx")
             continue
         if not re.fullmatch(r"arxiv-mcp-server==\d+\.\d+\.\d+", str(args[0])):
@@ -391,8 +408,8 @@ def main() -> int:
         "; ".join(arxiv_errors),
     )
 
-    print(f"\n{PASSED} passed, {FAILED} failed")
-    return 1 if FAILED else 0
+    print(f"\n{passed} passed, {failed} failed")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ import json
 import sys
 import tempfile
 import unittest
+from collections.abc import Mapping
 from pathlib import Path
 from unittest import mock
 
@@ -25,9 +26,19 @@ class ProviderTests(unittest.TestCase):
         self.config.parent.mkdir(parents=True, exist_ok=True)
         self.config.write_text(json.dumps(data), encoding="utf-8")
 
-    def resolve(self, **kwargs: object) -> providers.Provider:
-        kwargs.setdefault("environ", {})
-        return providers.resolve_provider(path=self.config, **kwargs)
+    def resolve(
+        self,
+        *,
+        cli: str | None = None,
+        model: str | None = None,
+        environ: Mapping[str, str] | None = None,
+    ) -> providers.Provider:
+        return providers.resolve_provider(
+            cli,
+            model,
+            path=self.config,
+            environ={} if environ is None else environ,
+        )
 
     def test_precedence_and_native_defaults(self) -> None:
         default = self.resolve()
@@ -83,7 +94,7 @@ class ProviderTests(unittest.TestCase):
                 self.resolve(environ={key: " "})
 
     def test_invalid_config_fails_even_with_explicit_provider(self) -> None:
-        for invalid in (
+        invalid_configs: tuple[object, ...] = (
             [],
             None,
             {"other": "codex"},
@@ -92,7 +103,8 @@ class ProviderTests(unittest.TestCase):
             {"models": []},
             {"models": {"other": "x"}},
             {"models": {"claude": None}},
-        ):
+        )
+        for invalid in invalid_configs:
             with self.subTest(config=invalid):
                 self.write_config(invalid)
                 with self.assertRaises(ValueError):

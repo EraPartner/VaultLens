@@ -5,25 +5,30 @@ from __future__ import annotations
 
 import json
 import contextlib
-import importlib.util
 import io
 import os
 import sys
 import tempfile
 import tomllib
 import unittest
+from collections.abc import Collection
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import IO, Any, cast
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _loader import load_module  # noqa: E402
 from provider_commands import (  # noqa: E402
     ProviderCommandRequest,
     build_provider_command,
     provider_names,
     register_provider_adapter,
 )
+
+# Parsed TOML overrides are dynamically typed; tests index them with string keys.
+TomlTable = dict[str, Any]
 
 
 def request(**changes: object) -> ProviderCommandRequest:
@@ -45,18 +50,19 @@ def option(command: list[str], name: str) -> str:
     return command[command.index(name) + 1]
 
 
-def overrides(command: list[str]) -> dict:
-    values: dict = {}
+def overrides(command: list[str]) -> TomlTable:
+    values: TomlTable = {}
     for index, part in enumerate(command):
         if part == "-c":
             parsed = tomllib.loads(command[index + 1])
 
-            def merge(destination: dict, source: dict) -> None:
+            def merge(destination: TomlTable, source: TomlTable) -> None:
                 for key, value in source.items():
                     if isinstance(value, dict) and isinstance(
                         destination.get(key), dict
                     ):
-                        merge(destination[key], value)
+                        # isinstance leaves the key type Unknown; TOML tables are string-keyed.
+                        merge(destination[key], cast(TomlTable, value))
                     else:
                         destination[key] = value
 
@@ -73,7 +79,9 @@ class ProviderCommandsTests(unittest.TestCase):
             command_request.writable_roots, (Path("/selected/vault/wiki"),)
         )
         with self.assertRaises(FrozenInstanceError):
-            command_request.model = "changed"
+            # Direct assignment is a strict type error on a frozen dataclass; setattr
+            # exercises the same runtime rejection.
+            setattr(command_request, "model", "changed")
         with self.assertRaises(ValueError):
             request(cwd=Path("relative"))
         with self.assertRaises(ValueError):
@@ -87,8 +95,11 @@ class ProviderCommandsTests(unittest.TestCase):
         class FixtureAdapter:
             name = "fixture-native"
 
-            def build_command(self, command_request, *, executable):
-                return [executable, command_request.model, command_request.task_prompt]
+            # The parameter is named `request` to match the ProviderAdapter protocol.
+            def build_command(
+                self, request: ProviderCommandRequest, *, executable: str
+            ) -> list[str]:
+                return [executable, request.model, request.task_prompt]
 
         adapter = FixtureAdapter()
         register_provider_adapter(adapter)
@@ -305,7 +316,7 @@ class ProviderCommandsTests(unittest.TestCase):
             self.assertNotIn("type", actual)
 
     def test_malformed_and_remote_mcp_configuration_fails_closed(self) -> None:
-        fixtures = [
+        fixtures: list[object] = [
             {"mcpServers": {"remote": {"type": "http", "url": "https://example.com"}}},
             {"mcpServers": {"local": {"command": "python3", "args": []}}},
             {"mcpServers": {"local": {"command": "/bin/python3", "args": [1]}}},
@@ -349,8 +360,8 @@ class HeadlessDelegationTests(unittest.TestCase):
         self.note = self.root / "wiki/concepts/approved.md"
         self.note.parent.mkdir(parents=True)
         self.note.write_text("Public synthetic note\n")
-        self.run = self.root / "synthetic-runtime"
-        self.run.mkdir()
+        self.run_dir = self.root / "synthetic-runtime"
+        self.run_dir.mkdir()
         self.scope = RunScope(
             self.root,
             "reader",
@@ -360,41 +371,48 @@ class HeadlessDelegationTests(unittest.TestCase):
             (),
             self.root / "wiki/reports",
         )
-        (self.run / "scope.json").write_text(json.dumps(self.scope.manifest()))
-        self.canaries = {self.run / "read-canary", self.run / "write-canary"}
+        (self.run_dir / "scope.json").write_text(json.dumps(self.scope.manifest()))
+        self.canaries = {self.run_dir / "read-canary", self.run_dir / "write-canary"}
         for path in self.canaries:
             path.write_text("Public synthetic boundary canary\n")
         self.env = {
-            "VAULTLENS_RUNTIME_MANIFEST": str(self.run / "scope.json"),
+            "VAULTLENS_RUNTIME_MANIFEST": str(self.run_dir / "scope.json"),
             "VAULTLENS_PROVIDER_CLI": "codex",
             "VAULTLENS_PROVIDER_EXECUTABLE": "/public/synthetic/native-codex",
         }
         tools = Path(__file__).resolve().parents[1]
-        spec = importlib.util.spec_from_file_location(
+        self.agent = load_module(
             "command_boundary_agent", tools / "agents/wiki-agent.py"
         )
-        self.agent = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(self.agent)
         root = mock.patch.object(self.agent, "ROOT", self.root)
         root.start()
         self.addCleanup(root.stop)
 
-    def command(self, *, write=False):
+    def command(self, *, write: bool = False) -> list[str]:
         return self.agent.build_cli_command(
             "codex", "", None, "ROLE", "TASK", {"shell": True, "write": write}
         )
 
-    def denial(self, paths):
+    def denial(
+        self, paths: Collection[Path]
+    ) -> contextlib.AbstractContextManager[object]:
         original = Path.open
 
-        def confined_open(path, *args, **kwargs):
+        def confined_open(
+            path: Path,
+            mode: str = "r",
+            buffering: int = -1,
+            encoding: str | None = None,
+            errors: str | None = None,
+            newline: str | None = None,
+        ) -> IO[Any]:
             if path in paths:
                 raise PermissionError("Public simulated OS confinement")
-            return original(path, *args, **kwargs)
+            return original(path, mode, buffering, encoding, errors, newline)
 
         return mock.patch.object(Path, "open", confined_open)
 
-    def test_unmanaged_headless_builder_preserves_codex_sandbox_defaults(self):
+    def test_unmanaged_headless_builder_preserves_codex_sandbox_defaults(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=True):
             for write in (False, True):
                 with self.subTest(write=write):
@@ -403,8 +421,8 @@ class HeadlessDelegationTests(unittest.TestCase):
                         "workspace-write" if write else "read-only",
                     )
 
-    def test_missing_unreadable_or_forged_boundary_never_builds_a_provider(self):
-        for marker in (None, self.run / "absent.json", self.run / "scope.json"):
+    def test_missing_unreadable_or_forged_boundary_never_builds_a_provider(self) -> None:
+        for marker in (None, self.run_dir / "absent.json", self.run_dir / "scope.json"):
             with (
                 self.subTest(marker=marker),
                 mock.patch.dict(
@@ -430,11 +448,12 @@ class HeadlessDelegationTests(unittest.TestCase):
                 builder.assert_not_called()
                 agent.assert_not_called()
 
-    def test_manifest_without_both_denials_cannot_delegate(self):
-        for denied, message in (
+    def test_manifest_without_both_denials_cannot_delegate(self) -> None:
+        cases: tuple[tuple[set[Path], str], ...] = (
             (set(), "read confinement is absent"),
-            ({self.run / "read-canary"}, "write confinement is absent"),
-        ):
+            ({self.run_dir / "read-canary"}, "write confinement is absent"),
+        )
+        for denied, message in cases:
             with (
                 self.subTest(denied=denied),
                 mock.patch.dict(os.environ, self.env, clear=True),
@@ -445,10 +464,10 @@ class HeadlessDelegationTests(unittest.TestCase):
                     self.command()
                 builder.assert_not_called()
 
-    def test_verified_reader_delegates_without_expanding_outer_access_policy(self):
+    def test_verified_reader_delegates_without_expanding_outer_access_policy(self) -> None:
         from local_runtime import compile_settings
 
-        outer = compile_settings(self.scope, self.run, "codex")
+        outer = compile_settings(self.scope, self.run_dir, "codex")
         with (
             mock.patch.dict(os.environ, self.env, clear=True),
             self.denial(self.canaries),
@@ -459,26 +478,26 @@ class HeadlessDelegationTests(unittest.TestCase):
         self.assertTrue(self.scope.readable(self.note))
         self.assertFalse(self.scope.writable(self.note))
         self.assertFalse(self.scope.readable(self.root / "wiki/private/hidden.md"))
-        self.assertEqual(compile_settings(self.scope, self.run, "codex"), outer)
+        self.assertEqual(compile_settings(self.scope, self.run_dir, "codex"), outer)
         self.assertIn(str(self.note), outer["filesystem"]["allowRead"])
         self.assertTrue(
             all(
-                Path(grant).is_relative_to(self.run)
+                Path(grant).is_relative_to(self.run_dir)
                 for grant in outer["filesystem"]["allowWrite"]
             )
         )
-        self.assertIn(str(self.run / "write-canary"), outer["filesystem"]["denyWrite"])
+        self.assertIn(str(self.run_dir / "write-canary"), outer["filesystem"]["denyWrite"])
         self.assertIn(str(self.scope.reports), outer["filesystem"]["denyWrite"])
         self.assertEqual(
             outer["network"]["allowedDomains"],
             ["api.openai.com:443", "chatgpt.com:443", "auth.openai.com:443"],
         )
 
-    def test_verified_boundary_for_another_vault_cannot_delegate(self):
+    def test_verified_boundary_for_another_vault_cannot_delegate(self) -> None:
         from dataclasses import replace
 
         foreign = replace(self.scope, root=self.root / "another-vault")
-        (self.run / "scope.json").write_text(json.dumps(foreign.manifest()))
+        (self.run_dir / "scope.json").write_text(json.dumps(foreign.manifest()))
         with (
             mock.patch.dict(os.environ, self.env, clear=True),
             self.denial(self.canaries),

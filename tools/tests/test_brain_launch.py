@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import shlex
@@ -12,7 +11,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 TOOLS = Path(__file__).resolve().parents[1]
@@ -21,6 +22,10 @@ PYTHON = Path(sys.executable)
 sys.path.insert(0, str(TOOLS))
 
 import brain_launch as planner  # noqa: E402
+from _loader import load_module  # noqa: E402
+
+# JSON the fixture CLI records about its own invocation; read by key and index only.
+Captured = dict[str, Any]
 
 
 class PlannerTests(unittest.TestCase):
@@ -34,9 +39,13 @@ class PlannerTests(unittest.TestCase):
             shutil.copy2(source, role_dir / source.name)
 
     def plan(
-        self, args: list[str], mode: str = "wiki", **kwargs: object
+        self,
+        args: list[str],
+        mode: str = "wiki",
+        *,
+        cwd: Path | None = None,
+        environ: Mapping[str, str] | None = None,
     ) -> planner.Launch:
-        kwargs.setdefault("environ", {})
         mappings = self.root / "tools" / "model-profiles.json"
         if not mappings.exists():
             mappings.parent.mkdir(exist_ok=True)
@@ -44,7 +53,13 @@ class PlannerTests(unittest.TestCase):
         access = self.root / "tools" / "access-profiles.json"
         if not access.exists():
             shutil.copy2(TOOLS / "access-profiles.json", access)
-        return planner.plan_launch(mode, args, root=self.root, **kwargs)
+        return planner.plan_launch(
+            mode,
+            args,
+            root=self.root,
+            environ={} if environ is None else environ,
+            cwd=cwd,
+        )
 
     def test_deterministic_commands_do_not_require_an_agent_profile(self) -> None:
         cases = [
@@ -71,19 +86,14 @@ class PlannerTests(unittest.TestCase):
             cases.append((["project", "agenda", action, "demo"], "projects"))
         for action in ("due", "clarifications", "status", "lint", "new-id"):
             cases.append((["project", "agenda", action, "demo"], "reader"))
-        for argv, expected in cases:
+        for argv, _access in cases:
             with self.subTest(argv=argv):
                 plan = self.plan(argv)
                 self.assertEqual(plan.profile, "")
                 self.assertEqual(plan.command, ["python3", "tools/wiki.py", *argv])
 
     def test_agent_names_match_real_launcher(self) -> None:
-        spec = importlib.util.spec_from_file_location(
-            "fixture_wiki_agent", TOOLS / "agents" / "wiki-agent.py"
-        )
-        assert spec is not None and spec.loader is not None
-        agent = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(agent)
+        agent = load_module("fixture_wiki_agent", TOOLS / "agents" / "wiki-agent.py")
         self.assertEqual(planner.AGENT_NAMES, set(agent.AGENT_FILES))
         for name, permissions in agent.AGENT_PERMISSIONS.items():
             args = [name]
@@ -421,7 +431,7 @@ class FishWrapperTests(unittest.TestCase):
             cwd=cwd or self.root,
         )
 
-    def captured(self) -> dict:
+    def captured(self) -> Captured:
         return json.loads(self.capture.read_text(encoding="utf-8"))
 
     def test_shared_wrappers_handoff_provider_argv_and_profiles(self) -> None:

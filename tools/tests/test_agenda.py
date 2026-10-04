@@ -19,17 +19,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import agenda  # noqa: E402
 
-PASSED = 0
-FAILED = 0
+passed = 0
+failed = 0
 
 
 def check(name: str, condition: bool, detail: str = "") -> None:
-    global PASSED, FAILED
+    global passed, failed
     if condition:
-        PASSED += 1
+        passed += 1
         print(f"  PASS  {name}")
     else:
-        FAILED += 1
+        failed += 1
         print(f"  FAIL  {name}  {detail}")
 
 
@@ -155,7 +155,7 @@ def main() -> int:
     print("task parsing:")
     tasks = agenda.parse_tasks(SAMPLE)
     check("3 tasks", len(tasks) == 3, f"got {len(tasks)}")
-    t1, t2, t3 = tasks
+    t1, t2, _t3 = tasks
     check(
         "T1 fields",
         t1.id == "T1" and t1.status == "clear" and t1.schedule == "weekly:Mon",
@@ -345,7 +345,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
 
-        def _mk(slug, enabled):
+        def _mk(slug: str, enabled: bool) -> Path:
             (root / slug).mkdir()
             (root / slug / "project.md").write_text(
                 "---\ntype: project\nstatus: active\n---\n", encoding="utf-8"
@@ -413,8 +413,8 @@ def main() -> int:
         check("renders blocked", "1 blocked" in rendered)
         check("renders dormant tail", "dormant (1): gamma" in rendered)
 
-    print(f"\n{PASSED} passed, {FAILED} failed")
-    return 1 if FAILED else 0
+    print(f"\n{passed} passed, {failed} failed")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

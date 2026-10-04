@@ -8,15 +8,3 @@ target-version = "py311"
 # Ruff's default rule set, stated explicitly: pyflakes (F) + a safe slice of
 # pycodestyle errors (E4 imports, E7 statements, E9 syntax). Broaden deliberately.
 select = ["E4", "E7", "E9", "F", "ANN"]
-
-# ANN (annotations) is a ratchet alongside the basedpyright baseline (tools/typing-baseline.json).
-# Files listed here predate the rule. Shrink only: delete an entry once its file is annotated;
-# never add one. New files are checked from their first commit.
-[lint.per-file-ignores]
-"tests/test_agenda.py" = ["ANN"]
-"tests/test_agent_profiles.py" = ["ANN"]
-"tests/test_host_runtime.py" = ["ANN"]
-"tests/test_provider_commands.py" = ["ANN"]
-"tests/test_provider_smoke.py" = ["ANN"]
-"tests/test_scoped_search.py" = ["ANN"]
-"tests/test_wiki_modules.py" = ["ANN"]
