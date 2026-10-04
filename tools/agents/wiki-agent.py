@@ -3,7 +3,7 @@
 
 Canonical role definitions live in .agents/roles/*.md. This launcher injects
 the role body into a provider-specific headless command and adds orchestration:
-enhance loops, CoS live-context gathering, PDF pre-extraction, inbox promotion,
+enhance loops, CoS live-context gathering, private PDF pre-extraction,
 and auto-logging.
 """
 
@@ -11,54 +11,59 @@ import argparse
 import datetime as _dt
 import itertools
 import os
+import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 
 ROOT = Path(__file__).resolve().parents[2]
 AGENTS_DIR = ROOT / ".agents" / "roles"
 TOOLS_DIR = ROOT / "tools"
+sys.path.insert(0, str(TOOLS_DIR))
+from llm_provider import BACKENDS  # noqa: E402
+from agent_profiles import AGENT_FILES, load_role, resolve_role_settings  # noqa: E402
+from agent_capabilities import (  # noqa: E402
+    claude_tools,
+    profile_capabilities,
+)
+from local_runtime import (  # noqa: E402
+    active_scope,
+    active_working_directory,
+    launch_headless,
+    verify_active_boundary,
+)
+from provider_commands import ProviderCommandRequest, build_provider_command  # noqa: E402
+from process_control import (  # noqa: E402
+    ProcessCleanupError as AgentCleanupError,
+    signal_group as _signal_agent_group,  # noqa: F401 - compatibility seam for cancellation probes
+    terminate_group as _terminate_agent_group,
+)
 
 
-def _in_container() -> bool:
-    """True when running inside the Brain devcontainer.
-
-    DEVCONTAINER=true is set by the sandbox launcher (.devcontainer/bin/agent
-    passes -e DEVCONTAINER=true). /.dockerenv exists only under Docker, not
-    apple/container, so the env var is the reliable signal here. Either suffices.
-    """
-    return os.environ.get("DEVCONTAINER") == "true" or Path("/.dockerenv").exists()
-
-
-def _enforce_container(args) -> int | None:
-    """Refuse to invoke the agent CLIs outside the egress-locked sandbox.
-
-    This runner shells out to the selected agent CLI, which must only run inside the
-    container. --help and --debug (a dry run that prints the command without
-    executing) are still allowed on the host. Set BRAIN_AGENT_ALLOW_HOST=1 to
-    override (not recommended).
-    """
-    if _in_container() or args.debug or os.environ.get("BRAIN_AGENT_ALLOW_HOST") == "1":
+def _enter_runtime(args, argv) -> int | None:
+    """Wrap this entire launcher before any live document reads; never fall back."""
+    try:
+        if active_scope() is None:
+            return launch_headless(ROOT, args, argv=argv)
+        scope = verify_active_boundary()
+        if scope.root != ROOT:
+            raise ValueError("Runtime scope belongs to another vault")
         return None
-    sys.stderr.write(
-        "wiki-agent.py must run inside the Brain devcontainer (it invokes the\n"
-        "agent CLIs in the egress-locked sandbox). Run it via:\n"
-        "    brain-wiki <agent> [args]     e.g. brain-wiki enhance --strategy coverage\n"
-        "Or pass --debug to dry-run on the host. Set BRAIN_AGENT_ALLOW_HOST=1 to\n"
-        "override the sandbox requirement (not recommended).\n"
-    )
-    return 2
+    except AgentCleanupError as exc:
+        print(f"Local runtime cancellation UNCONFIRMED: {exc}", file=sys.stderr)
+        return 125
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        print(f"Local agent runtime blocked: {exc}", file=sys.stderr)
+        return 2
 
 
 def _resolve_pdf_to_markdown(path_str: str) -> str:
-    """If path_str points to a PDF in raw/sources/, return its raw/sources-text/ markdown sibling.
-
-    Auto-runs `python3 tools/wiki.py preprocess --pdf <path>` if the sibling is missing
-    or older than the PDF. Returns the original path if it is not a PDF or extraction fails.
-    """
+    """Extract an approved PDF into per-run scratch, keeping raw sources immutable."""
     if not path_str or not path_str.lower().endswith(".pdf"):
         return path_str
 
@@ -67,141 +72,54 @@ def _resolve_pdf_to_markdown(path_str: str) -> str:
         if not Path(path_str).is_absolute()
         else Path(path_str).resolve()
     )
+    scope = active_scope()
+    if scope is None or not scope.readable(pdf_abs):
+        raise ValueError("PDF is outside the approved runtime read selection")
     if not pdf_abs.exists():
         return path_str
+    extractor = shutil.which("pdftotext")
+    if not extractor:
+        return str(pdf_abs)
+    import tempfile
 
-    if TOOLS_DIR not in [Path(p) for p in sys.path]:
-        sys.path.insert(0, str(TOOLS_DIR))
+    scratch = Path(os.environ["TMPDIR"])
     try:
-        from wiki_ingest import extract_pdf_to_markdown  # type: ignore[import]
-    except ImportError as exc:
-        print(f"Warning: could not import wiki_ingest.extract_pdf_to_markdown: {exc}")
-        return path_str
-
-    try:
-        text_path, _status = extract_pdf_to_markdown(pdf_abs, force=False)
-        print(f"Pre-extracted PDF -> {text_path.relative_to(ROOT)}")
+        with tempfile.NamedTemporaryFile(
+            suffix=".txt", dir=scratch, delete=False
+        ) as output:
+            text_path = Path(output.name)
+        subprocess.run(
+            [extractor, "-layout", str(pdf_abs), str(text_path)],
+            check=True,
+            timeout=120,
+        )
+        if text_path.stat().st_size > 16 * 1024 * 1024:
+            text_path.unlink()
+            raise ValueError("PDF text exceeds the 16 MiB extraction limit")
+        print(
+            f"Pre-extracted {pdf_abs.name} into private run scratch; cite {pdf_abs.relative_to(ROOT)}"
+        )
         return str(text_path)
-    except Exception as exc:  # noqa: BLE001
-        print(f"Warning: PDF preprocess failed for {pdf_abs.name}: {exc}")
-        print("Falling back to attaching the original PDF.")
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        print(f"PDF extraction unavailable for {pdf_abs.name}: {exc}", file=sys.stderr)
         return str(pdf_abs)
 
-
-AGENT_FILES = {
-    "quality": "wiki-quality-reviewer.md",
-    "verify": "wiki-source-verifier.md",
-    "ingest": "wiki-ingest.md",
-    "contradict": "wiki-contradiction-detector.md",
-    "search": "wiki-search.md",
-    "enhance": "wiki-enhancer.md",
-    "cos": "wiki-cos.md",
-    "challenge": "wiki-challenge.md",
-    "connect": "wiki-connect.md",
-    "emerge": "wiki-emerge.md",
-    "discover": "wiki-idea-discovery.md",
-    "project-run": "wiki-project-runner.md",
-}
 
 CLI_OPTIONS = {
     "claude": "claude",
     "codex": "codex",
 }
 
-# Per-agent runtime permissions. Claude maps these to --allowedTools / --add-dir;
-# Codex maps them to its read-only or workspace-write sandbox. Generated native
-# manifests mirror the same capability tier for interactive subagent use.
-#   shell:         grant a curated read-only shell command set.
-#   write:         grant the file write/edit tool (+ extra shell tools needed to manage files).
-#   writable_dirs: paths (relative to ROOT) the agent must be able to modify. Empty for read-only
-#                  agents. CLIs that scope writes to specific directories use this list.
-AGENT_PERMISSIONS: dict[str, dict] = {
-    "quality": {"shell": False, "write": False, "writable_dirs": []},
-    "verify": {"shell": False, "write": False, "writable_dirs": []},
-    "search": {"shell": True, "write": False, "writable_dirs": []},
-    "contradict": {"shell": True, "write": False, "writable_dirs": []},
-    "ingest": {"shell": True, "write": True, "writable_dirs": ["wiki"]},
-    "enhance": {
-        "shell": True,
-        "write": True,
-        # The author profile mounts only wiki/ RW (raw/ is read-only in the
-        # sandbox), so raw/sources-text cannot be a write target here.
-        # Pre-extraction to raw/sources-text is a host/ingest-time step.
-        "writable_dirs": ["wiki"],
-    },
-    "cos": {"shell": True, "write": False, "writable_dirs": []},
-    # Nightly autonomous project runner. Writes only inside projects/; the
-    # per-slug `project` mount profile (selected host-side by brain-wiki via
-    # BRAIN_WRITE_PATH=projects/<slug>) is the real boundary — this broad
-    # writable_dirs only drives --add-dir.
-    "project-run": {"shell": True, "write": True, "writable_dirs": ["projects"]},
-    # Read-only "thinking" agents — search the vault, emit text, never write.
-    "challenge": {"shell": True, "write": False, "writable_dirs": []},
-    "connect": {"shell": True, "write": False, "writable_dirs": []},
-    "emerge": {"shell": True, "write": False, "writable_dirs": []},
-    "discover": {"shell": True, "write": False, "writable_dirs": []},
+# Capabilities come from the same canonical role metadata as native adapters.
+AGENT_PERMISSIONS = {
+    agent: profile_capabilities(load_role(AGENTS_DIR / filename).permission_profile)
+    for agent, filename in AGENT_FILES.items()
 }
-
-# Shell command prefixes granted to agents with shell access. This is a
-# best-effort usability allowlist, not the security boundary: shell syntax and
-# command options can still have side effects. The container mount profile is
-# the enforced read/write boundary. Keep each rule as narrow as practical for
-# host-override and profile-misassignment cases.
-READ_ONLY_SHELL_COMMANDS = (
-    "ls",
-    "grep",
-    "cat",
-    "head",
-    "tail",
-    "wc",
-    "sort",
-    "uniq",
-    "cut",
-    "tr",
-    "date",
-    "qmd",
-)
-READ_ONLY_SHELL_RULES = (
-    "python3 tools/wiki.py lint",
-    "python3 tools/wiki.py lint --strict",
-    "python3 tools/wiki.py lint --json",
-    "python3 tools/wiki.py lint --strict --json",
-    "python3 tools/wiki.py search *",
-    "python3 tools/wiki.py coverage *",
-    "python3 tools/wiki.py tags *",
-    "python3 tools/wiki.py next-id",
-    "python3 tools/wiki.py stats",
-    "python3 tools/wiki.py sample *",
-    "python3 tools/wiki.py validate-log",
-    "python3 tools/wiki.py archive list *",
-    "python3 tools/wiki.py inventory list *",
-    "python3 tools/wiki.py inventory show *",
-    "python3 tools/wiki.py project list *",
-    "python3 tools/wiki.py project show *",
-    "python3 tools/wiki.py project agenda status *",
-    "python3 tools/wiki.py project agenda due *",
-    "python3 tools/wiki.py project agenda clarifications *",
-    "python3 tools/wiki.py project agenda lint *",
-    "python3 tools/wiki.py project agenda new-id *",
-)
-WRITE_SHELL_RULES = ("python3 tools/wiki.py *",)
-
-# Shell commands granted only to write-capable agents. Filesystem mutators
-# (mkdir/touch/mv/cp) and text editors used in scripted edits (sed/awk in-place).
-# NOTE: sed/awk are full scripting engines whose blast radius is bounded only by
-# the container MOUNT profile, NOT this allowlist (a `sed -i` can rewrite any
-# writable path, not just wiki/). They are safe only because write agents run
-# under the author/scoped profile (wiki/ RW, everything else RO). Never run a
-# write agent under the master profile (whole workspace RW), or sed/awk could
-# rewrite raw/ or projects/ despite the agent's prompt forbidding it.
-WRITE_SHELL_COMMANDS = ("touch", "mkdir", "mv", "cp", "sed", "awk")
 
 
 def _agent_permissions(agent: str) -> dict:
-    """Return the permission profile for an agent, defaulting to read-only."""
-    return AGENT_PERMISSIONS.get(
-        agent, {"shell": False, "write": False, "writable_dirs": []}
-    )
+    """Return canonical role capabilities, defaulting unknown names to read-only."""
+    return AGENT_PERMISSIONS.get(agent, profile_capabilities("read"))
 
 
 STRATEGY_HINTS = {
@@ -260,16 +178,24 @@ ALTERNATE_CYCLE = ["coverage", "source-gap", "random", "stub"]
 
 def _queue_entries(queue_dir: Path) -> list[tuple[Path, os.stat_result]]:
     """Return visible queue entries newest-first without racing synced storage."""
-    if not queue_dir.is_dir():
+    scope = active_scope()
+    if scope and not scope.readable(queue_dir):
+        return []
+    if queue_dir.is_symlink() or not queue_dir.is_dir():
         return []
     entries: list[tuple[Path, os.stat_result]] = []
     for path in queue_dir.iterdir():
-        if path.name.startswith("."):
+        if path.name.startswith(".") or (scope and not scope.readable(path)):
             continue
         try:
-            entries.append((path, path.stat()))
+            metadata = path.lstat()
         except OSError:
             continue
+        if stat.S_ISLNK(metadata.st_mode) or (
+            stat.S_ISREG(metadata.st_mode) and metadata.st_nlink != 1
+        ):
+            continue
+        entries.append((path, metadata))
     entries.sort(key=lambda item: item[1].st_mtime, reverse=True)
     return entries
 
@@ -284,19 +210,37 @@ def _gather_cos_context(mode: str, project_filter: str | None) -> str:
     """Gather live project state and inject it as context for the CoS agent.
 
     Reads project TODOs, wiki log tail, and inbox listing from the vault.
-    Runs inside the container where ROOT is the live workspace.
+    Runs only after the whole-process boundary is verified.
     """
     if str(TOOLS_DIR) not in sys.path:
         sys.path.insert(0, str(TOOLS_DIR))
     from context_sources import read_inbox_preview
 
     budget = os.environ.get("VAULTLENS_COS_CONTEXT_CHARS", "").strip()
+    scope = active_scope()
     if budget:
         if str(TOOLS_DIR) not in sys.path:
             sys.path.insert(0, str(TOOLS_DIR))
         from context_budget import gather_context
 
-        return gather_context(ROOT, mode, project_filter, int(budget), _dt.date.today())
+        import json
+
+        review = (
+            json.loads(Path(os.environ["VAULTLENS_RUNTIME_MANIFEST"]).read_text()).get(
+                "review_queue", []
+            )
+            if scope
+            else []
+        )
+        return gather_context(
+            ROOT,
+            mode,
+            project_filter,
+            int(budget),
+            _dt.date.today(),
+            scope=scope,
+            review_queue=review,
+        )
     today = _dt.date.today()
     parts: list[str] = [
         "## Live context",
@@ -308,7 +252,7 @@ def _gather_cos_context(mode: str, project_filter: str | None) -> str:
     # Inject wiki/entities/user-background.md so the CoS calibrates its brief to
     # the operator's background, goals, and working preferences.
     operator_page = ROOT / "wiki" / "entities" / "user-background.md"
-    if operator_page.exists():
+    if operator_page.exists() and (scope is None or scope.readable(operator_page)):
         try:
             parts.append("## Operator profile (wiki/entities/user-background.md)")
             parts.append(operator_page.read_text(encoding="utf-8"))
@@ -324,12 +268,15 @@ def _gather_cos_context(mode: str, project_filter: str | None) -> str:
             sys.path.insert(0, str(TOOLS_DIR))
         from project_state import is_frozen_project  # type: ignore[import]
 
+        candidates = scope.project_directories() if scope else projects_root.iterdir()
         project_dirs = sorted(
             [
                 d
-                for d in projects_root.iterdir()
+                for d in candidates
                 if d.is_dir()
+                and not d.is_symlink()
                 and not d.name.startswith(".")
+                and (scope is None or scope.readable(d / "project.md"))
                 and (project_filter or not is_frozen_project(d))
             ],
             key=lambda d: d.name,
@@ -341,7 +288,7 @@ def _gather_cos_context(mode: str, project_filter: str | None) -> str:
     todo_blocks: list[str] = []
     for proj_dir in project_dirs:
         todo_file = proj_dir / "TODO.md"
-        if not todo_file.exists():
+        if not todo_file.exists() or (scope and not scope.readable(todo_file)):
             continue
         try:
             content = todo_file.read_text(encoding="utf-8")
@@ -369,7 +316,7 @@ def _gather_cos_context(mode: str, project_filter: str | None) -> str:
     # --- Wiki log tail (recent activity) -------------------------------------
     if mode in ("brief", "surface", "status"):
         log_file = ROOT / "wiki" / "log.md"
-        if log_file.exists():
+        if log_file.exists() and (scope is None or scope.readable(log_file)):
             try:
                 log_lines = log_file.read_text(encoding="utf-8").splitlines()
                 recent = log_lines[-60:]
@@ -385,7 +332,7 @@ def _gather_cos_context(mode: str, project_filter: str | None) -> str:
     # catch as a transient macOS notification.
     if mode in ("brief", "status"):
         status_file = ROOT / "wiki" / "reports" / "schedule-status.md"
-        if status_file.exists():
+        if status_file.exists() and (scope is None or scope.readable(status_file)):
             try:
                 parts.append("\n## Scheduler health (nightly batch)")
                 parts.append(status_file.read_text(encoding="utf-8"))
@@ -401,12 +348,19 @@ def _gather_cos_context(mode: str, project_filter: str | None) -> str:
                 sys.path.insert(0, str(TOOLS_DIR))
             import agenda  # type: ignore[import]
 
-            parts.append(
-                "\n"
-                + agenda.format_desk_status(
-                    agenda.desk_status(ROOT / "projects", today)
+            selected = (
+                frozenset(
+                    directory.name
+                    for directory in project_dirs
+                    if scope.readable(directory / "AGENDA.md")
                 )
+                if scope
+                else None
             )
+            desks = agenda.desk_status(
+                ROOT / "projects", today, selected_projects=selected
+            )
+            parts.append("\n" + agenda.format_desk_status(desks))
         except Exception as exc:  # never let status-gather break the brief
             parts.append(f"\n## Desk status (agents) — unavailable ({exc})")
 
@@ -436,8 +390,21 @@ def _gather_cos_context(mode: str, project_filter: str | None) -> str:
     # This is a consent gate, not an ingest queue. Surface names so the operator
     # knows a decision is waiting, but never preview or process an item by default.
     review_dir = ROOT / "raw" / "review-inbox"
-    review_entries = _queue_entries(review_dir)
-    if review_dir.is_dir():
+    if scope:
+        import json
+
+        metadata = json.loads(
+            Path(os.environ["VAULTLENS_RUNTIME_MANIFEST"]).read_text()
+        ).get("review_queue", [])
+        review_entries = [
+            (ROOT / "raw/review-inbox" / item["name"], item["size"])
+            for item in metadata
+        ]
+    else:
+        review_entries = [
+            (path, info.st_size) for path, info in _queue_entries(review_dir)
+        ]
+    if review_entries:
         parts.append(
             f"\n## Review inbox: raw/review-inbox/ ({len(review_entries)} files)"
         )
@@ -445,8 +412,8 @@ def _gather_cos_context(mode: str, project_filter: str | None) -> str:
             "Consent required: list names only and ask the operator before reading, "
             "summarizing, moving, or ingesting any item."
         )
-        for f, st in review_entries:
-            parts.append(_format_queue_entry(f, st))
+        for f, size in review_entries:
+            parts.append(f"- {f.name} ({size}B)")
     else:
         parts.append("\n## Review inbox: raw/review-inbox/ — directory not found")
 
@@ -462,16 +429,6 @@ def _resolve_strategy(strategy: str | None, iteration_index: int) -> str | None:
     if strategy == "alternate":
         return ALTERNATE_CYCLE[iteration_index % len(ALTERNATE_CYCLE)]
     return strategy
-
-
-# Claude behavior stays backward-compatible: effort is accepted but remains
-# inherited from the CLI configuration. Codex maps it to model_reasoning_effort.
-CLAUDE_EFFORT_MAP: dict[str, list[str]] = {
-    "low": [],
-    "medium": [],
-    "high": [],
-    "xhigh": [],
-}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -582,18 +539,16 @@ Examples:
     parser.add_argument(
         "--cli",
         choices=list(CLI_OPTIONS.keys()),
-        default="claude",
-        help="CLI to use (default: claude for backward compatibility)",
+        help="CLI override (otherwise environment, tools/llm.local.json, then claude)",
     )
     parser.add_argument(
         "--model",
-        help="Model to use (defaults to CLI's best option)",
+        help="Model override (otherwise provider configuration or role profile)",
     )
     parser.add_argument(
         "--effort",
         choices=["low", "medium", "high", "xhigh"],
-        default="high",
-        help="Thinking effort (default: high)",
+        help="Thinking effort override (otherwise the canonical role setting)",
     )
     parser.add_argument(
         "--system",
@@ -606,7 +561,16 @@ Examples:
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Print the full command without executing",
+        help="Preview access metadata without reading notes or executing a model",
+    )
+    parser.add_argument(
+        "--access-profile", help="Versioned local access profile override"
+    )
+    parser.add_argument(
+        "--read-path",
+        action="append",
+        default=[],
+        help="Additional approved vault file or folder; repeatable",
     )
     parser.add_argument(
         "--timeout",
@@ -642,18 +606,26 @@ def _positive_int(value: str) -> int:
 
 def get_default_model(cli: str) -> str:
     """Get default model for CLI."""
-    defaults = {
-        "claude": "sonnet",
-        # Let Codex resolve the account/workspace default unless the caller pins
-        # a model explicitly. This avoids baking a fast-moving model ID here.
-        "codex": "",
-    }
-    return defaults.get(cli, "default")
+    return BACKENDS.get(cli, {}).get("model", "default")
+
+
+def _selected_executable(cli: str) -> str:
+    if active_scope():
+        executable = os.environ.get("VAULTLENS_PROVIDER_EXECUTABLE", "")
+        if (
+            os.environ.get("VAULTLENS_PROVIDER_CLI") != cli
+            or not Path(executable).is_absolute()
+        ):
+            raise ValueError(
+                "Native provider executable handoff is missing or mismatched"
+            )
+        return executable
+    return CLI_OPTIONS.get(cli, cli)
 
 
 def validate_cli(cli: str) -> bool:
     """Check that the chosen CLI is installed."""
-    return shutil.which(CLI_OPTIONS[cli]) is not None
+    return shutil.which(_selected_executable(cli)) is not None
 
 
 def build_prompt(
@@ -756,28 +728,40 @@ def _prepare_system_prompt(agent_file: Path, system_addon: str) -> str:
 
 
 def _build_allowed_tools(perms: dict) -> list[str]:
-    """The `--allowedTools` list for a permission profile. Read/Grep/Glob are
-    always granted (read-only navigation), so bash:false agents like quality and
-    verify can still check links and find orphans. shell and write add to it.
-    `Bash(<cmd> *)` is Claude Code's prefix-match form. This helper is only used
-    by the Claude adapter and stays pure so tools/tests/test_agent.py can assert it."""
-    tools = ["Read", "Grep", "Glob"]
-    if perms["shell"]:
-        tools.extend(f"Bash({c} *)" for c in READ_ONLY_SHELL_COMMANDS)
-        tools.extend(f"Bash({rule})" for rule in READ_ONLY_SHELL_RULES)
-        if perms["write"]:
-            tools.extend(f"Bash({c} *)" for c in WRITE_SHELL_COMMANDS)
-            tools.extend(f"Bash({rule})" for rule in WRITE_SHELL_RULES)
-    if perms["write"]:
-        tools.extend(["Edit", "Write"])
-    return tools
+    """Return explicit permission grants for an unattended Claude launch."""
+    return claude_tools(perms)
+
+
+_ACTIVE_AGENT_PROCESS: subprocess.Popen | None = None
+
+
+def _run_agent_command(cmd: list[str], *, cwd: Path, timeout: int) -> int:
+    """Inherit output, but own a process group for timeout and cancellation."""
+    global _ACTIVE_AGENT_PROCESS
+    process = subprocess.Popen(cmd, cwd=cwd, start_new_session=True)
+    _ACTIVE_AGENT_PROCESS = process
+    try:
+        result = process.wait(timeout=timeout)
+        if result < 0 or result in (128 + signal.SIGINT, 128 + signal.SIGTERM):
+            raise AgentCleanupError(
+                "Native provider interrupted; detached tool cleanup requires operator verification"
+            )
+        return result
+    finally:
+        # Tools may outlive a successful leader too. A second stop signal must
+        # not interrupt cleanup, and the outer lock is held until this finishes.
+        _ACTIVE_AGENT_PROCESS = None
+        try:
+            _terminate_agent_group(process)
+        finally:
+            process.poll()
 
 
 def invoke_agent(
     agent: str,
     cli: str,
     model: str,
-    effort: str,
+    effort: str | None,
     prompt: str,
     system_addon: str,
     extra_args: list,
@@ -796,6 +780,7 @@ def invoke_agent(
     system_text += "\n\n" + (ROOT / ".agents" / "context-policy.md").read_text(
         encoding="utf-8"
     )
+    system_text += "\n\nRuntime contract: The local whole-process runtime and its access profile supersede legacy container instructions. Never use retired container launchers, proxy allowlists or container rebuilds. Sources remain immutable at their actual paths, including raw/inbox. Use qmd for scoped lexical search; global indexes and hosted web tools are unavailable. Mark tasks needing unapproved endpoints as blocked. Reports and edits must stay in the approved scope."
     perms = _agent_permissions(agent)
     task_prompt = prompt
     if extra_args:
@@ -812,7 +797,7 @@ def invoke_agent(
         f"Invoking {agent} agent with {cli}" + (f" ({model})" if model else ""),
         file=sys.stderr,
     )
-    print(f"Effort: {effort}", file=sys.stderr)
+    print(f"Effort: {effort or 'CLI default'}", file=sys.stderr)
     print(f"Agent: {agent_file.name}", file=sys.stderr)
     print(file=sys.stderr)
 
@@ -827,108 +812,177 @@ def invoke_agent(
         return 0
 
     try:
-        result = subprocess.run(cmd, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        print(f"Error: {cli} timed out after {timeout} seconds")
-        return 124
+        verify_active_boundary()
+        # Canonical roles and helper commands use vault-relative paths. In
+        # particular Claude has no equivalent of Codex's explicit -C flag.
+        return _run_agent_command(
+            cmd,
+            cwd=active_working_directory() if active_scope() else ROOT,
+            timeout=timeout,
+        )
+    except (subprocess.TimeoutExpired, AgentCleanupError) as exc:
+        if active_scope():
+            import json
+
+            (Path(os.environ["TMPDIR"]) / "inner-cancellation.json").write_text(
+                json.dumps({"group_id": getattr(exc, "group_id", None)})
+            )
+        if isinstance(exc, subprocess.TimeoutExpired):
+            print(
+                f"Error: {cli} timed out after {timeout} seconds; detached tool cleanup requires operator verification"
+            )
+        print(f"Error: {cli} cancellation UNCONFIRMED: {exc}")
+        return 125
     except OSError as exc:
         # e.g. the CLI binary was removed after validate_cli() passed (TOCTOU),
         # or exec failed. Return a non-zero rc so the --forever loop's error
         # handling can catch it instead of an unhandled traceback aborting it.
         print(f"Error: failed to launch {cli}: {exc}")
         return 127
-    return result.returncode
+    except ValueError as exc:
+        print(f"Error: runtime confinement: {exc}", file=sys.stderr)
+        return 2
 
 
 def build_cli_command(
     cli: str,
     model: str,
-    effort: str,
+    effort: str | None,
     role_prompt: str,
     task_prompt: str,
     perms: dict,
 ) -> list[str]:
-    """Build one provider-specific non-interactive CLI command."""
-    if cli == "claude":
-        cmd = [CLI_OPTIONS[cli], "-p"]
-        if model:
-            cmd.extend(["--model", model])
-        cmd.extend(CLAUDE_EFFORT_MAP.get(effort, []))
-        cmd.extend(["--system-prompt", role_prompt])
-        cmd.extend(["--allowedTools", ",".join(_build_allowed_tools(perms))])
-        cmd.extend(["--disallowedTools", "Task"])
-        for directory in perms.get("writable_dirs", []):
-            cmd.extend(["--add-dir", str(ROOT / directory)])
-        cmd.extend(
-            ["--permission-mode", "acceptEdits" if perms["write"] else "default"]
-        )
-        cmd.append(task_prompt)
-        return cmd
-
-    if cli == "codex":
-        sandbox = "workspace-write" if perms["write"] else "read-only"
-        cmd = [
-            CLI_OPTIONS[cli],
-            "exec",
-            "--ephemeral",
-            "--color",
-            "never",
-            "-C",
-            str(ROOT),
-            "--sandbox",
-            sandbox,
-            "-c",
-            'approval_policy="never"',
-            "-c",
-            "agents.enabled=false",
-            "-c",
-            f'model_reasoning_effort="{effort}"',
-        ]
-        if model:
-            cmd.extend(["--model", model])
-        cmd.append(f"{role_prompt}\n\n# Task\n\n{task_prompt}")
-        return cmd
-
-    raise ValueError(f"Unsupported CLI: {cli}")
-
-
-def _promote_inbox_pdf(source_path: str) -> str:
-    """Promote an ingested inbox PDF to raw/sources/; return its canonical path.
-
-    The ingest agent runs sandboxed (only wiki/ is writable), so the launcher
-    performs the move after a successful run. Returns the (possibly unchanged)
-    path the rest of the flow should treat as canonical for logging.
-    """
-    if not source_path.lower().endswith(".pdf"):
-        return source_path
-
-    pdf_abs = (
-        (ROOT / source_path).resolve()
-        if not Path(source_path).is_absolute()
-        else Path(source_path).resolve()
+    """Delegate syntax to native adapters; access always comes from the runtime."""
+    scope = active_scope()
+    if scope is not None:
+        # A manifest alone is not proof of isolation. Delegate Codex's nested
+        # OS sandbox only after both confinement canaries are denied.
+        scope = verify_active_boundary()
+        if scope.root != ROOT:
+            raise ValueError("Runtime scope belongs to another vault")
+    mcp = os.environ.get("VAULTLENS_SCOPED_MCP") if scope else None
+    request = ProviderCommandRequest(
+        model,
+        effort,
+        role_prompt,
+        task_prompt,
+        active_working_directory() if scope else ROOT,
+        bool(perms.get("shell")),
+        bool(perms.get("write")),
+        python_shell=bool(perms.get("python_shell")),
+        writable_roots=scope.write_paths if scope else (),
+        mcp_config=Path(mcp) if mcp else None,
+        # Provider-hosted browsing is outside the local domain boundary.
+        web_search=False,
+        network_access=bool(scope and scope.research_domains),
+        os_isolation_delegated=scope is not None,
     )
-    if not pdf_abs.exists():
-        return source_path
+    return build_provider_command(cli, request, executable=_selected_executable(cli))
 
-    if TOOLS_DIR not in [Path(p) for p in sys.path]:
-        sys.path.insert(0, str(TOOLS_DIR))
+
+def _inbox_pdf(source: str) -> Path | None:
+    """Identify immutable inbox PDFs requiring a verified source citation."""
+    path = (ROOT / source).resolve()
+    if path.suffix.lower() != ".pdf" or not path.is_file():
+        return None
     try:
-        from wiki_ingest import promote_inbox_pdf  # type: ignore[import]
-    except ImportError as exc:
-        print(f"Warning: could not import wiki_ingest.promote_inbox_pdf: {exc}")
-        return source_path
+        path.relative_to((ROOT / "raw" / "inbox").resolve())
+    except ValueError:
+        return None
+    return path
 
-    try:
-        dest = promote_inbox_pdf(pdf_abs)
-    except Exception as exc:  # noqa: BLE001
-        print(f"Warning: could not promote {pdf_abs.name} to raw/sources/: {exc}")
-        return source_path
 
-    if dest is None:
-        return source_path
-    rel = dest.relative_to(ROOT).as_posix()
-    print(f"Promoted ingested PDF: raw/inbox/{dest.name} -> {rel}")
-    return rel
+def _source_page_snapshot() -> dict[Path, bytes]:
+    """Record content, so an unchanged page cannot certify a new ingest run."""
+    return {
+        path: path.read_bytes() for path in (ROOT / "wiki" / "sources").glob("*.md")
+    }
+
+
+def _verify_ingest_result(pdf: Path, before: dict[Path, bytes]) -> bool:
+    """Require a changed, structurally valid source page citing this canonical PDF.
+
+    This verifies an output artifact, not the accuracy of the model's summary.
+    Citations must name the actual immutable input path.
+    """
+    from wiki import (
+        INLINE_CODE_RE,
+        extract_wikilinks,
+        normalize_link_target,
+        parse_frontmatter,
+    )
+    from wiki_lint import (
+        REQUIRED_FRONTMATTER_BASE,
+        REQUIRED_FRONTMATTER_BY_CATEGORY,
+    )
+
+    required = REQUIRED_FRONTMATTER_BASE | REQUIRED_FRONTMATTER_BY_CATEGORY["sources"]
+    target = pdf.resolve().relative_to(ROOT.resolve()).as_posix()
+    for path, content in _source_page_snapshot().items():
+        if content == before.get(path):
+            continue
+        text = content.decode("utf-8")
+        metadata, body = parse_frontmatter(text)
+        if any(
+            not isinstance(metadata.get(field), str) or not metadata[field].strip()
+            for field in required
+        ):
+            continue
+        if metadata["type"] != "source" or metadata["status"] != "active":
+            continue
+        if metadata["source_type"] not in {
+            "article",
+            "paper",
+            "book",
+            "pdf",
+            "video",
+            "podcast",
+            "dataset",
+            "note",
+            "other",
+        }:
+            continue
+        if metadata["source_id"] != path.stem or not re.fullmatch(
+            r"src-\d{4}-\d{2}-\d{2}-\d{3,}", path.stem
+        ):
+            continue
+        try:
+            if any(
+                not re.fullmatch(r"\d{4}-\d{2}-\d{2}", metadata[field])
+                for field in ("created", "updated", "ingested_on")
+            ):
+                continue
+            dates = {
+                field: _dt.date.fromisoformat(metadata[field])
+                for field in ("created", "updated", "ingested_on")
+            }
+        except ValueError:
+            continue
+        if dates["updated"] < dates["created"] or not body.strip():
+            continue
+        citations = {normalize_link_target(link) for link in extract_wikilinks(body)}
+        citation_lines = []
+        in_code = False
+        for line in body.splitlines():
+            if line.strip().startswith("```"):
+                in_code = not in_code
+            elif not in_code:
+                citation_lines.append(INLINE_CODE_RE.sub("", line))
+        # Angle-bracket markdown links are required for PDF names containing ']'.
+        for match in re.finditer(
+            r"\]\((?:<([^>\n]+)>|([^\s)]+))\)", "\n".join(citation_lines)
+        ):
+            link = unquote(match.group(1) or match.group(2))
+            if link == target:
+                citations.add(link)
+            resolved = (path.parent / link).resolve()
+            try:
+                citations.add(resolved.relative_to(ROOT.resolve()).as_posix())
+            except ValueError:
+                continue
+        if target in citations:
+            return True
+    return False
 
 
 def run_agent(args, strategy: str | None = None) -> int:
@@ -949,7 +1003,7 @@ def run_agent(args, strategy: str | None = None) -> int:
     )
 
     # Get model
-    model = args.model or get_default_model(args.cli)
+    model = args.model if args.model is not None else get_default_model(args.cli)
     effort = args.effort
 
     # Build extra args based on agent — resolve to absolute paths for -f flags
@@ -960,7 +1014,11 @@ def run_agent(args, strategy: str | None = None) -> int:
         extra_args = [str((ROOT / args.source).resolve())]
     elif args.agent == "ingest" and args.source:
         # PDFs get pre-extracted to raw/sources-text/*.md so the model can read them.
-        extra_args = [_resolve_pdf_to_markdown(args.source)]
+        extra_args = [
+            str((ROOT / args.source).resolve())
+            if args.debug
+            else _resolve_pdf_to_markdown(args.source)
+        ]
     elif args.agent == "search":
         # The query IS the prompt (see the prompt builder). Only attach it as a
         # file to read when it is an actual existing path; a free-text search term
@@ -976,7 +1034,11 @@ def run_agent(args, strategy: str | None = None) -> int:
             args.source if args.source and args.source.endswith(".pdf") else ""
         )
         if pdf_path:
-            targets.append(_resolve_pdf_to_markdown(pdf_path))
+            targets.append(
+                str((ROOT / pdf_path).resolve())
+                if args.debug
+                else _resolve_pdf_to_markdown(pdf_path)
+            )
         if args.page:
             targets.append(str((ROOT / args.page).resolve()))
         if args.topic:
@@ -986,7 +1048,12 @@ def run_agent(args, strategy: str | None = None) -> int:
             targets.append(str((ROOT / args.source).resolve()))
         extra_args = targets
 
-    if not validate_cli(args.cli):
+    try:
+        installed = validate_cli(args.cli)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    if not installed:
         print(f"Error: CLI '{args.cli}' not found in PATH.")
         print(f"Available CLIs: {', '.join(CLI_OPTIONS.keys())}")
         return 1
@@ -1007,6 +1074,18 @@ def run_agent(args, strategy: str | None = None) -> int:
             print(f"Error: live context could not be prepared: {exc}", file=sys.stderr)
             return 2
 
+    inbox_pdf = (
+        _inbox_pdf(source) if args.agent == "ingest" and not args.debug else None
+    )
+    try:
+        source_pages_before = _source_page_snapshot() if inbox_pdf else {}
+    except OSError as exc:
+        print(
+            f"Error: cannot snapshot source pages before ingestion: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+
     rc = invoke_agent(
         args.agent,
         args.cli,
@@ -1020,11 +1099,24 @@ def run_agent(args, strategy: str | None = None) -> int:
         timeout=args.timeout,
     )
 
-    if args.agent == "ingest" and rc == 0 and args.source:
-        # Promote the PDF out of raw/inbox/ into raw/sources/ now that it is in the
-        # wiki. The ingest agent writes its own richer wiki/log.md entry (step 4 of
-        # wiki-ingest.md, like enhance), so the launcher no longer double-logs here.
-        _promote_inbox_pdf(args.source)
+    if args.agent == "ingest" and rc == 0 and args.source and not args.debug:
+        if inbox_pdf:
+            try:
+                verified = _verify_ingest_result(inbox_pdf, source_pages_before)
+            except (OSError, UnicodeError) as exc:
+                print(f"Error: cannot verify ingestion output: {exc}", file=sys.stderr)
+                return 2
+            if not verified:
+                print(
+                    "Error: ingestion returned success without a new or updated valid "
+                    f"source page citing {inbox_pdf.relative_to(ROOT.resolve())}. "
+                    "The PDF remains in raw/inbox/. Complete the source page metadata "
+                    "and canonical PDF citation, then retry ingestion.",
+                    file=sys.stderr,
+                )
+                return 2
+        # Raw is protected from every agent and from the orchestrator. The
+        # scheduler skips already cited inbox sources without moving them.
 
     return rc
 
@@ -1033,15 +1125,17 @@ _STOP_REQUESTED = False
 
 
 def _install_signal_handlers() -> None:
-    """Set _STOP_REQUESTED on SIGINT/SIGTERM so the loop exits between iterations."""
+    """Stop between iterations, or cancel the owned process group during a run."""
 
     def _handler(signum, _frame):
         global _STOP_REQUESTED
         _STOP_REQUESTED = True
         name = signal.Signals(signum).name
-        print(
-            f"\n[wiki-agent] {name} received; finishing current iteration then exiting."
-        )
+        if _ACTIVE_AGENT_PROCESS is not None:
+            print(f"\n[wiki-agent] {name} received; stopping agent and its tools.")
+            # _run_agent_command catches this and cleans up before propagating.
+            raise SystemExit(128 + signum)
+        print(f"\n[wiki-agent] {name} received; exiting between iterations.")
 
     signal.signal(signal.SIGINT, _handler)
     signal.signal(signal.SIGTERM, _handler)
@@ -1075,9 +1169,20 @@ def _ts() -> str:
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    try:
+        provider, args.effort = resolve_role_settings(
+            args.agent, args.cli, args.model, args.effort, root=ROOT
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+    args.cli, args.model = provider.cli, provider.model
 
-    # Refuse to run the agent CLIs on the host — they belong in the sandbox.
-    guard_rc = _enforce_container(args)
+    # Freeze provider settings before the clean child environment is constructed.
+    replay = list(sys.argv[1:] if argv is None else argv)
+    replay.extend(["--cli", args.cli, "--model", args.model])
+    if args.effort:
+        replay.extend(["--effort", args.effort])
+    guard_rc = _enter_runtime(args, replay)
     if guard_rc is not None:
         return guard_rc
 
@@ -1133,14 +1238,17 @@ def main(argv=None) -> int:
         )
 
     if args.agent == "cos" and args.mode == "inbox":
-        # Inbox mode reads the vault — must be in reader or broader profile; confirm.
-        inbox_dir = ROOT / "raw" / "inbox"
-        count = (
-            len([f for f in inbox_dir.iterdir() if not f.name.startswith(".")])
-            if inbox_dir.is_dir()
-            else 0
-        )
-        review_count = len(_queue_entries(ROOT / "raw" / "review-inbox"))
+        count = len(_queue_entries(ROOT / "raw" / "inbox"))
+        if active_scope():
+            import json
+
+            review_count = len(
+                json.loads(
+                    Path(os.environ["VAULTLENS_RUNTIME_MANIFEST"]).read_text()
+                ).get("review_queue", [])
+            )
+        else:
+            review_count = len(_queue_entries(ROOT / "raw" / "review-inbox"))
         print(
             f"[cos] Inbox mode: {count} ingest candidate(s), "
             f"{review_count} review item(s) requiring consent",
@@ -1267,6 +1375,11 @@ def main(argv=None) -> int:
             print(
                 f"[wiki-agent] {_ts()} iteration {iter_count} failed with rc={last_rc}"
             )
+            if last_rc == 125:
+                print(
+                    "[wiki-agent] cancellation UNCONFIRMED; stopping before another agent launch."
+                )
+                break
             if not args.continue_on_error:
                 print(
                     "[wiki-agent] stopping loop (use --continue-on-error to keep going)."

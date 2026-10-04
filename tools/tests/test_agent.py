@@ -11,6 +11,7 @@ no CLI is spawned. Run:
 from __future__ import annotations
 
 import importlib.util
+import argparse
 import json
 import re
 import subprocess
@@ -40,10 +41,23 @@ def check(name: str, condition: bool, detail: str = "") -> None:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--skip-claude-files",
+        action="store_true",
+        help="Skip deployed .claude files when the host denies access; fixture tests still cover generation",
+    )
+    parser.add_argument(
+        "--skip-adapter-drift",
+        action="store_true",
+        help="Skip installed adapter drift when permissions prevent regeneration; generation fixtures still run",
+    )
+    options = parser.parse_args()
     print("_build_allowed_tools:")
     ro = wa._build_allowed_tools({"shell": False, "write": False})
     check(
-        "read-only agent still gets Read+Grep+Glob (B7)", ro == ["Read", "Grep", "Glob"]
+        "read-only agent still gets Read+Grep+Glob (B7)",
+        ro == ["Read", "Grep", "Glob", "mcp__qmd__*"],
     )
     check(
         "read-only agent gets no Bash/Edit/Write",
@@ -105,6 +119,15 @@ def main() -> int:
         "write agent retains the full wiki CLI",
         "Bash(python3 tools/wiki.py *)" in wr,
     )
+    check(
+        "ordinary wiki writer has no arbitrary Python rule",
+        "Bash(python3 *)" not in wr,
+    )
+    runner_tools = wa._build_allowed_tools(wa._agent_permissions("project-run"))
+    check(
+        "project runner permits Python scripts and HTTP research",
+        "Bash(python3 *)" in runner_tools,
+    )
 
     print("config integrity:")
     check(
@@ -146,6 +169,10 @@ def main() -> int:
         "--system-prompt" in claude_cmd and claude_cmd[-1] == "TASK",
     )
     check("Claude model is explicit", ["--model", "sonnet"] == claude_cmd[2:4])
+    check(
+        "Claude receives selected effort",
+        claude_cmd[claude_cmd.index("--effort") + 1] == "high",
+    )
 
     codex_ro = wa.build_cli_command(
         "codex", "", "medium", "ROLE", "TASK", {"shell": True, "write": False}
@@ -169,15 +196,39 @@ def main() -> int:
     )
 
     print("generated adapters:")
-    generator = Path(__file__).resolve().parents[1] / "agents" / "generate-adapters.py"
-    generated = subprocess.run(
-        [sys.executable, str(generator), "--check"], capture_output=True, text=True
+    for cli in ("claude", "codex"):
+        inherited = wa.build_cli_command(
+            cli, "", None, "ROLE", "TASK", {"shell": False, "write": False}
+        )
+        check(f"{cli} inherits configured model", "--model" not in inherited)
+        check(
+            f"{cli} inherits configured effort",
+            "--effort" not in inherited
+            and not any("model_reasoning_effort=" in arg for arg in inherited),
+        )
+    selected_effort = wa.build_cli_command(
+        "codex", "", "xhigh", "ROLE", "TASK", {"shell": False, "write": False}
     )
     check(
-        "Claude and Codex manifests match canonical roles",
-        generated.returncode == 0,
-        (generated.stdout + generated.stderr).strip(),
+        "Codex preserves explicit effort",
+        'model_reasoning_effort="xhigh"' in selected_effort,
     )
+    generator = Path(__file__).resolve().parents[1] / "agents" / "generate-adapters.py"
+    generation_args = [sys.executable, str(generator), "--check"]
+    if options.skip_claude_files:
+        generation_args.extend(["--provider", "codex"])
+        print(
+            "  SKIP  deployed Claude manifests and conflict copies (access restricted)"
+        )
+    if options.skip_adapter_drift:
+        print("  SKIP  installed adapter drift (regeneration access restricted)")
+    else:
+        generated = subprocess.run(generation_args, capture_output=True, text=True)
+        check(
+            "Accessible provider manifests match canonical roles",
+            generated.returncode == 0,
+            (generated.stdout + generated.stderr).strip(),
+        )
     codex_agents = wa.ROOT / ".codex" / "agents"
     manifest_paths = sorted(codex_agents.glob("*.toml"))
     expected_manifests = {
@@ -205,9 +256,12 @@ def main() -> int:
             for data in parsed_agents
         ),
     )
+    directories = [wa.ROOT / ".agents", wa.ROOT / ".codex"]
+    if not options.skip_claude_files:
+        directories.append(wa.ROOT / ".claude")
     conflict_copies = sorted(
         path.relative_to(wa.ROOT).as_posix()
-        for directory in (wa.ROOT / ".agents", wa.ROOT / ".claude", wa.ROOT / ".codex")
+        for directory in directories
         for path in directory.rglob("*")
         if path.is_file() and re.search(r" \d+(?=\.[^.]+$)", path.name)
     )
@@ -216,12 +270,34 @@ def main() -> int:
         not conflict_copies,
         ", ".join(conflict_copies),
     )
+    boundary_agents = parsed_agents
+    if options.skip_adapter_drift:
+        # Check current generation even when protected provider directories
+        # cannot be synchronized in this desktop permission profile.
+        generator_spec = importlib.util.spec_from_file_location(
+            "adapter_generator", generator
+        )
+        generator_module = importlib.util.module_from_spec(generator_spec)
+        generator_spec.loader.exec_module(generator_module)
+        boundary_agents = [
+            tomllib.loads(generator_module.codex_manifest(role))
+            for role in generator_module.load_roles()
+        ]
     check(
-        "Codex manifests distinguish role scope from hard isolation",
+        "Codex generation distinguishes role scope from hard isolation",
         all(
             "instruction boundary" in data["developer_instructions"]
-            and "matching container profile" in data["developer_instructions"]
-            for data in parsed_agents
+            and "approved local runtime access profile"
+            in data["developer_instructions"]
+            for data in boundary_agents
+        ),
+    )
+    check(
+        "Codex generation disables nested agents and web by default",
+        all(
+            data.get("agents", {}).get("enabled") is False
+            and data.get("web_search") == "disabled"
+            for data in boundary_agents
         ),
     )
 

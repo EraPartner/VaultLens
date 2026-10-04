@@ -20,16 +20,18 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import fcntl
 import json
 import os
 import re
+import secrets
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -47,14 +49,16 @@ LOCK_FILE = STATE_DIR / "schedule.lock"
 LOG_DIR = STATE_DIR / "logs"
 REPORTS_DIR = ROOT / "wiki" / "reports"
 
-# One explicitly selected LLM backend runs a complete batch. Codex is the
-# default and intentionally has no pinned default
-# model: the authenticated workspace configuration chooses it unless an operator
-# sets VAULTLENS_LLM_MODEL. Do not silently fall back between providers mid-batch.
-BACKENDS = {
-    "claude": {"model": "sonnet", "health_host": "api.anthropic.com"},
-    "codex": {"model": "", "health_host": "chatgpt.com"},
-}
+# Resolve once per dispatcher process so a complete batch uses one provider.
+sys.path.insert(0, str(ROOT / "tools"))
+from llm_provider import (  # noqa: E402, F401
+    BACKENDS,
+    load_config,
+    load_profile_models,
+    resolve_provider,
+)
+from agent_profiles import AGENT_FILES, resolve_role_settings  # noqa: E402
+from local_runtime import default_access_profile, runtime_available  # noqa: E402
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -69,22 +73,57 @@ def _env_flag(name: str, default: bool = False) -> bool:
     raise ValueError(f"{name} must be a boolean flag (0/1, false/true, no/yes, off/on)")
 
 
-CLI = os.environ.get("VAULTLENS_LLM_CLI", "codex").strip().lower()
-if CLI not in BACKENDS:
-    choices = ", ".join(sorted(BACKENDS))
-    raise ValueError(f"VAULTLENS_LLM_CLI must be one of: {choices}")
-MODEL = os.environ.get("VAULTLENS_LLM_MODEL", BACKENDS[CLI]["model"]).strip()
-BACKEND_HEALTH_HOST = os.environ.get(
-    "VAULTLENS_LLM_HEALTH_HOST", BACKENDS[CLI]["health_host"]
-).strip()
-BACKEND_IDENTITY = os.environ.get("VAULTLENS_LLM_IDENTITY", f"{CLI}-plan").strip()
-SCHEDULE_ENHANCE = _env_flag("VAULTLENS_SCHEDULE_ENHANCE", default=False)
+def freeze_role_models(
+    cli: str, *, root: Path = ROOT, environ: dict, config: dict, profile_models: dict
+) -> dict[str, str]:
+    """Resolve every role against one batch's provider configuration snapshot."""
+    return {
+        agent: resolve_role_settings(
+            agent,
+            cli=cli,
+            root=root,
+            environ=environ,
+            config=config,
+            profile_models=profile_models,
+        )[0].model
+        for agent in AGENT_FILES
+    }
+
+
+_PROVIDER_ERROR = ""
+CLI, MODEL = "", ""
+ROLE_MODELS = {}
+BACKEND_HEALTH_HOST = BACKEND_IDENTITY = ""
+ACCOUNTS = []
+SCHEDULE_ENHANCE = False
+try:
+    _PROVIDER_ENV = dict(os.environ)
+    _PROVIDER_CONFIG = load_config()
+    _PROFILE_MODELS = load_profile_models()
+    _PROVIDER = resolve_provider(
+        environ=_PROVIDER_ENV,
+        config=_PROVIDER_CONFIG,
+        profile_models=_PROFILE_MODELS,
+    )
+    _ROLE_MODELS = freeze_role_models(
+        _PROVIDER.cli,
+        environ=_PROVIDER_ENV,
+        config=_PROVIDER_CONFIG,
+        profile_models=_PROFILE_MODELS,
+    )
+    _SCHEDULE_ENHANCE = _env_flag("VAULTLENS_SCHEDULE_ENHANCE", default=False)
+except (ValueError, OSError, UnicodeError) as exc:
+    # Invalid model policy blocks all model jobs without disabling host-side
+    # diagnostics, maintenance or recovery. Never fall back to another provider.
+    _PROVIDER_ERROR = str(exc)
+else:
+    CLI, MODEL = _PROVIDER.cli, _PROVIDER.model
+    ROLE_MODELS = _ROLE_MODELS
+    BACKEND_HEALTH_HOST = _PROVIDER.health_host
+    BACKEND_IDENTITY = _PROVIDER.identity
+    ACCOUNTS = [BACKEND_IDENTITY]
+    SCHEDULE_ENHANCE = _SCHEDULE_ENHANCE
 ENHANCE_ITERATIONS = 5
-if not BACKEND_HEALTH_HOST:
-    raise ValueError("VAULTLENS_LLM_HEALTH_HOST must not be empty")
-if not BACKEND_IDENTITY:
-    raise ValueError("VAULTLENS_LLM_IDENTITY must not be empty")
-ACCOUNTS = [BACKEND_IDENTITY]
 
 # Windows are [start_hour, end_hour). Generous so a morning wake still catches a
 # missed 01:30 batch (the ledger makes it run at most once/day either way).
@@ -96,7 +135,7 @@ MIN_BATTERY_PCT = 20
 # forever, surfacing only in schedule-status; this raises one alarm.
 FAIL_STREAK_ALERT = 3
 # Keep the latest N dated scheduled-<type> reports per type; older ones are
-# pruned each tick so wiki/reports/ does not pile up. The CoS is read-only, so
+# pruned each tick so wiki/reports/agents/scheduled does not pile up. The CoS is read-only, so
 # this hygiene runs host-side in the dispatcher that writes the reports.
 REPORT_RETENTION = 14
 # A daily brief is a current advisory surface, not a historical log. Keep only
@@ -135,9 +174,7 @@ def _tool(name: str, *fallbacks: str) -> str:
 
 
 PYTHON = sys.executable or _tool("python3", "/opt/homebrew/bin/python3")
-FISH = _tool("fish", "/opt/homebrew/bin/fish")
 QMD = _tool("qmd", str(HOME / ".bun" / "bin" / "qmd"))
-CONTAINER = _tool("container", "/usr/local/bin/container")
 NC = _tool("nc", "/opt/homebrew/bin/nc", "/usr/bin/nc")
 PMSET = _tool("pmset", "/usr/bin/pmset")
 OSASCRIPT = _tool("osascript", "/usr/bin/osascript")
@@ -257,6 +294,14 @@ def classify_failure(returncode: int, text: str) -> str:
             "monthly limit",
             "upgrade your plan",
             "usage limit",
+            "usage_limit",
+            "usage-limit",
+            "session limit",
+            "weekly limit",
+            "hit your limit",
+            "spend limit",
+            "spending limit",
+            "credit balance is too low",
         )
     ):
         return "quota"
@@ -267,6 +312,8 @@ def classify_failure(returncode: int, text: str) -> str:
 
 def backend_available(ledger: dict, now: datetime) -> bool:
     """True if the selected backend is not in a usage-limit cooldown."""
+    if _PROVIDER_ERROR:
+        return False
     st = ledger["accounts"].get(ACCOUNTS[0], {})
     lu = st.get("limited_until")
     return not lu or parse(lu) <= now
@@ -322,18 +369,16 @@ def step_due(step: "Step", ledger: dict, now: datetime) -> bool:
 @dataclass
 class Step:
     name: str
-    kind: str  # "host" (wiki.py) | "qmd" (host index) | "llm" (brain-wiki backend)
+    kind: str  # "host" (wiki.py) | "qmd" (host index) | "llm" (native agent)
     period: str  # "daily" | "weekly"
     window: tuple[int, int]
-    gates: list[str]  # subset of {"ac","online","container","icloud","battery"}
+    gates: list[str]  # subset of {"ac","online","runtime","icloud","battery"}
     builder: Callable[
         [], list[list[str]]
     ]  # -> list of arg-vectors ([] = nothing to do)
-    effort: str = (
-        "low"  # Claude inherits its setting; Codex maps this to reasoning effort.
-    )
+    effort: str = "low"  # Scheduled runs pass this override to either provider.
     timeout: int = 1800
-    report: bool = False  # capture stdout into wiki/reports/
+    report: bool = False  # capture stdout into excluded wiki/reports/agents/scheduled
 
 
 def _slugify(text: str) -> str:
@@ -342,52 +387,49 @@ def _slugify(text: str) -> str:
 
 
 def _select_ingest_pdfs(
-    pdf_names: list[str], text_stems: set[str], ingested_pdf_names: set[str]
+    pdf_names: list[str], ingested_pdf_names: set[str]
 ) -> list[str]:
-    """Pure core of _ingest_targets: which source PDFs still need ingesting.
+    """Select PDFs without a wiki source page citing the original PDF.
 
-    A PDF is skipped when either signal says it is already processed:
-      * a wiki/sources page already cites it (authoritative: the page is the
-        product of ingest, so its presence means ingest ran), or
-      * extracted text exists under its literal stem OR its slug. raw/sources-text
-        holds both naming conventions (preprocess writes the literal `<stem>.md`;
-        the agent PDF pre-extraction writes a slugified name), so checking only one
-        made the nightly batch re-ingest a fully-captured book every night.
-    Side-effect-free so tools/tests/test_schedule.py can exercise it.
+    Preprocessed text is input to ingest, not evidence that ingest completed.
     """
-    out: list[str] = []
-    for name in pdf_names:
-        if name in ingested_pdf_names:
-            continue
-        stem = name[:-4] if name.lower().endswith(".pdf") else name
-        if stem in text_stems or _slugify(stem) in text_stems:
-            continue
-        out.append(name)
-    return out
+    return [name for name in pdf_names if name not in ingested_pdf_names]
 
 
-def _ingested_pdf_names() -> set[str]:
-    """PDF basenames already cited by a wiki/sources page via raw/sources/<name>.pdf.
+def _ingested_raw_references() -> set[str]:
+    """Approved immutable inputs cited by a wiki source page.
 
-    Matches the wikilink ([[raw/sources/Foo.pdf]]) and markdown-link forms, anchoring
-    on the `raw/sources/` segment so a relative-path mirror still resolves.
+    Sources may remain in raw/inbox after ingest. Match both wiki and Markdown
+    links, including mirrors with relative prefixes and angle-bracket paths.
     """
-    names: set[str] = set()
+    from urllib.parse import unquote
+
+    references: set[str] = set()
     srcdir = ROOT / "wiki" / "sources"
-    if srcdir.is_dir():
-        # Capture the PDF basename across the three link forms — wikilink
-        # [[raw/sources/Foo.pdf]], markdown [..](raw/sources/Foo.pdf), and the
-        # angle-bracket [..](<../../raw/sources/Foo.pdf>). The class excludes the
-        # three close delimiters (] ) >) and newline but ALLOWS spaces, so
-        # space-bearing names like "Example Project.pdf" still match.
-        pat = re.compile(r"raw/sources/([^\]|>)\n]+\.pdf)", re.IGNORECASE)
+    if srcdir.is_dir() and not srcdir.is_symlink():
+        pat = re.compile(r"raw/(?:sources|inbox)/[^\]|>)\n]+")
         for page in srcdir.glob("*.md"):
+            if page.is_symlink() or not page.is_file():
+                continue
             try:
                 text = page.read_text(encoding="utf-8")
-            except OSError:
+            except (OSError, UnicodeError):
                 continue
-            names.update(m.group(1).strip() for m in pat.finditer(text))
-    return names
+            references.update(
+                unquote(match.group().strip().strip("'\"`"))
+                for match in pat.finditer(text)
+            )
+    return references
+
+
+def _ingested_pdf_names(references: set[str] | None = None) -> set[str]:
+    """Preserve the source-PDF selection helper's basename interface."""
+    references = _ingested_raw_references() if references is None else references
+    return {
+        Path(reference).name
+        for reference in references
+        if reference.startswith("raw/sources/") and reference.lower().endswith(".pdf")
+    }
 
 
 def _ingest_targets() -> list[list[str]]:
@@ -397,21 +439,25 @@ def _ingest_targets() -> list[list[str]]:
     PDF still needs ingesting; this wrapper just supplies the filesystem facts.
     """
     targets: list[Path] = []
+    ingested = _ingested_raw_references()
     inbox = ROOT / "raw" / "inbox"
-    if inbox.is_dir():
+    if inbox.is_dir() and not inbox.is_symlink():
         targets += [
             p
             for p in sorted(inbox.iterdir())
-            if p.is_file() and not p.name.startswith(".")
+            if p.is_file()
+            and not p.is_symlink()
+            and not p.name.startswith(".")
+            and f"raw/inbox/{p.name}" not in ingested
         ]
     srcs = ROOT / "raw" / "sources"
-    textdir = ROOT / "raw" / "sources-text"
-    if srcs.is_dir():
-        pdf_names = [p.name for p in sorted(srcs.glob("*.pdf"))]
-        text_stems = (
-            {p.stem for p in textdir.glob("*.md")} if textdir.is_dir() else set()
-        )
-        selected = _select_ingest_pdfs(pdf_names, text_stems, _ingested_pdf_names())
+    if srcs.is_dir() and not srcs.is_symlink():
+        pdf_names = [
+            p.name
+            for p in sorted(srcs.glob("*.pdf"))
+            if p.is_file() and not p.is_symlink()
+        ]
+        selected = _select_ingest_pdfs(pdf_names, _ingested_pdf_names(ingested))
         targets += [srcs / name for name in selected]
     return [["ingest", "--source", str(p)] for p in targets[:3]]  # cap per night
 
@@ -419,8 +465,8 @@ def _ingest_targets() -> list[list[str]]:
 def _project_runner_targets() -> list[list[str]]:
     """Opted-in projects with a clear, due AGENDA task — one arg-vector each.
 
-    Pure-python (no LLM): agenda.due_projects reads only the ≤N AGENDA.md files,
-    skips dormant (enabled:false) and malformed ones, and returns slugs with work.
+    Pure-python (no LLM): only real project metadata and AGENDA.md files are read;
+    dormant, frozen, linked and malformed projects are skipped.
     Projects whose unreviewed edits have stacked up (is_paused_for_review) are held
     back until the operator runs `wiki.py project agenda ack <slug>`. Capped so a
     night with many due projects cannot blow the shared LLM budget; deferred
@@ -428,8 +474,18 @@ def _project_runner_targets() -> list[list[str]]:
     """
     today = now_local().date()
     out: list[list[str]] = []
-    for slug in agenda.due_projects(ROOT / "projects", today):
-        if agenda.is_paused_for_review(slug):
+    projects = ROOT / "projects"
+    if not projects.is_dir() or projects.is_symlink():
+        return out
+    for project in sorted(projects.iterdir()):
+        slug = project.name
+        selected = resolve_proposal_dest(slug)
+        if selected is None or agenda.is_paused_for_review(slug):
+            continue
+        try:
+            if not agenda.project_is_due(selected, today):
+                continue
+        except (OSError, UnicodeError, ValueError):
             continue
         out.append(["project-run", "--project", slug])
     return out[:MAX_PROJECTS_PER_NIGHT]
@@ -459,22 +515,85 @@ def _snapshot_project(
     back to a plain recursive copy if clonefile is unavailable (e.g. across volumes).
     Idempotent per date — the first snapshot of the night wins, so it captures the
     pre-run state even if the step retries."""
-    src = ROOT / "projects" / slug
-    if not src.is_dir():
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", slug):
+        return None
+    projects = ROOT / "projects"
+    src = projects / slug
+    if (
+        projects.is_symlink()
+        or not src.is_dir()
+        or src.is_symlink()
+        or src.resolve().parent != projects.resolve()
+    ):
         return None
     dst = SNAPSHOT_DIR / f"{now:%Y-%m-%d}" / slug
-    if dst.exists():
-        return dst
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    for cmd in (
-        ["cp", "-c", "-R", str(src), str(dst)],
-        ["cp", "-R", str(src), str(dst)],
-    ):
+    completion = dst.parent / f".{slug}.complete.json"
+    if dst.exists() or dst.is_symlink():
         try:
-            subprocess.run(cmd, check=True, capture_output=True, timeout=300)
-            return dst
-        except Exception:  # noqa: BLE001 - try the plain-copy fallback, then give up
-            continue
+            if dst.is_symlink() or not dst.is_dir() or completion.is_symlink():
+                raise ValueError(
+                    "Snapshot or completion marker is not a regular target"
+                )
+            metadata = json.loads(completion.read_text(encoding="utf-8"))
+            stat = dst.stat()
+            expected = {
+                "version": 1,
+                "project": slug,
+                "device": stat.st_dev,
+                "inode": stat.st_ino,
+            }
+            if metadata != expected:
+                raise ValueError("Completion marker does not match this snapshot")
+        except (OSError, ValueError) as exc:
+            log(
+                f"defer project {slug}: existing snapshot has no valid completion marker ({exc}); preserved for operator review"
+            )
+            return None
+        return dst
+    if completion.exists() or completion.is_symlink():
+        log(
+            f"defer project {slug}: orphan completion marker preserved for operator review"
+        )
+        return None
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        # Only publish a complete copy. A failed cp can leave a partial tree,
+        # which must never count as the next invocation's undo snapshot.
+        with tempfile.TemporaryDirectory(
+            dir=dst.parent, prefix=".snapshot-"
+        ) as temporary:
+            staged = Path(temporary) / "project"
+            for clone in (True, False):
+                cmd = ["cp", *(["-c"] if clone else []), "-R", str(src), str(staged)]
+                try:
+                    subprocess.run(cmd, check=True, capture_output=True, timeout=300)
+                except Exception:  # noqa: BLE001 - fall back without retaining partial copies
+                    if staged.is_dir() and not staged.is_symlink():
+                        shutil.rmtree(staged)
+                    elif staged.exists() or staged.is_symlink():
+                        staged.unlink()
+                    continue
+                stat = staged.stat()
+                staged_marker = Path(temporary) / "complete.json"
+                staged_marker.write_text(
+                    json.dumps(
+                        {
+                            "version": 1,
+                            "project": slug,
+                            "device": stat.st_dev,
+                            "inode": stat.st_ino,
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                staged.rename(dst)
+                # A marker failure leaves a preserved, unmarked tree. It cannot
+                # authorize this writer or a later invocation after a restart.
+                staged_marker.rename(completion)
+                return dst
+    except OSError as exc:
+        log(f"snapshot {slug} failed: {exc}")
     log(f"snapshot {slug} failed; no pre-run clone for tonight's edits")
     return None
 
@@ -503,13 +622,18 @@ def _project_runner_header(slugs: list[str], now: datetime) -> str:
         f"# Project runner roll-up — {now:%Y-%m-%d}",
         "",
         "Edits were applied to the working tree (not committed). To undo a project,",
-        "restore it from tonight's pre-run snapshot:",
+        "restore it from tonight's pre-run snapshot. The restore helper preserves",
+        "the current project under projects/.restore-backups/ before replacing it:",
         "",
     ]
     for slug in slugs:
         snap = SNAPSHOT_DIR / f"{now:%Y-%m-%d}" / slug
         destination = ROOT / "projects" / slug
-        lines.append(f"- `{slug}`: `cp -c -R {_q(str(snap))} {_q(str(destination))}`")
+        helper = ROOT / "tools" / "schedule" / "restore_project.py"
+        lines.append(
+            f"- `{slug}`: `python3 {_q(str(helper))} --snapshot {_q(str(snap))} "
+            f"--project {_q(str(destination))}`"
+        )
     lines.append("")
     lines.append(
         "Once reviewed, resume a project's nightly runs with "
@@ -524,7 +648,13 @@ def build_steps() -> list[Step]:
     steps = [
         # 1. maintenance: offline, host-native, runs even on a battery night.
         Step(
-            "lint", "host", "daily", NIGHTLY_WINDOW, [], lambda: [["lint"]], timeout=600
+            "lint",
+            "host",
+            "daily",
+            NIGHTLY_WINDOW,
+            [],
+            lambda: [["lint", "--json"]],
+            timeout=600,
         ),
         Step(
             "index",
@@ -559,7 +689,7 @@ def build_steps() -> list[Step]:
             "llm",
             "daily",
             NIGHTLY_WINDOW,
-            ["ac", "online", "container", "icloud"],
+            ["ac", "online", "runtime", "icloud"],
             _ingest_targets,
             effort="low",
             timeout=2400,
@@ -573,7 +703,7 @@ def build_steps() -> list[Step]:
             "llm",
             "weekly",
             NIGHTLY_WINDOW,
-            ["ac", "online", "container", "icloud"],
+            ["ac", "online", "runtime", "icloud"],
             lambda: [["contradict"]],
             effort="high",
             timeout=2400,
@@ -584,7 +714,7 @@ def build_steps() -> list[Step]:
             "llm",
             "weekly",
             NIGHTLY_WINDOW,
-            ["ac", "online", "container", "icloud"],
+            ["ac", "online", "runtime", "icloud"],
             lambda: [["emerge"]],
             effort="high",
             timeout=2400,
@@ -595,7 +725,7 @@ def build_steps() -> list[Step]:
             "llm",
             "weekly",
             NIGHTLY_WINDOW,
-            ["ac", "online", "container", "icloud"],
+            ["ac", "online", "runtime", "icloud"],
             lambda: [["discover"]],
             effort="high",
             timeout=2400,
@@ -610,7 +740,7 @@ def build_steps() -> list[Step]:
             "llm",
             "daily",
             NIGHTLY_WINDOW,
-            ["ac", "online", "container", "icloud"],
+            ["ac", "online", "runtime", "icloud"],
             _project_runner_targets,
             effort="low",
             timeout=2400,
@@ -626,7 +756,7 @@ def build_steps() -> list[Step]:
                 "llm",
                 "daily",
                 NIGHTLY_WINDOW,
-                ["ac", "online", "container", "icloud"],
+                ["ac", "online", "runtime", "icloud"],
                 lambda: [
                     [
                         "enhance",
@@ -647,7 +777,7 @@ def build_steps() -> list[Step]:
             "llm",
             "daily",
             MORNING_WINDOW,
-            ["online", "container", "icloud", "battery"],
+            ["online", "runtime", "icloud", "battery"],
             lambda: [["cos", "--mode", "brief"]],
             effort="low",
             timeout=1800,
@@ -663,8 +793,9 @@ def build_steps() -> list[Step]:
 
 
 class Gates:
-    def __init__(self, log: Callable[[str], None]):
+    def __init__(self, log: Callable[[str], None], *, read_only: bool = False):
         self.log = log
+        self.read_only = read_only
         self._cache: dict[str, bool] = {}
 
     def get(self, name: str) -> bool:
@@ -682,21 +813,13 @@ class Gates:
         # Require the selected provider endpoint, not merely generic internet.
         return self._nc(BACKEND_HEALTH_HOST, 443)
 
-    def _g_container(self) -> bool:
-        if self._container_up():
-            return True
-        self.log("apple/container system not running; starting it")
+    def _g_runtime(self) -> bool:
+        """Probe the installed native sandbox; never install or start a service."""
         try:
-            subprocess.run(
-                [CONTAINER, "system", "start"], capture_output=True, timeout=60
-            )
-        except Exception:
+            return runtime_available(root=ROOT, cli=CLI)
+        except (OSError, ValueError) as exc:
+            self.log(f"native sandbox unavailable: {exc}")
             return False
-        for _ in range(12):  # ~60s
-            time.sleep(5)
-            if self._container_up():
-                return True
-        return False
 
     def _g_ac(self) -> bool:
         out = self._pmset_batt()
@@ -716,6 +839,8 @@ class Gates:
         wiki = ROOT / "wiki"
         if not wiki.is_dir():
             return False
+        if self.read_only:
+            return REPORTS_DIR.is_dir()
         # Best-effort: ask iCloud to materialise the dirs we touch.
         try:
             subprocess.run(
@@ -733,18 +858,6 @@ class Gates:
                     [NC, "-z", "-G", "5", host, str(port)],
                     capture_output=True,
                     timeout=10,
-                ).returncode
-                == 0
-            )
-        except Exception:
-            return False
-
-    def _container_up(self) -> bool:
-        # apple/container runtime (the Docker-free sandbox launcher, bin/agent).
-        try:
-            return (
-                subprocess.run(
-                    [CONTAINER, "system", "status"], capture_output=True, timeout=30
                 ).returncode
                 == 0
             )
@@ -774,6 +887,8 @@ def run_host(args: list[str], timeout: int) -> tuple[int, str]:
         return p.returncode, (p.stdout or "") + (p.stderr or "")
     except subprocess.TimeoutExpired:
         return 124, "timeout"
+    except OSError as error:
+        return 127, str(error)
 
 
 def run_qmd(args: list[str], timeout: int) -> tuple[int, str]:
@@ -785,32 +900,38 @@ def run_qmd(args: list[str], timeout: int) -> tuple[int, str]:
         return p.returncode, (p.stdout or "") + (p.stderr or "")
     except subprocess.TimeoutExpired:
         return 124, "timeout"
+    except OSError as error:
+        return 127, str(error)
 
 
 def exec_brain_wiki(
     args: list[str], acct: str, effort: str, timeout: int
 ) -> tuple[int, str]:
-    inner_parts = build_brain_wiki_args(args, effort)
-    inner = " ".join(_q(p) for p in inner_parts)
+    command = build_brain_wiki_args(args, effort)
     env = dict(os.environ)
-    # Keep the sandbox VM warm for the whole tick. bin/agent powers its container
-    # down on exit BY DEFAULT (so a manual `brain-wiki` run cleans up after itself),
-    # but one tick runs several steps back-to-back and should reuse a single warm
-    # box; cmd_run's end-of-tick teardown stops it once the batch is done.
-    env["BRAIN_KEEP_WARM"] = "1"
+    # Drop the obsolete shell-launcher switch during migration. Native runs
+    # own their subprocess tree and never reuse a global runtime session.
+    env.pop("BRAIN_KEEP_WARM", None)
+    # The explicit script path and cwd bind the run to this deployment. Caller
+    # shell configuration and unrelated vault fallbacks cannot reroute it.
     # `acct` is the cooldown-ledger identity. Each CLI authenticates through its
     # own login, so no secret or per-exec credential steering happens here.
-    return _run_agent_process([FISH, "-lc", inner], timeout, env, LOG_DIR)
+    return _run_agent_process(command, timeout, env, LOG_DIR, cwd=ROOT)
 
 
 def _run_agent_process(
-    command: list[str], timeout: float, env: dict, log_dir: Path
+    command: list[str],
+    timeout: float,
+    env: dict,
+    log_dir: Path,
+    *,
+    cwd: Path | None = None,
 ) -> tuple[int, str]:
     """Cancel the wrapper process group and retain output without pipe deadlocks.
 
-    A stopped host wrapper does not prove that detached container work stopped.
-    Return 125 on timeout or signal death so callers latch a persistent stop.
-    Never stop a potentially shared container based on its name prefix.
+    The native launcher and its provider run in this owned process group.
+    Return 125 on timeout or signal death so callers retain the conservative
+    recovery latch until the operator verifies all descendants have stopped.
     """
     log_dir.mkdir(parents=True, exist_ok=True)
     with (
@@ -832,7 +953,12 @@ def _run_agent_process(
         ) as stderr,
     ):
         process = subprocess.Popen(
-            command, stdout=stdout, stderr=stderr, env=env, start_new_session=True
+            command,
+            stdout=stdout,
+            stderr=stderr,
+            env=env,
+            start_new_session=True,
+            cwd=str(cwd) if cwd is not None else None,
         )
         try:
             process.wait(timeout=timeout)
@@ -840,7 +966,7 @@ def _run_agent_process(
             cancellation = _cancel_agent_group(process)
             return 125, (
                 f"Agent timed out; {cancellation}. "
-                "Inner container termination is UNCONFIRMED; unattended LLM work is blocked. "
+                "Agent descendant termination is UNCONFIRMED; unattended LLM work is blocked. "
                 f"Partial stdout: {stdout.name}; stderr: {stderr.name}."
             )
         except BaseException as exc:
@@ -858,7 +984,7 @@ def _run_agent_process(
             cancellation = _cancel_agent_group(process)
             return 125, (
                 f"Agent wrapper terminated by signal {-process.returncode}; {cancellation}. "
-                "Inner container termination is UNCONFIRMED; unattended LLM work is blocked. "
+                "Agent descendant termination is UNCONFIRMED; unattended LLM work is blocked. "
                 f"Partial stdout: {stdout.name}; stderr: {stderr.name}."
             )
         stdout.seek(0)
@@ -897,7 +1023,7 @@ def _cancel_agent_group(process) -> str:
 def _agent_output(returncode: int, stdout: str | None, stderr: str | None) -> str:
     """Keep successful reports clean while retaining failure diagnostics.
 
-    brain-wiki writes the agent's final answer to stdout and container/runtime
+    The native agent writes its final answer to stdout and launcher/runtime
     traces to stderr. A successful run therefore reports stdout only. On failure,
     both streams remain available to failure classification and the operator.
     """
@@ -919,7 +1045,7 @@ def clean_scheduled_report(text: str) -> str:
     """Remove known launcher progress lines from a successful report body.
 
     Security warnings and arbitrary tool output are retained. Producers now send
-    progress to stderr; this fallback also handles older containers and wrappers.
+    progress to stderr; this fallback also handles older saved wrapper output.
     """
     lines = [
         line
@@ -930,17 +1056,49 @@ def clean_scheduled_report(text: str) -> str:
 
 
 def build_brain_wiki_args(args: list[str], effort: str) -> list[str]:
-    """Build the provider-neutral brain-wiki argument vector."""
-    parts = [
-        "brain-wiki",
-        *args,
-        "--cli",
-        CLI,
-        "--effort",
-        effort,
-    ]
-    if MODEL:
-        parts.extend(["--model", MODEL])
+    """Build a native command with role selection frozen for the scheduled batch.
+
+    The historical helper name remains a compatibility seam for recovery tests
+    and callers. No shell launcher is involved in the returned argument vector.
+    """
+    if _PROVIDER_ERROR:
+        raise ValueError(f"LLM configuration invalid: {_PROVIDER_ERROR}")
+    parts = [PYTHON, str(ROOT / "tools" / "agents" / "wiki-agent.py"), *args]
+
+    def has_option(name: str) -> bool:
+        return any(arg == name or arg.startswith(name + "=") for arg in args)
+
+    if not has_option("--access-profile"):
+        parts.extend(
+            [
+                "--access-profile",
+                default_access_profile(args[0] if args else "", root=ROOT),
+            ]
+        )
+    # A scheduled ingest grants exactly the approved source it selected. The
+    # runtime validates the path before exposing it to the provider.
+    if args and args[0] == "ingest":
+        for index, arg in enumerate(args):
+            if arg == "--source" and index + 1 < len(args):
+                parts.extend(["--read-path", args[index + 1]])
+            elif arg.startswith("--source="):
+                parts.extend(["--read-path", arg.partition("=")[2]])
+    for index, arg in enumerate(args):
+        if arg == "--cli":
+            if index + 1 >= len(args) or args[index + 1] != CLI:
+                raise ValueError("Scheduled jobs must use the batch's frozen provider")
+        elif arg.startswith("--cli=") and arg.partition("=")[2] != CLI:
+            raise ValueError("Scheduled jobs must use the batch's frozen provider")
+    if not has_option("--cli"):
+        parts.extend(["--cli", CLI])
+    if not has_option("--effort"):
+        parts.extend(["--effort", effort])
+    if not has_option("--model"):
+        role = args[0] if args else ""
+        model = MODEL or ROLE_MODELS.get(role, "")
+        # Even an empty model is explicit: the launcher must not resolve the
+        # role again from configuration that changed after this batch started.
+        parts.extend(["--model", model])
     return parts
 
 
@@ -965,6 +1123,8 @@ def run_llm(
     earlier hit, defers the job; the cooldown also defers the rest of the LLM
     batch this tick (see _run_steps).
     """
+    if _PROVIDER_ERROR:
+        return "transient", "", f"LLM configuration invalid: {_PROVIDER_ERROR}"
     acct = ACCOUNTS[0]
     if ledger.get("cancellation_pending") or "agent_in_flight" in ledger:
         return (
@@ -1023,8 +1183,9 @@ def run_llm(
 
 
 def write_report(name: str, text: str, now: datetime) -> Path:
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    f = REPORTS_DIR / f"scheduled-{name}-{now:%Y-%m-%d}.md"
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name):
+        raise ValueError("Scheduled report name must be a simple job name")
+    filename = f"scheduled-{name}-{now:%Y-%m-%d}.md"
     header = (
         "---\n"
         "type: report\n"
@@ -1036,11 +1197,108 @@ def write_report(name: str, text: str, now: datetime) -> Path:
         f"tags: [scheduled, {name}]\n"
         "---\n\n"
     )
-    f.write_text(header + text.strip() + "\n")
-    return f
+    return _write_report_text(filename, header + text.strip() + "\n", private=True)
+
+
+@contextlib.contextmanager
+def _report_directory(*, private: bool, create: bool = True):
+    """Open every directory without following links; retain the final descriptor."""
+    if REPORTS_DIR != ROOT / "wiki" / "reports":
+        raise ValueError(
+            "Report destination must be this vault's wiki/reports directory"
+        )
+    parts = (
+        ("wiki", "reports", "agents", "scheduled") if private else ("wiki", "reports")
+    )
+    descriptors = []
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        parent = os.open(ROOT, flags)
+        descriptors.append(parent)
+        for part in parts:
+            if create:
+                try:
+                    os.mkdir(part, mode=0o700, dir_fd=parent)
+                except FileExistsError:
+                    pass
+            parent = os.open(part, flags, dir_fd=parent)
+            descriptors.append(parent)
+        destination = ROOT.joinpath(*parts)
+    except FileNotFoundError:
+        if not create:
+            for descriptor in reversed(descriptors):
+                os.close(descriptor)
+            yield None
+            return
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+        raise ValueError("Report destination is unavailable") from None
+    except OSError as exc:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+        raise ValueError(
+            "Report destination must use real directories without links"
+        ) from exc
+    try:
+        yield destination, parent
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def _write_report_text(filename: str, text: str, *, private: bool) -> Path:
+    """Atomically replace a host-owned report using only its directory descriptor."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9.-]*\.md", filename):
+        raise ValueError("Report filename must be a simple Markdown filename")
+    with _report_directory(private=private) as (destination, directory):
+        try:
+            metadata = os.stat(filename, dir_fd=directory, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            if stat.S_ISLNK(metadata.st_mode):
+                raise ValueError(f"Report target is a link: {filename}")
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise ValueError("Report target must be a regular file without aliases")
+        temporary = f".schedule-report-{secrets.token_hex(12)}"
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=directory,
+        )
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                output.write(text)
+                output.flush()
+                os.fsync(output.fileno())
+            # Keep the descriptor for all mutations, and refuse to publish if
+            # a directory was renamed or replaced while the report was staged.
+            with _report_directory(private=private, create=False) as current:
+                if current is None or not os.path.samestat(
+                    os.fstat(current[1]), os.fstat(directory)
+                ):
+                    raise ValueError("Report destination changed during the write")
+            os.replace(temporary, filename, src_dir_fd=directory, dst_dir_fd=directory)
+            os.fsync(directory)
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=directory)
+            except FileNotFoundError:
+                pass
+        return destination / filename
 
 
 STATUS_OK = ("ok", "noop")
+_STATUS_RESULTS = {
+    *STATUS_OK,
+    "timeout",
+    "execution-failed",
+    "transient",
+    "deferred",
+    "snapshot-failed",
+    "cancelled-unconfirmed",
+}
 # A job is "stale" when its last success predates this many days, per cadence.
 _STALE_DAYS = {"daily": 2, "weekly": 9}
 
@@ -1061,12 +1319,19 @@ def format_schedule_status(
     for name, period in step_meta:
         rec = jobs.get(name, {})
         last_ok = rec.get("last_ok")
-        result = rec.get("last_result")
+        value = rec.get("last_result")
+        result = (
+            value
+            if isinstance(value, str) and value in _STATUS_RESULTS
+            else ("unknown" if value is not None else None)
+        )
         ok_dt = parse(last_ok) if last_ok else None
         last_ok_s = ok_dt.strftime("%Y-%m-%d %H:%M") if ok_dt else "never"
         is_fail = result is not None and result not in STATUS_OK
         is_stale = ok_dt is None or (now - ok_dt).days > _STALE_DAYS.get(period, 2)
         streak = rec.get("fail_streak", 0)
+        if type(streak) is not int or streak < 0:
+            streak = 0
         if is_fail:
             failing.append(name)
             health = f"FAIL ({result} x{streak})" if streak > 1 else f"FAIL ({result})"
@@ -1101,7 +1366,10 @@ def format_schedule_status(
         *rows,
     ]
     if limited:
-        lines += ["", f"Backend limited (LLM batch deferred): {', '.join(limited)}"]
+        lines += [
+            "",
+            f"Backend limited (LLM batch deferred): {len(limited)} backend(s)",
+        ]
     return "\n".join(lines)
 
 
@@ -1112,19 +1380,20 @@ def write_schedule_status(ledger: dict, steps: list["Step"], now: datetime) -> P
     so the CoS cannot read it directly; this rolling page in wiki/reports lets the
     morning brief surface nightly-batch failures.
     """
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     body = format_schedule_status(
         ledger.get("jobs", {}),
         ledger.get("accounts", {}),
         [(s.name, s.period) for s in steps],
         now,
     )
-    if ledger.get("cancellation_pending") or "agent_in_flight" in ledger:
-        detail = ledger.get("cancellation_pending", {}).get(
-            "detail", "A model invocation has no confirmed completion."
-        )
+    if _PROVIDER_ERROR:
         body = (
-            f"WARNING: unattended LLM work blocked; inner termination unconfirmed. {detail}\n\n"
+            "WARNING: LLM configuration invalid; model jobs blocked. Inspect host diagnostics.\n\n"
+            + body
+        )
+    if ledger.get("cancellation_pending") or "agent_in_flight" in ledger:
+        body = (
+            "WARNING: unattended LLM work blocked; inner termination unconfirmed. Inspect host diagnostics before recovery.\n\n"
             + body
         )
     header = (
@@ -1138,9 +1407,9 @@ def write_schedule_status(ledger: dict, steps: list["Step"], now: datetime) -> P
         "tags: [scheduled, status, health]\n"
         "---\n\n"
     )
-    f = REPORTS_DIR / "schedule-status.md"
-    f.write_text(header + body.strip() + "\n")
-    return f
+    return _write_report_text(
+        "schedule-status.md", header + body.strip() + "\n", private=False
+    )
 
 
 def _reports_to_prune(
@@ -1151,10 +1420,10 @@ def _reports_to_prune(
     """Pure: of `scheduled-<type>-<date>.md` names, those to delete to keep only
     the latest `retention` per type. Any other filename is ignored, so
     schedule-status.md and hand-written reports are never touched. Tested directly."""
-    pat = re.compile(r"^scheduled-(.+)-(\d{4}-\d{2}-\d{2})\.md$")
+    pat = re.compile(r"scheduled-([a-z0-9][a-z0-9-]*)-(\d{4}-\d{2}-\d{2})\.md")
     groups: dict[str, list[tuple[str, str]]] = {}
     for n in names:
-        m = pat.match(n)
+        m = pat.fullmatch(n)
         if m:
             groups.setdefault(m.group(1), []).append((m.group(2), n))
     out: list[str] = []
@@ -1168,20 +1437,24 @@ def _reports_to_prune(
 
 
 def prune_reports(retention: int = REPORT_RETENTION) -> list[str]:
-    """Delete dated scheduled reports beyond the retention window so wiki/reports/
-    does not grow without bound. Touches only scheduled-<type>-<date>.md (the
+    """Prune only the excluded wiki/reports/agents/scheduled content directory.
+    Touches only scheduled-<type>-<date>.md (the
     dispatcher's own outputs), never schedule-status.md or other files. The CoS is
     read-only, so report hygiene lives here, on the host side that writes them."""
-    if not REPORTS_DIR.is_dir():
-        return []
-    names = [f.name for f in REPORTS_DIR.glob("scheduled-*.md")]
     removed: list[str] = []
-    for n in _reports_to_prune(names, retention, REPORT_RETENTION_BY_TYPE):
-        try:
-            (REPORTS_DIR / n).unlink()
-            removed.append(n)
-        except OSError:
-            pass
+    with _report_directory(private=True, create=False) as opened:
+        if opened is None:
+            return []
+        _destination, directory = opened
+        names = os.listdir(directory)
+        for name in _reports_to_prune(names, retention, REPORT_RETENTION_BY_TYPE):
+            try:
+                metadata = os.stat(name, dir_fd=directory, follow_symlinks=False)
+                if stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1:
+                    os.unlink(name, dir_fd=directory)
+                    removed.append(name)
+            except OSError:
+                pass
     return removed
 
 
@@ -1274,16 +1547,31 @@ def parse_handoffs(text: str) -> list[dict]:
 
 def resolve_proposal_dest(target: str, projects_dir: Path | None = None) -> Path | None:
     """The AGENDA.md of the project a proposal names, or None if it names no real
-    or visible project. Frozen projects cannot receive proposals or handoffs.
-    Routing the work to the owning project is safe because that project's runner
-    is scoped to its own dir; an empty / unknown / typo / frozen target resolves
-    to None and the proposal is left advisory (never force-filed)."""
+    opted-in project. Model output cannot authorize a path or write to a dormant
+    project. Traversal, links, frozen projects and malformed agendas fail closed.
+    """
     base = Path(projects_dir) if projects_dir is not None else (ROOT / "projects")
     slug = (target or "").strip()
-    if not slug:
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", slug):
         return None
-    cand = base / slug / "AGENDA.md"
-    if not cand.exists() or is_frozen_project(cand.parent):
+    project = base / slug
+    cand = project / "AGENDA.md"
+    metadata = project / "project.md"
+    if (
+        base.is_symlink()
+        or project.is_symlink()
+        or cand.is_symlink()
+        or metadata.is_symlink()
+        or not cand.is_file()
+        or not metadata.is_file()
+        or project.resolve().parent != base.resolve()
+    ):
+        return None
+    try:
+        frontmatter = agenda.parse_frontmatter(cand.read_text(encoding="utf-8"))
+        if not agenda.is_enabled(frontmatter) or is_frozen_project(project):
+            return None
+    except (OSError, UnicodeError, ValueError):
         return None
     return cand
 
@@ -1534,6 +1822,23 @@ def acquire_lock():
 # --------------------------------------------------------------------------- #
 
 
+def _lint_findings(step: Step, args: list[str], rc: int, output: str) -> bool:
+    """Recognize a completed lint report, never an arbitrary process failure."""
+    if step.kind != "host" or args != ["lint", "--json"] or rc != 1:
+        return False
+    try:
+        report = json.loads(output)
+    except (ValueError, TypeError):
+        return False
+    return (
+        isinstance(report, dict)
+        and type(report.get("error_count")) is int
+        and report["error_count"] > 0
+        and isinstance(report.get("errors"), dict)
+        and type(report.get("pages_checked")) is int
+    )
+
+
 def _run_steps(
     steps: list[Step],
     ledger: dict,
@@ -1552,6 +1857,9 @@ def _run_steps(
     for step in steps:
         if not step_due(step, ledger, now):
             continue
+        if step.kind == "llm" and _PROVIDER_ERROR:
+            log(f"skip {step.name}: LLM configuration invalid ({_PROVIDER_ERROR})")
+            continue
         if step.kind == "llm" and llm_blocked:
             log(
                 f"skip {step.name}: LLM jobs blocked (quota or unresolved cancellation)"
@@ -1562,13 +1870,13 @@ def _run_steps(
             log(f"skip {step.name}: gate '{missing}' not satisfied")
             continue
         invocations = step.builder()
+        if dry_run:
+            log(f"WOULD RUN {step.name} ({len(invocations)} invocation(s))")
+            continue
         if not invocations:
             log(f"{step.name}: nothing to do; marking done")
             _record(ledger, step.name, now, "noop")
             save_ledger(ledger)
-            continue
-        if dry_run:
-            log(f"WOULD RUN {step.name} ({len(invocations)} invocation(s))")
             continue
 
         all_ok = True
@@ -1584,12 +1892,13 @@ def _run_steps(
                     all_ok = False
                     outcome = "timeout"
                     log(f"  {step.name} timed out; will retry next tick")
+                elif rc != 0 and not _lint_findings(step, args, rc, out):
+                    all_ok = False
+                    outcome = "execution-failed"
+                    log(f"  {step.name} failed (rc={rc}); will retry next tick")
                 else:
-                    # rc != 0 from a host tool means "issues found" (e.g. lint
-                    # errors), not a dispatcher failure: it ran, so record it
-                    # (no overnight retry-spam) but surface the finding once.
                     if rc != 0:
-                        log(f"  {step.name} reported issues (rc={rc})")
+                        log(f"  {step.name} reported lint findings (rc={rc})")
                         notify("Brain schedule", f"{step.name}: issues found (rc={rc})")
                     if step.report:
                         report_chunks.append(out)
@@ -1598,7 +1907,13 @@ def _run_steps(
                 # it (projects/ is gitignored, so this snapshot is the only revert).
                 slug = _runner_slug(args) if step.name == "project-runner" else None
                 if slug:
-                    _snapshot_project(slug, now, log)
+                    if _snapshot_project(slug, now, log) is None:
+                        all_ok = False
+                        outcome = "snapshot-failed"
+                        log(
+                            f"skip project {slug}: no complete undo snapshot; will retry next tick"
+                        )
+                        continue
                 status, who, out = run_llm(
                     args, step.effort, step.timeout, ledger, now, log
                 )
@@ -1647,7 +1962,9 @@ def _run_steps(
             if step.name == "project-runner":
                 body = _project_runner_header(ran_slugs, now) + "\n\n" + body
             f = write_report(step.name, body, now)
-            notify("Brain schedule", f"{step.name} ready: {f.name}")
+            notify(
+                "Brain schedule", f"{step.name} ready: {f.relative_to(ROOT).as_posix()}"
+            )
 
         if all_ok:
             _record(ledger, step.name, now, "ok")
@@ -1662,47 +1979,10 @@ def _run_steps(
         save_ledger(ledger)
 
 
-def _running_brain_containers(log) -> set[str]:
-    """Names of currently-running `brain-*` sandbox containers (apple/container).
-
-    bin/agent names each VM `brain-<root-hash>-<profile>` (e.g. -reader/-author),
-    so the `brain-` prefix selects exactly the sandboxes this vault launches and
-    never the build shim or another project's container."""
-    try:
-        out = subprocess.run(
-            [CONTAINER, "ls", "-q"], capture_output=True, text=True, timeout=15
-        ).stdout
-    except Exception as e:  # noqa: BLE001 - teardown bookkeeping must never abort a tick
-        log(f"container ls failed ({e}); skipping container teardown")
-        return set()
-    return {n for n in out.split() if n.startswith("brain-")}
-
-
-def _stop_new_brain_containers(pre_running: set[str], log) -> None:
-    """Power down the sandbox VMs THIS tick started.
-
-    bin/agent launches each container detached (`container run -d`, `--init` as PID
-    1) and reuses it across steps but never stops it, so a finished 6 GB job would
-    otherwise stay "running" and pin its full -m allocation until reboot. We stop
-    only the set that appeared during the tick (now-running minus pre-running), which
-    preserves warm reuse WITHIN a tick and never tears down an interactive
-    brain-claude/brain-shell session that predated the tick. `container stop` is
-    graceful (PID 1 traps SIGTERM) and a no-op if already stopped."""
-    started = sorted(_running_brain_containers(log) - pre_running)
-    for name in started:
-        try:
-            subprocess.run(
-                [CONTAINER, "stop", name], capture_output=True, text=True, timeout=60
-            )
-            log(f"powered down sandbox container {name} (tick teardown)")
-        except Exception as e:  # noqa: BLE001
-            log(f"failed to stop {name} ({e}); stop it manually to free RAM")
-
-
 def cmd_run(dry_run: bool = False) -> int:
-    log = make_logger()
-    lock = acquire_lock()
-    if lock is None:
+    log = print if dry_run else make_logger()
+    lock = None if dry_run else acquire_lock()
+    if lock is None and not dry_run:
         log("another dispatcher run holds the lock; exiting")
         return 0
     previous_sigterm = signal.getsignal(signal.SIGTERM)
@@ -1712,24 +1992,26 @@ def cmd_run(dry_run: bool = False) -> int:
 
     signal.signal(signal.SIGTERM, interrupted)
     try:
-        ledger = load_ledger()
-        now = now_local()
-        gates = Gates(log)
-        steps = build_steps()
-        log(f"tick {now:%Y-%m-%d %H:%M} (dry-run={dry_run})")
-
-        # Self-heal: clear a lid-close override left stuck by a hard-killed prior
-        # run (kill -9 / power loss bypass the finally below). No-op if already 0.
+        # Recovery must still run when model configuration or the ledger fails.
         if not dry_run:
             keepawake_off(lambda _m: None)
+        ledger = load_ledger()
+        now = now_local()
+        gates = Gates(log, read_only=dry_run)
+        steps = build_steps()
+        log(f"tick {now:%Y-%m-%d %H:%M} (dry-run={dry_run})")
+        if _PROVIDER_ERROR:
+            log(f"LLM configuration invalid; model jobs blocked: {_PROVIDER_ERROR}")
 
         # AC-gated lid-close keep-awake: override sleep with the lid CLOSED only
         # when on AC (battery -> never, so a closed bag can't overheat). Engage
-        # only if LLM work is actually due and runnable (online + container).
+        # only if LLM work is actually due and runnable (online + runtime).
         on_ac = gates.get("ac")
         lid = lid_closed()
-        any_llm_due = not ledger.get("cancellation_pending") and any(
-            step_due(s, ledger, now) for s in steps if s.kind == "llm"
+        any_llm_due = (
+            not _PROVIDER_ERROR
+            and not ledger.get("cancellation_pending")
+            and any(step_due(s, ledger, now) for s in steps if s.kind == "llm")
         )
         if dry_run:
             log(
@@ -1741,19 +2023,14 @@ def cmd_run(dry_run: bool = False) -> int:
             and lid
             and any_llm_due
             and gates.get("online")
-            and gates.get("container")
+            and gates.get("runtime")
             and keepawake_on(log)
         )
 
-        # Snapshot the brain sandbox VMs already running BEFORE this tick, so the
-        # post-tick teardown stops only the ones THIS tick starts and never an
-        # interactive brain-claude/brain-shell session that predates it.
-        pre_running = set() if dry_run else _running_brain_containers(log)
-
         try:
             _run_steps(steps, ledger, gates, now, dry_run, log)
-            save_ledger(ledger)
             if not dry_run:
+                save_ledger(ledger)
                 write_schedule_status(ledger, steps, now)
                 pruned = prune_reports()
                 if pruned:
@@ -1772,18 +2049,13 @@ def cmd_run(dry_run: bool = False) -> int:
                 keepawake_off(log)
                 if lid_closed():  # only return to sleep if it woke headless for the job
                     sleep_now(log)
-            # Power down the sandbox VMs this tick started so a finished 6 GB job
-            # stops pinning RAM (bin/agent launches them detached and never stops
-            # them). Only the newly-started set is stopped -> warm reuse within the
-            # tick is preserved; the cross-tick RAM leak is closed.
-            if not dry_run:
-                _stop_new_brain_containers(pre_running, log)
         return 0
     finally:
         signal.signal(signal.SIGTERM, previous_sigterm)
         try:
-            fcntl.flock(lock, fcntl.LOCK_UN)
-            lock.close()
+            if lock is not None:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+                lock.close()
         except Exception:
             pass
 
@@ -1809,6 +2081,9 @@ def cmd_status() -> int:
     steps = build_steps()
     print(f"Brain schedule status  ({now:%Y-%m-%d %H:%M %Z})")
     print(f"ledger: {STATE_FILE}\n")
+    if _PROVIDER_ERROR:
+        print(f"LLM CONFIGURATION INVALID: {_PROVIDER_ERROR}")
+        print("Model jobs blocked; host maintenance and recovery remain available.\n")
     if ledger.get("cancellation_pending"):
         print("UNATTENDED LLM WORK BLOCKED: inner cancellation is unconfirmed.")
         print(ledger["cancellation_pending"]["detail"])
@@ -1832,7 +2107,7 @@ def cmd_status() -> int:
             f"{step.name:12} {step.period:7} {due:4} {last_s:16} {rec.get('last_result', '')}"
         )
     print("\naccounts:")
-    for acct in ACCOUNTS:
+    for acct in sorted(set(ACCOUNTS) | set(ledger["accounts"])):
         st = ledger["accounts"].get(acct, {})
         lu = st.get("limited_until")
         if lu and parse(lu) > now:

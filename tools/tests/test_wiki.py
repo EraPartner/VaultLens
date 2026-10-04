@@ -13,8 +13,10 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import io
+import importlib.util
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -147,9 +149,11 @@ def test_agent_instructions_excluded() -> None:
             "# Instructions\n\nExample [[raw/sources-text/<stem>]].\n",
             encoding="utf-8",
         )
+        (root / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
         rep = report_for(root, strict=True)
         content_paths = {page.rel.as_posix() for page in wiki.list_content_pages()}
         check("AGENTS.md not treated as a page", "AGENTS.md" not in content_paths)
+        check("CLAUDE.md not treated as a page", "CLAUDE.md" not in content_paths)
         check("instruction examples are not linted", rep["error_count"] == 0, str(rep))
 
 
@@ -392,13 +396,114 @@ def test_project_provider_scaffold() -> None:
             check("project scaffold succeeds", rc == 0)
             check("project gets neutral AGENTS.md", "read\n`project.md`" in agents_text)
             check(
-                "project scaffold needs no Claude shim",
-                not (project / "CLAUDE.md").exists(),
+                "Claude project shim imports canonical instructions",
+                (project / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n",
             )
         finally:
             wiki_projects.ROOT = saved_root
             wiki_projects.PROJECTS_DIR = saved_projects
             wiki_projects._rebuild_projects_todo = saved_rebuild
+
+
+def test_provider_adapter_generation() -> None:
+    print("provider-adapter-generation:")
+    spec = importlib.util.spec_from_file_location(
+        "fixture_adapter_generator",
+        Path(__file__).resolve().parents[1] / "agents" / "generate-adapters.py",
+    )
+    assert spec is not None and spec.loader is not None
+    generator = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = generator
+    spec.loader.exec_module(generator)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            generator.ROOT = root
+            generator.ROLES_DIR = root / ".agents" / "roles"
+            generator.CLAUDE_DIR = root / ".claude" / "agents"
+            generator.CODEX_DIR = root / ".codex" / "agents"
+            generator.PROJECTS_DIR = root / "projects"
+            project = generator.PROJECTS_DIR / "demo"
+            for directory in [root, root / "wiki", generator.PROJECTS_DIR, project]:
+                directory.mkdir(parents=True, exist_ok=True)
+                (directory / "AGENTS.md").write_text("# Shared\n", encoding="utf-8")
+            (project / "project.md").write_text("# Demo\n", encoding="utf-8")
+            (root / "tools").mkdir()
+            (root / "tools" / "model-profiles.json").write_text(
+                '{"claude": {"standard": "sonnet", "deep": "opus"}, '
+                '"codex": {"standard": "", "deep": ""}}',
+                encoding="utf-8",
+            )
+            generator.ROLES_DIR.mkdir(parents=True)
+            (generator.ROLES_DIR / "wiki-search.md").write_text(
+                "---\nname: wiki-search\ndescription: Search the wiki.\n"
+                "permission_profile: read\nmodel_profile: standard\nreasoning_effort: medium\n---\n",
+                encoding="utf-8",
+            )
+            (generator.ROLES_DIR / "wiki-project-runner.md").write_text(
+                "---\nname: wiki-project-runner\ndescription: Run project tasks.\n"
+                "permission_profile: project-write\nmodel_profile: deep\nreasoning_effort: high\n---\n",
+                encoding="utf-8",
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                generated = generator.main([])
+                checked = generator.main(["--check"])
+            check(
+                "both provider adapters generate and check", generated == checked == 0
+            )
+            check(
+                "all Claude instruction scopes import shared guidance",
+                all(
+                    path.read_text(encoding="utf-8") == "@AGENTS.md\n"
+                    for path in generator.claude_instruction_paths(
+                        generator.load_projects()
+                    )
+                ),
+            )
+            manifest = (generator.CLAUDE_DIR / "wiki-search.md").read_text(
+                encoding="utf-8"
+            )
+            check("Claude read agent can use qmd MCP", "mcp__qmd__*" in manifest)
+            check(
+                "Claude adapter applies standard model and canonical effort",
+                'model: "sonnet"\n' in manifest and "\neffort: medium\n" in manifest,
+            )
+            codex_manifest = (generator.CODEX_DIR / "wiki-search.toml").read_text(
+                encoding="utf-8"
+            )
+            check(
+                "Codex adapter inherits its model and applies canonical effort",
+                "\nmodel =" not in codex_manifest
+                and 'model_reasoning_effort = "medium"' in codex_manifest,
+            )
+            check(
+                "model inheritance preserves read-only sandbox and no delegation",
+                'sandbox_mode = "read-only"' in codex_manifest
+                and "Do not delegate or spawn another agent" in codex_manifest
+                and "disallowedTools: Agent, Task" in manifest,
+            )
+            reader_config = tomllib.loads(codex_manifest)
+            runner_config = tomllib.loads(
+                (generator.CODEX_DIR / "wiki-project-runner.toml").read_text()
+            )
+            check(
+                "generated Codex runner requires explicit research access",
+                runner_config.get("sandbox_workspace_write", {}).get("network_access")
+                is not True,
+            )
+            check(
+                "generated reader retains its network restrictions",
+                reader_config["sandbox_mode"] == "read-only"
+                and "sandbox_workspace_write" not in reader_config,
+            )
+            (root / "CLAUDE.md").write_text("stale\n", encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                claude_checked = generator.main(["--check", "--provider", "claude"])
+                codex_checked = generator.main(["--check", "--provider", "codex"])
+            check("Claude check detects a stale instruction shim", claude_checked == 1)
+            check("Codex-only check ignores Claude outputs", codex_checked == 0)
+    finally:
+        del sys.modules[spec.name]
 
 
 def test_project_freeze() -> None:
@@ -664,6 +769,7 @@ def main() -> int:
     test_index()
     test_raw_source_links()
     test_project_provider_scaffold()
+    test_provider_adapter_generation()
     test_project_freeze()
     test_frontmatter_list_parsing()
     test_frontmatter_eof_and_round_trip()

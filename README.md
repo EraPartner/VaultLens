@@ -10,6 +10,8 @@ workspaces. You drop sources into `raw/`; agents distil them into a curated `wik
 
 Clone it, point Obsidian at it, and start a ChatGPT/Codex or Claude Code session.
 `AGENTS.md` is the shared operating schema for these agents.
+Thin `CLAUDE.md` imports load that same schema on Claude versions whose native
+`AGENTS.md` discovery is unavailable. Keep operating instructions in `AGENTS.md`.
 
 ## Architecture — four layers
 
@@ -43,8 +45,7 @@ AGENTS.md       ← the provider-neutral operating schema that governs all of it
 - `tools/` — the `wiki.py` CLI (lint, search, ingest, index, links, projects…) plus the
   scheduled-agent dispatcher in `tools/schedule/`
 - `.mcp.json` and `.codex/config.toml` — register [qmd](https://www.npmjs.com/package/@tobilu/qmd) for hybrid search
-- `.devcontainer/` — the existing Claude-oriented, egress-locked sandbox. Its LockBox-derived
-  launcher remains deferred during the provider-neutral migration.
+- `tools/local_runtime.py` and `tools/access-profiles.json` — local process isolation and versioned privacy policy
 - `.gitignore` — excludes your data, keeps the system
 
 ## What the system does
@@ -66,15 +67,88 @@ Beyond the folder skeleton, the template ships a working agent operating model:
   maintenance/thinking agents on a launchd tick and files dated outputs under `wiki/reports/`.
   Broad nightly wiki enhancement is paused by default and requires explicit opt-in; when enabled,
   it runs five alternating iterations across the whole wiki.
-- **Hybrid search** — qmd (BM25 + vector + LLM-rerank) is the primary engine, exposed over MCP;
-  `python3 tools/wiki.py search "…"` is the always-works substring fallback.
-- **Sandboxed autonomous runs** — the existing egress-locked devcontainer remains Claude-oriented.
-  Codex container launch support is intentionally deferred with the LockBox-derived container work.
+- **Scoped search** — agent CLI and MCP search use a fresh lexical corpus of approved files with
+  qmd-compatible tool names. Explicit operator search can still use qmd's full hybrid index;
+  `python3 tools/wiki.py search "…"` is the substring fallback.
+- **Local agent runs** — interactive, headless, and scheduled agents run the native Claude or Codex
+  CLI inside Anthropic's whole-process sandbox runtime. Access profiles govern read, write, and
+  network access. Each provider uses separate login state. No container is launched.
 
 Operating detail lives in `AGENTS.md` and the runbooks under `.agents/skills/` — this README stays
 at the overview altitude.
 
+## Switching providers
+
+Select the provider once in the vault you use:
+
+```bash
+python3 tools/llm_provider.py select claude
+python3 tools/llm_provider.py select codex
+# Optional: remember a model separately for each provider.
+python3 tools/llm_provider.py select claude --model sonnet
+python3 tools/llm_provider.py show
+```
+
+The local preference lives in gitignored `tools/llm.local.json`. The host launch planner,
+headless agents, and scheduler share it. Explicit `--cli` / `--model` flags override environment
+variables, which override the saved preference. Without a preference, both providers use their
+native model default. No automatic provider fallback occurs.
+
+Wiki roles keep provider-neutral `model_profile` (`standard` or `deep`) and
+`reasoning_effort` metadata. Both headless runs and generated interactive adapters use it.
+The tracked mappings in `tools/model-profiles.json` map Claude's profiles to `sonnet` and
+`opus`. Codex maps `standard` to `gpt-6-luna` and `deep` to `gpt-6.1-sol`.
+Both providers also apply role-specific reasoning effort.
+
+Override mappings locally in gitignored `tools/llm.local.json`, without changing role bodies:
+
+```json
+{
+  "profiles": {
+    "claude": {"standard": "sonnet", "deep": "opus"},
+    "codex": {"standard": "gpt-6-luna", "deep": "gpt-6.1-sol"}
+  }
+}
+```
+
+Model names are opaque provider values; an empty string means native model selection.
+For headless work, explicit `--model` overrides `VAULTLENS_LLM_MODEL`, saved per-provider
+`models`, local `profiles`, and tracked mappings, in that order. Explicit `--effort` overrides
+the canonical role effort. Scheduled jobs keep their deliberate effort overrides and freeze
+resolved role models for the batch. Plain interactive sessions retain their native/global default.
+
+Generated interactive adapters are configuration snapshots. They use per-provider settings,
+not the launch-scoped environment model override. Regenerate after changing mappings or roles:
+`python3 tools/agents/generate-adapters.py`. A concrete adapter model/effort takes precedence
+over the parent session; use an empty model mapping to inherit the parent model.
+
+Headless Claude runs use an explicit built-in tool list, separate from scoped approval rules.
+Only the scoped search server is configured for an agent run; inherited host MCP integrations are
+excluded. Unattended Claude runs disable session transcript persistence, matching Codex's ephemeral
+runs. Scheduler reports and logs remain available for audit.
+
+The project runner can execute Python scripts inside its selected project. Web research requires
+a separate access profile with explicit research domains. Model selection and tool grants do not
+widen the process boundary. Writer runs retain recoverable snapshots for review and undo.
+
+`tools/shell/` contains host fish wrappers: `brain-provider`
+changes this preference, `brain-agent` starts the selected interactive CLI, and `brain-wiki` /
+`brain-cos` select it for headless work. `brain-claude` and `brain-codex` explicitly choose a CLI.
+`brain-shell` opens a shell through the same runtime. Root discovery requires `AGENTS.md`,
+`tools/wiki.py`, and `tools/agents/wiki-agent.py`; the nearest matching checkout wins. `BRAIN_HOME`
+provides the fallback vault. Container image markers and private container launchers are not used.
+Preview host wrapper updates with `python3 tools/scripts/repair-provider-host.py --vault /path/to/Brain`.
+Scheduled batches freeze their provider and model when they start. An explicitly pinned provider
+in an installed LaunchAgent overrides the shared preference; see `tools/schedule/SPEC.md`.
+
 ## Quick Setup
+
+Host tooling requires Python 3.11 or newer. CI uses Python 3.12.
+On macOS, use Homebrew Python if the system `python3` is older.
+Host commands reject older interpreters before doing work. Set `BRAIN_PYTHON`
+to an absolute Python executable for the fish wrappers and scheduler installer;
+the installer records that executable in the LaunchAgent. Direct commands must
+use the supported executable explicitly, for example `/opt/homebrew/bin/python3`.
 
 ```bash
 # Clone this template
@@ -88,6 +162,9 @@ python3 tools/wiki.py init
 # Open in Obsidian
 open .
 ```
+
+Run initialization on the host. `brain-wiki init` runs this same deterministic operation directly;
+it does not invoke a model or require provider authentication.
 
 `raw/inbox/` is for approved ingest candidates. `raw/review-inbox/` is a consent queue for material
 that is only of interest: agents must ask before reading or processing an item. The qmd setup script
@@ -155,6 +232,86 @@ projects/my-project/
 Project status is `active`, `paused`, `frozen`, or `archived`. `frozen` keeps the
 workspace intact but excludes it from active lists, TODO/deadline views, briefs,
 scheduled agents, and routed work. Direct `project show` remains available.
+
+## Local runtime and privacy profiles
+
+Install the pinned sandbox runtime with `bash tools/runtime/install.sh`. It requires Node.js and
+macOS Seatbelt or Linux bubblewrap, socat, and ripgrep. The runtime is a research preview, so a
+package check alone does not establish isolation. The launcher fails closed if the reviewed
+runtime or operating-system prerequisites are missing. It has no unsandboxed fallback.
+
+All runtime launches also require a current successful synthetic probe receipt. Running a new
+probe revokes the older receipt; any failed or skipped required check leaves launches disabled.
+Review the [runtime guide](tools/runtime/README.md) for installation and verification gates.
+Provider authentication uses a dedicated per-vault store outside the vault and iCloud sync;
+[authenticate afresh](tools/runtime/README.md#provider-authentication) through the scoped runtime.
+Host and legacy login state is never imported automatically.
+
+Inspect available profiles and a resolved scope before launching an agent:
+
+```bash
+python3 tools/local_runtime.py profiles
+python3 tools/local_runtime.py plan --profile selected-read --read-path wiki/concepts/example.md
+python3 tools/local_runtime.py plan --profile project-write --project my-project
+python3 tools/local_runtime.py doctor
+```
+
+The tracked `tools/access-profiles.json` policy has a schema version, named profiles, and role
+defaults. A gitignored `tools/access.local.json` stores operator choices. Local profile definitions
+replace matching tracked definitions. `extends` merges read paths, write paths, deny paths, and
+research domains with a parent; inherited grants are additive. Deny paths and mandatory protected
+paths take precedence. Unknown fields, cycles, path traversal, symbolic links, and invalid scopes
+stop the launch.
+
+| Profile | Read access | Note writes |
+| --- | --- | --- |
+| `selected-read` | Explicit `--read-path` selections and trusted instructions | Reports only |
+| `wiki-read` | Wiki pages | Reports only |
+| `source-read` | Wiki and approved source folders | Reports only |
+| `cos-read` | Wiki, project planning files, approved inbox; consent queue metadata only | Reports only |
+| `wiki-write` | Wiki, approved sources, approved inbox | Wiki |
+| `project-write` | Wiki and exactly one project | That project |
+
+For a private reporting task, extend `selected-read` instead of inheriting the whole wiki:
+
+```json
+{
+  "version": 1,
+  "profiles": {
+    "project-report": {
+      "extends": "selected-read",
+      "read": ["projects/my-project/project.md", "projects/my-project/TODO.md"],
+      "deny_read": ["wiki/entities/user-background.md"],
+      "reports": "wiki/reports/agents/my-project",
+      "research_domains": []
+    }
+  },
+  "defaults": {"search": "project-report"}
+}
+```
+
+Use `--access-profile project-report` with `brain-agent`, `brain-claude`, `brain-codex`, or a
+headless `brain-wiki` role. Repeatable `--read-path` adds approved selections to the chosen profile;
+choose `selected-read` when only those selections should be visible. Interactive launches in a
+recognized project default to `project-write`; other interactive launches default to `wiki-read`
+for reporting. Root wiki editing requires an explicit `--access-profile wiki-write`.
+Plain `brain-shell` uses the same defaults and explicit editing option.
+
+Profiles keep sources, the consent queue, tools, agent instructions, Obsidian configuration, and
+Git metadata protected from agent writes. A clean per-run environment excludes inherited cloud
+credentials, SSH sockets, unrelated home files, and host hooks. Only selected provider state and
+model/login endpoints are available; research domains must be added explicitly to a separate
+profile. Model and provider changes do not change note scope.
+
+Agent search builds its corpus from the resolved scope and starts its server inside the same
+boundary. It does not read the shared host qmd index. Local execution still sends selected notes
+to the model provider; a read-only grant is also a disclosure grant. Keep profile selections small
+and review reports and writer snapshots before accepting automated changes.
+
+Portable tests cover profile resolution, launch routing, provider command construction, and
+scoped search. Run `tools/runtime/probe.py` on a synthetic fixture to check actual filesystem,
+process, and network confinement on the deployment host. Authentication and live provider calls
+are separate checks. Do not describe portable tests as proof of runtime isolation.
 
 ## See Also
 

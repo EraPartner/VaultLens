@@ -2,7 +2,9 @@
 
 This vault implements the "LLM Wiki" pattern (after Karpathy's llm-wiki) as a persistent,
 compounding knowledge base. This file is the provider-neutral source of truth for how AI agents
-operate here. Claude Code, ChatGPT, and Codex load it directly.
+operate here. Codex and ChatGPT load it directly; Claude Code loads it through the `@AGENTS.md`
+import in `CLAUDE.md`. The global working agreement applies (signing, publication, safety); this
+file lists project-specific rules only.
 
 Multi-step **runbooks** (ingest, maintenance, projects, agents) live in `.agents/skills/*/SKILL.md`
 and load automatically when relevant. Canonical custom-agent role bodies live in `.agents/roles/`;
@@ -32,17 +34,14 @@ Maintain a durable wiki in `wiki/` from immutable source material in `raw/`.
 If `wiki/entities/user-background.md` exists (referenced vault-wide as `[[user-background]]`), it is the
 profile of the person this Brain serves: background, current focus, goals, and how they want agents to
 work. Any agent producing advice, a brief, a status report, or project guidance for the operator should
-read it first (it is qmd-indexed and surfaces on a `qmd search "operator profile"`) to calibrate tone and
+read it first when it is included in the selected access profile to calibrate tone and
 priorities. It is gitignored (personal), so it ships only in this operator's vault, not the public
 template. The Chief of Staff launcher injects it automatically into its live context.
 
 Read `.agents/context-policy.md` when using live document context. The headless launcher applies
 that shared policy to both providers and supplies live documents as task data, separately from
-trusted role instructions. `VAULTLENS_COS_CONTEXT_CHARS` enables an experimental character budget
-for Chief of Staff live context; it is unset by default pending model quality evaluation. It keeps
-the complete profile, consent gate, project/desk overview and review-queue names. It scans all open
-tasks before fair priority selection, reports source paths and omissions, and fails explicitly if
-mandatory context cannot fit. See `tools/evals/README.md` for the fixture baseline and limitations.
+trusted role instructions. Leave the experimental `VAULTLENS_COS_CONTEXT_CHARS` budget unset
+unless the operator asks; see `tools/evals/README.md`.
 
 ## Directory contract
 
@@ -79,14 +78,12 @@ PDFs, `python3 tools/wiki.py preprocess` pre-extracts `raw/sources/*.pdf` → `r
 
 ## Tool permissions
 
-Reads are auto-approved; writes require confirmation and the role's write profile. Interactive
-clients apply their own controls. Headless roles are mapped by `wiki-agent.py`, and may never spawn
-another agent. Tool allowlists are best-effort; the matching egress-locked container mount is the
-hard read/write boundary. See `.devcontainer/README.md` and `.agents/skills/wiki-agents/SKILL.md`.
-
-`raw/` may contain symlinks to files/dirs outside the vault, so existing data need not be duplicated.
-Headless inbox previews never follow directory or file links, because those links could bypass
-the review-inbox consent gate. Other authorized reads still follow the normal source workflow.
+Launch agents through `tools/local_runtime.py` or the `brain-*` wrappers. Each launch runs inside a
+versioned access profile that fixes read, write, protected, and network paths. Do not bypass it.
+Headless roles are mapped by `wiki-agent.py` and may never spawn another agent. Interactive
+subagents share the parent's boundary, so a narrow role prompt is not separate isolation.
+`raw/` may contain symlinks to outside files; a profile never grants their targets implicitly.
+Runtime internals: `tools/runtime/README.md` and `.agents/skills/wiki-agents/SKILL.md`.
 
 ## Projects layer
 
@@ -125,12 +122,16 @@ Canonical custom roles live in `.agents/roles/`; provider adapters are generated
 change, run `python3 tools/agents/generate-adapters.py`. Role selection, read/write behavior,
 handoffs, models, effort, and launcher commands live in `.agents/skills/wiki-agents/SKILL.md`.
 
-## Devcontainer sandbox
+## Local agent runtime
 
-Agents run in the hardened, egress-locked devcontainer. Launch them from the host with `brain-wiki`
-or `brain-cos`; `wiki-agent.py` refuses host execution. Provider state, mount profiles, configuration
-sync, and troubleshooting are documented in `.devcontainer/README.md`. Repository configuration in
-this file, `.agents/`, `.claude/`, and `.codex/` lives in the mounted workspace.
+Interactive, headless, and scheduled agents use the same local runtime with narrow access profiles.
+Use `brain-agent`, `brain-claude`, or `brain-codex` interactively, `brain-wiki <agent>` for headless
+work, and `brain-cos` for briefs. Direct `wiki-agent.py` invocations wrap themselves in the runtime.
+`brain-shell` opens a scoped shell. Deterministic `wiki.py` commands run directly as explicit
+operator actions. No container is required or launched. Provider login state is isolated from
+unrelated host credentials; the runtime grants only the endpoints selected by the profile.
+Local execution still sends selected context to the chosen model provider. Preview access before
+sharing personal material. The runtime and profile workflow are documented in `README.md`.
 
 ## Scheduled agents
 
@@ -155,26 +156,19 @@ opt-in. Scheduling, recovery, gates, provider selection, and installation are de
 
 ## Search
 
-[qmd](https://www.npmjs.com/package/@tobilu/qmd) is the primary engine — hybrid BM25 + vector +
-LLM-rerank over `wiki/` and `raw/`. **All search-using agents prefer qmd over `wiki.py search` when
-available** (see the devcontainer caveat in `projects/AGENTS.md`). `qmd mcp` exposes
-`mcp__qmd__*` tools (stdio; registered for Claude in `.mcp.json` and for Codex in
-`.codex/config.toml`). `python3 tools/wiki.py search "<query>"` is
-the substring fallback that always works without setup. One-time host setup + re-index live in
-`tools/scripts/setup-qmd.sh`; `qmd status` / `qmd collection list` for health.
+**All search-using agents prefer the scoped qmd tools when available.** In agent runs they search
+only the approved files. `python3 tools/wiki.py search "<query>"` is the substring fallback inside
+the same boundary. Full-vault setup and re-indexing (`tools/scripts/setup-qmd.sh`, `qmd update`)
+are explicit operator actions. Engine design: `README.md` (Scoped search).
 
-In Codex cloud (`CODEX_SESSION_ENV=cloud`), lead with `qmd search "<keywords>"`. Cloud setup builds
-the keyword index but intentionally does not download or build semantic embeddings. Do not use
-`qmd query`, `qmd vsearch`, or the equivalent semantic MCP tools until `qmd embed` has completed
-successfully in that environment.
 
 ## Obsidian skills
 
 Prefer the `obsidian:` skill family for vault-native operations (`obsidian-markdown` for page
 edits, `defuddle` for URL → clean markdown into `raw/inbox/`, `obsidian-cli` / `json-canvas` /
 `obsidian-bases` as needed). There is no Obsidian MCP server. `obsidian-cli` and `defuddle` are
-host-only (need the `obs` binary, a running Obsidian app, or network) — inside the egress-locked
-sandbox use `obsidian-markdown` for formatting plus the normal file tools.
+host-only (need the `obs` binary, a running Obsidian app, or network). Scoped agent runs use
+`obsidian-markdown` for formatting plus file tools available within their access profile.
 
 ## Command index
 
@@ -184,19 +178,11 @@ Day-to-day core — everything else lives in the per-operation runbooks under
 ```bash
 python3 tools/wiki.py lint                       # fast health check (links, metadata, staleness)
 python3 tools/wiki.py search "term"              # substring search (qmd preferred — see Search)
-qmd search "<keywords>"                          # BM25; `qmd query "<question>" --format json` for hybrid
-qmd update                                       # re-index after content changes
+qmd search "<keywords>"                          # scoped lexical search in agent runs
+qmd update                                       # full-vault re-index: explicit operator workflow
+ruff check tools/                                # lint (CI pins ruff 0.15.17)
+for t in tools/tests/test_*.py; do python3 "$t"; done   # tooling tests, as CI runs them
 ```
 
-## Cloud sessions
-
-Run `bash .codex/cloud/setup.sh` as the Codex cloud environment setup command. Cloud sessions work
-only with the tracked VaultLens template and example content. Brain is private, local-only, and
-must never be copied, mounted, fetched, indexed, or inferred in a cloud session. The bootstrap
-builds only the keyword index; semantic embeddings remain an explicit optional step. In cloud
-sessions, do not publish with shell Git commands, configure Git credentials, or create a pull
-request with `gh`. The platform-managed **Open pull request** action may create a pull request, and
-the connected GitHub integration may update the same branch for pull-request-linked follow-ups.
-When the user explicitly requests it, that integration may merge the pull request after all
-required checks and approvals pass and no blocking review remains. Do not use an admin bypass or
-directly update a default or protected branch outside that approved merge.
+Run each test file directly. `python -m unittest discover` finds nothing, because the suites are
+not an importable package. CI uses Python 3.12 and also runs `python -m compileall -q tools`.

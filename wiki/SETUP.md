@@ -3,7 +3,7 @@ title: Setup Guide
 type: page
 status: active
 created: 2026-04-11
-updated: 2026-09-18
+updated: 2026-10-03
 summary: How to set up the public wiki template, projects, search index, and scheduled agents safely.
 ---
 
@@ -14,20 +14,41 @@ Based on [Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf5
 ## Prerequisites
 
 - [Obsidian](https://obsidian.md) with plugins: Dataview, Templater
-- Apple's `container` runtime with the system service started
-- The LockBox-managed Brain image (Python 3.12 and qmd are baked in)
-- An LLM provider login for Claude Code or OpenAI Codex
+- Python 3.11 or newer; use a compatible Homebrew Python when the system interpreter is older
+- Node.js 22.12 or newer and the pinned standalone sandbox runtime installed by `tools/runtime/install.sh`
+- macOS Seatbelt, or bubblewrap, socat, and ripgrep on Linux
+- An installed native Claude Code or OpenAI Codex CLI; authenticate only after the isolation checks pass
+
+The runtime uses named access profiles for read selection, note writes, reports, and network access.
+Provider login stores live outside the vault and iCloud sync. Host and legacy login state is never
+imported automatically. See the [runtime guide](../tools/runtime/README.md) for the boundary and
+fresh authentication procedure.
 
 ## Quick Setup
 
-```bash
-# Repair the fixed scaffold and create local navigation files.
-# This is idempotent and never overwrites existing files.
-python3 tools/wiki.py init
+Use a supported Python executable for these host commands. Set `BRAIN_PYTHON` to its absolute
+path when using the Fish wrappers or installing the scheduler.
 
-# Verify tools inside the Brain LockBox container
-brain-wiki lint
+```bash
+# Deterministic operator commands; no model or provider login is needed.
+python3 tools/wiki.py init
+python3 tools/wiki.py lint
+
+# Install the pinned runtime and inspect an explicit reader selection.
+bash tools/runtime/install.sh
+python3 tools/local_runtime.py profiles
+python3 tools/local_runtime.py plan --profile selected-read --read-path wiki/system/schema.md
+
+# Test synthetic fixtures, then check launch readiness.
+python3 tools/runtime/probe.py
+python3 tools/local_runtime.py doctor
 ```
+
+All agent and scoped shell launches require a current successful synthetic probe receipt.
+Any failed or skipped required check leaves them disabled. A new probe revokes the older receipt;
+changes to launcher sources, access policy, runtime, dependencies, or operating system require a
+fresh probe. Package installation and portable tests do not prove isolation. Authenticate through
+the scoped runtime only after these gates pass; see the [runtime guide](../tools/runtime/README.md).
 
 ## Obsidian Configuration
 
@@ -51,7 +72,7 @@ Open graph view to see wiki structure. Color groups are pre-configured by page t
 
 ## QMD Search (Optional)
 
-For hybrid BM25 + vector search:
+For explicit full-vault hybrid search outside scoped agent runs:
 
 ```bash
 ./tools/scripts/setup-qmd.sh
@@ -68,10 +89,11 @@ qmd status             # Collection and index health
 
 The setup script configures the `raw` collection to ignore `review-inbox/**` before indexing.
 
-The Brain container receives the host qmd index as a read-only seed. Once per container boot it
-copies a changed, consistent snapshot into that capability profile's writable cache. If the host
-seed has an active SQLite write-ahead log, the refresh is skipped and the previous good container
-snapshot is kept. Replayed launch commands do not replace a cache under a live qmd process.
+Native agent runs start a fresh lexical search server inside the same whole-process boundary.
+Its corpus includes only files approved by that run's access profile. The qmd-compatible CLI and
+Model Context Protocol (MCP) tools use this scoped corpus; they never copy or open the host's
+shared qmd index or cache. In an agent run, `qmd query` is a lexical compatibility command.
+Full-vault hybrid search remains the separate, explicit operator workflow above.
 
 ## Source Approval Queues
 
@@ -123,26 +145,38 @@ in the [scheduler specification](../tools/schedule/SPEC.md). Scheduled ingest ch
 
 ## ChatGPT desktop and Codex
 
-Create one **local project** in the ChatGPT desktop app and attach this Brain
-vault as its primary folder. Keep the Brain root primary so Codex automatically
-discovers the root `AGENTS.md`, `.codex/config.toml`, skills, and the full
-`wiki/` context.
+Keep the personal Brain in local sessions. For ordinary note analysis, launch a native Brain
+wrapper with `selected-read` and explicit approved paths. The wrapper loads vault instructions
+and applies that run's access profile.
+
+A desktop app chat has its own permission settings; the native launcher's profile does not change
+those settings. Attach the complete Brain root to a local desktop chat only when you intend to
+make that workspace available. Selected material used by Claude or Codex is still sent to its
+configured model provider. Brain must never be copied into a hosted cloud session.
 
 Use a separate chat for each outcome or Brain project. When working on
 `projects/<slug>/`, state that directory in the request or start the Codex CLI
 there. Each project has its own `AGENTS.md`, which requires reading
 `project.md` and preserves the project write boundary.
 
-The desktop app's local-command sandbox cannot be replaced with the Apple
-`container` runtime. Use the app for context, search, planning, and review.
-Run authoritative wiki agents, mutations, tests, and scheduled work through the
-LockBox entry points:
+Interactive, headless, and scheduled Brain agents use native clients through the whole-process
+runtime. Start a reporting run or interactive session with a narrow reader profile:
 
 ```bash
-brain-wiki search --cli codex --task "..."
+brain-wiki search --cli codex --access-profile selected-read --read-path wiki/system/schema.md --task "Summarize the selected schema note."
+brain-codex --access-profile selected-read --read-path wiki/system/schema.md
+
+# Inspect the broader brief scope before a cross-project run.
+python3 tools/local_runtime.py plan --profile cos-read
 brain-cos --cli codex
-.devcontainer/bin/codex
 ```
+
+Use `brain-claude` for the native Claude client, or `brain-agent` for the selected provider.
+Requested wiki editing uses `--access-profile wiki-write`; project editing uses
+`--access-profile project-write --project <slug>`. Sources, the consent queue, tools, instructions,
+Obsidian configuration, and Git metadata remain protected from writes. Writer runs retain
+recoverable snapshots; review their changes before accepting them. Deterministic `wiki.py`
+commands and tooling tests remain explicit host operations independent of provider login.
 
 If a Brain project depends on an external repository, add it as a secondary
 folder only when the chat needs direct access. The Brain root must remain

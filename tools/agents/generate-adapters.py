@@ -6,95 +6,39 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools"))
+from agent_profiles import Role, load_role  # noqa: E402
+from llm_provider import resolve_provider  # noqa: E402
+from agent_capabilities import (  # noqa: E402
+    CAPABILITIES,
+    claude_tools,
+    codex_sandbox,
+    profile_capabilities,
+)
+
 ROLES_DIR = ROOT / ".agents" / "roles"
 CLAUDE_DIR = ROOT / ".claude" / "agents"
 CODEX_DIR = ROOT / ".codex" / "agents"
 PROJECTS_DIR = ROOT / "projects"
 
-CLAUDE_TOOLS = {
-    "read": "Read, Glob, Grep",
-    "read-shell": "Read, Glob, Grep, Bash",
-    "wiki-write": "Read, Glob, Grep, Bash, Write, Edit",
-    "project-write": "Read, Glob, Grep, Bash, Write, Edit",
-}
-CLAUDE_MODELS = {"standard": "sonnet", "deep": "opus"}
-CODEX_SANDBOX = {
-    "read": "read-only",
-    "read-shell": "read-only",
-    "wiki-write": "workspace-write",
-    "project-write": "workspace-write",
-}
+CLAUDE_INSTRUCTION_IMPORT = "@AGENTS.md\n"
 
 
-@dataclass(frozen=True)
-class Role:
-    path: Path
-    name: str
-    description: str
-    permission_profile: str
-    model_profile: str
-    reasoning_effort: str
-
-
-def _frontmatter(path: Path) -> dict[str, str]:
-    lines = path.read_text(encoding="utf-8").splitlines()
-    if not lines or lines[0] != "---":
-        raise ValueError(f"{path}: missing YAML frontmatter")
-    try:
-        end = lines.index("---", 1)
-    except ValueError as exc:
-        raise ValueError(f"{path}: unterminated YAML frontmatter") from exc
-
-    result: dict[str, str] = {}
-    i = 1
-    while i < end:
-        line = lines[i]
-        if not line or line.startswith(" ") or ":" not in line:
-            i += 1
-            continue
-        key, raw = line.split(":", 1)
-        value = raw.strip()
-        if value in {">", ">-", "|", "|-"}:
-            block: list[str] = []
-            i += 1
-            while i < end and (not lines[i] or lines[i].startswith(" ")):
-                block.append(lines[i].strip())
-                i += 1
-            result[key] = " ".join(part for part in block if part)
-            continue
-        result[key] = value.strip("\"'")
-        i += 1
-    return result
+class AdapterAccessError(OSError):
+    """Adapter verification was blocked by filesystem access, not drift."""
 
 
 def load_roles() -> list[Role]:
     roles: list[Role] = []
     for path in sorted(ROLES_DIR.glob("*.md")):
-        data = _frontmatter(path)
-        role = Role(
-            path=path,
-            name=data.get("name", ""),
-            description=data.get("description", ""),
-            permission_profile=data.get("permission_profile", ""),
-            model_profile=data.get("model_profile", ""),
-            reasoning_effort=data.get("reasoning_effort", ""),
-        )
-        if not role.name or not role.description:
-            raise ValueError(f"{path}: name and description are required")
-        if role.permission_profile not in CLAUDE_TOOLS:
+        role = load_role(path)
+        if role.permission_profile not in CAPABILITIES:
             raise ValueError(
                 f"{path}: unknown permission_profile {role.permission_profile!r}"
-            )
-        if role.model_profile not in CLAUDE_MODELS:
-            raise ValueError(f"{path}: unknown model_profile {role.model_profile!r}")
-        if role.reasoning_effort not in {"low", "medium", "high", "xhigh"}:
-            raise ValueError(
-                f"{path}: unknown reasoning_effort {role.reasoning_effort!r}"
             )
         roles.append(role)
     if not roles:
@@ -113,22 +57,43 @@ def load_projects() -> list[Path]:
     return projects
 
 
+def claude_instruction_paths(projects: list[Path]) -> list[Path]:
+    """Keep Claude discovery thin while AGENTS.md remains the shared source."""
+    directories = [ROOT, ROOT / "wiki", PROJECTS_DIR, *projects]
+    for directory in directories:
+        if not (directory / "AGENTS.md").is_file():
+            raise ValueError(f"{directory}: missing provider-neutral AGENTS.md")
+    return [directory / "CLAUDE.md" for directory in directories]
+
+
 def _role_instruction(role: Role) -> str:
     rel = role.path.relative_to(ROOT).as_posix()
     return (
-        f"Before doing any other work, read `{rel}` in full and follow it as your "
+        "Resolve paths relative to the vault repository root, not the session's "
+        "working directory. From a nested project directory, locate the ancestor "
+        f"containing both `AGENTS.md` and `{rel}`. Before doing any other work, "
+        f"read `{rel}` from that root in full and follow it as your "
         "canonical role instructions. Do not delegate or spawn another agent."
     )
 
 
 def claude_manifest(role: Role) -> str:
+    model = (
+        resolve_provider(
+            "claude",
+            path=ROOT / "tools" / "llm.local.json",
+            profile=role.model_profile,
+            environ={},
+        ).model
+        or "inherit"
+    )
     return (
         "---\n"
         f"name: {role.name}\n"
         f"description: {json.dumps(role.description)}\n"
-        f"tools: {CLAUDE_TOOLS[role.permission_profile]}\n"
-        "disallowedTools: Task\n"
-        f"model: {CLAUDE_MODELS[role.model_profile]}\n"
+        f"tools: {', '.join(claude_tools(profile_capabilities(role.permission_profile), scoped_shell=False))}\n"
+        "disallowedTools: Agent, Task\n"
+        f"model: {json.dumps(model)}\n"
         f"effort: {role.reasoning_effort}\n"
         "---\n\n"
         "<!-- Generated by tools/agents/generate-adapters.py; do not edit. -->\n\n"
@@ -137,42 +102,79 @@ def claude_manifest(role: Role) -> str:
 
 
 def codex_manifest(role: Role) -> str:
+    model = resolve_provider(
+        "codex",
+        path=ROOT / "tools" / "llm.local.json",
+        profile=role.model_profile,
+        environ={},
+    ).model
+    model_setting = f"model = {json.dumps(model)}\n" if model else ""
     instruction = (
         f"{_role_instruction(role)} The role's file scope is an instruction boundary, "
         "not proof of hard isolation: a parent Codex session can override this custom "
-        "agent's sandbox default. For hard isolation, run wiki-agent.py through the "
-        "matching container profile."
+        "agent's sandbox default. For hard isolation, launch through wiki-agent.py "
+        "with an approved local runtime access profile."
     )
+    perms = profile_capabilities(role.permission_profile)
     return (
         "# Generated by tools/agents/generate-adapters.py; do not edit.\n"
         f"name = {json.dumps(role.name)}\n"
         f"description = {json.dumps(role.description)}\n"
+        f"{model_setting}"
         f"model_reasoning_effort = {json.dumps(role.reasoning_effort)}\n"
-        f"sandbox_mode = {json.dumps(CODEX_SANDBOX[role.permission_profile])}\n"
+        f"sandbox_mode = {json.dumps(codex_sandbox(perms))}\n"
+        "agents.enabled = false\n"
+        'web_search = "disabled"\n'
         f"developer_instructions = {json.dumps(instruction)}\n"
     )
 
 
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
 def _sync(path: Path, expected: str, check: bool) -> bool:
-    current = path.read_text(encoding="utf-8") if path.exists() else None
+    try:
+        current = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        current = None
+    except OSError as exc:
+        raise AdapterAccessError(f"cannot read {_display_path(path)}: {exc}") from exc
     if current == expected:
         return True
     if check:
-        print(f"stale or missing: {path.relative_to(ROOT)}")
+        print(f"stale or missing: {_display_path(path)}")
         return False
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(expected, encoding="utf-8")
-    print(f"wrote {path.relative_to(ROOT)}")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(expected, encoding="utf-8")
+    except OSError as exc:
+        raise AdapterAccessError(f"cannot write {_display_path(path)}: {exc}") from exc
+    print(f"wrote {_display_path(path)}")
     return True
 
 
 def _check_adapter_set(directory: Path, suffix: str, expected: set[str]) -> bool:
-    actual = {path.name for path in directory.glob(f"*{suffix}")}
+    # Path.glob can silently report an unreadable directory as empty. Explicit
+    # enumeration keeps blocked verification distinct from missing adapters.
+    try:
+        actual = {
+            path.name for path in directory.iterdir() if path.name.endswith(suffix)
+        }
+    except FileNotFoundError:
+        actual = set()
+    except OSError as exc:
+        raise AdapterAccessError(
+            f"cannot list {_display_path(directory)}: {exc}"
+        ) from exc
     unexpected = sorted(actual - expected)
     if not unexpected:
         return True
     for name in unexpected:
-        print(f"unexpected generated adapter: {(directory / name).relative_to(ROOT)}")
+        print(f"unexpected generated adapter: {_display_path(directory / name)}")
     return False
 
 
@@ -181,19 +183,52 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--check", action="store_true", help="fail when generated adapters differ"
     )
+    parser.add_argument(
+        "--provider",
+        choices=("claude", "codex"),
+        help="check or sync only this provider (default: both)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Export adapters and instruction imports under this directory instead of the checkout",
+    )
     args = parser.parse_args(argv)
 
-    roles = load_roles()
-    ok = _check_adapter_set(
-        CLAUDE_DIR, ".md", {f"{role.name}.md" for role in roles}
-    )
-    ok &= _check_adapter_set(
-        CODEX_DIR, ".toml", {f"{role.name}.toml" for role in roles}
-    )
-    for role in roles:
-        ok &= _sync(CLAUDE_DIR / f"{role.name}.md", claude_manifest(role), args.check)
-        ok &= _sync(CODEX_DIR / f"{role.name}.toml", codex_manifest(role), args.check)
-    load_projects()
+    output = args.output_dir.resolve() if args.output_dir else ROOT
+    claude_dir = output / ".claude" / "agents" if args.output_dir else CLAUDE_DIR
+    codex_dir = output / ".codex" / "agents" if args.output_dir else CODEX_DIR
+    try:
+        roles = load_roles()
+        projects = load_projects()
+        ok = True
+        if args.provider in (None, "claude"):
+            instruction_paths = claude_instruction_paths(projects)
+            ok &= _check_adapter_set(
+                claude_dir, ".md", {f"{role.name}.md" for role in roles}
+            )
+            for role in roles:
+                ok &= _sync(
+                    claude_dir / f"{role.name}.md", claude_manifest(role), args.check
+                )
+            for path in instruction_paths:
+                destination = (
+                    output / path.relative_to(ROOT) if args.output_dir else path
+                )
+                ok &= _sync(destination, CLAUDE_INSTRUCTION_IMPORT, args.check)
+        if args.provider in (None, "codex"):
+            ok &= _check_adapter_set(
+                codex_dir, ".toml", {f"{role.name}.toml" for role in roles}
+            )
+            for role in roles:
+                ok &= _sync(
+                    codex_dir / f"{role.name}.toml", codex_manifest(role), args.check
+                )
+    except AdapterAccessError as exc:
+        print(f"BLOCKED adapter verification: {exc}", file=sys.stderr)
+        return 2
+    except ValueError as exc:
+        parser.error(str(exc))
     return 0 if ok else 1
 
 

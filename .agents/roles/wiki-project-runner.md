@@ -24,7 +24,8 @@ operator's "Interview on Uncertainty" rule — execute the clear, log the unclea
 Read-only helper set plus file-management (`touch`/`mkdir`/`mv`/`cp`/`sed`/`awk`) within your
 writable scope (`projects/<slug>/` only — `wiki/`, `raw/`, sibling projects, and `.git` stay
 read-only). No `git`. No `curl`/`wget` — network access goes through `python3` (urllib/requests)
-via the devcontainer egress proxy; see the network rule below. Enforcement mechanics: see
+inside the whole-process runtime and its explicit research-domain policy; see the network
+rule below. Enforcement mechanics: see
 AGENTS.md § Tool permissions.
 
 ## Scope
@@ -86,11 +87,12 @@ Collect tasks with `status:: clear` and `next_due:: <= today`. For each, up to
 1. **Unambiguous & self-verifiable?** If the acceptance line is not fully objective, or you
    cannot verify success yourself, set `status:: needs-clarification`, add `questions::`, add a
    `## Clarifications` entry, log it, and skip. Do not execute on a guess.
-2. **Needs a network host?** If the task fetches anything, read `.devcontainer/allowlist.txt`
-   and check the host is listed (a leading-dot line matches subdomains). If it is **not**
-   listed, set `status:: blocked`, add `blocked_reason::` naming the host and the fix ("add
-   `<host>` to .devcontainer/allowlist.extra.txt and rebuild"), log it, and skip. Never attempt
-   a fetch you expect the proxy to refuse.
+2. **Needs a network host?** Read the immutable runtime manifest named by
+   `VAULTLENS_RUNTIME_MANIFEST` and check its `research_domains`. The ordinary
+   model/login endpoints are not research grants. If the task's HTTPS host is
+   absent, set `status:: blocked`, add a `blocked_reason::` naming the host and
+   the required operator-approved research profile, log it, and skip. Never
+   change policy yourself or attempt a fetch outside the declared domains.
 3. **In scope?** If the task needs a `runner_scope` capability the frontmatter does not grant
    (e.g. `research` on an edits-only agenda), mark it `blocked` with the reason and skip.
 4. **Otherwise execute** entirely within `projects/<slug>/`: make the edits / write the
@@ -102,12 +104,14 @@ Collect tasks with `status:: clear` and `next_due:: <= today`. For each, up to
 
 ### Network rule (research tasks)
 
-Fetch only via `python3` using the container's proxy (it honours `HTTPS_PROXY`); never WebFetch
-or WebSearch (they execute outside the egress proxy and are not granted to you). Treat a proxy
-refusal or connection error as a `blocked` task and record the observed error in
-`blocked_reason::`. Name an allowlist omission only when the host check in step 2 or an explicit
-proxy denial establishes it; a timeout or other connection failure alone does not. Do not
-recommend an allowlist change for an unexplained connection failure or silently swallow it.
+Fetch only via local `python3` inside the whole-process runtime, using the
+research domains in the selected access profile. Hosted WebFetch and WebSearch
+are disabled because their requests do not pass through this local boundary.
+Treat a policy denial or connection error as a `blocked` task and record the
+observed error in `blocked_reason::`. Name a missing domain only when the
+manifest check or an explicit policy denial establishes it; a timeout or other
+connection failure alone does not. Ask for a separate reviewed research profile
+when access needs to change. Never widen the current run or hide a failure.
 
 ## Output (stdout contract)
 

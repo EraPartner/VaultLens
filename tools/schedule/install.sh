@@ -13,22 +13,41 @@ LABEL="com.brain.schedule"
 SRC="$HERE/$LABEL.plist"
 DEST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
-LLM_CLI="${VAULTLENS_LLM_CLI:-codex}"
 MODE="${1:---install}"
+PYTHON="${BRAIN_PYTHON:-/opt/homebrew/bin/python3}"
+if [[ -n "${BRAIN_PYTHON:-}" ]]; then
+  PYTHON="$(command -v "$BRAIN_PYTHON")" || {
+    echo "BRAIN_PYTHON must name an executable Python interpreter" >&2
+    exit 2
+  }
+elif [[ ! -x "$PYTHON" ]]; then
+  PYTHON="$(command -v python3)" || {
+    echo "Python 3.11 or newer is required; set BRAIN_PYTHON to its executable" >&2
+    exit 2
+  }
+fi
+if ! "$PYTHON" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else "Detected Python " + sys.version.split()[0])'; then
+  echo "Python 3.11 or newer is required; set BRAIN_PYTHON to its executable" >&2
+  exit 2
+fi
 
 case "$MODE" in
-  --install|--prepare-disabled|--enable-prepared) ;;
+  --install|--prepare-disabled|--enable-prepared|--render) ;;
   *)
-    echo "usage: $0 [--install|--prepare-disabled|--enable-prepared]" >&2
+    echo "usage: $0 [--install|--prepare-disabled|--enable-prepared|--render OUTPUT]" >&2
     exit 2
     ;;
 esac
 
+if [[ "$MODE" == "--render" ]]; then
+  [[ $# -eq 2 ]] || { echo "--render requires an output path" >&2; exit 2; }
+  exec "$PYTHON" "$HERE/render_plist.py" "$SRC" "$2" --python-executable "$PYTHON"
+fi
+
 if [[ "$MODE" == "--enable-prepared" ]]; then
   [[ -f "$DEST" ]] || { echo "missing prepared plist: $DEST" >&2; exit 1; }
-  BACKEND="$(/usr/bin/plutil -extract EnvironmentVariables.VAULTLENS_LLM_CLI raw -o - "$DEST" 2>/dev/null || true)"
-  [[ -n "$BACKEND" ]] || { echo "prepared plist has no VAULTLENS_LLM_CLI" >&2; exit 1; }
-  echo "==> enabling prepared $LABEL (backend: $BACKEND)"
+  "$PYTHON" "$HERE/render_plist.py" "$DEST" --validate
+  echo "==> enabling prepared $LABEL"
   launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
   launchctl enable "$DOMAIN/$LABEL"
   launchctl bootstrap "$DOMAIN" "$DEST"
@@ -36,49 +55,25 @@ if [[ "$MODE" == "--enable-prepared" ]]; then
   exit 0
 fi
 
-case "$LLM_CLI" in
-  claude|codex) ;;
-  *)
-    echo "VAULTLENS_LLM_CLI must be 'claude' or 'codex' (got '$LLM_CLI')" >&2
-    exit 2
-    ;;
-esac
-
 [[ -f "$SRC" ]] || { echo "missing $SRC" >&2; exit 1; }
+# Validate and render before touching the installed job or its enable state.
+PREPARED="$(mktemp "${TMPDIR:-/tmp}/brain-schedule.XXXXXX")"
+trap 'rm -f "$PREPARED"' EXIT
+"$PYTHON" "$HERE/render_plist.py" "$SRC" "$PREPARED" --python-executable "$PYTHON"
 
 echo "==> creating ~/.brain/logs"
 mkdir -p "$HOME/.brain/logs"
 
 echo "==> installing $DEST"
 mkdir -p "$HOME/Library/LaunchAgents"
-cp "$SRC" "$DEST"
-/usr/bin/plutil -insert EnvironmentVariables.VAULTLENS_LLM_CLI \
-  -string "$LLM_CLI" "$DEST"
-if [[ -n "${VAULTLENS_LLM_MODEL:-}" ]]; then
-  /usr/bin/plutil -insert EnvironmentVariables.VAULTLENS_LLM_MODEL \
-    -string "$VAULTLENS_LLM_MODEL" "$DEST"
-fi
-if [[ -n "${VAULTLENS_LLM_HEALTH_HOST:-}" ]]; then
-  /usr/bin/plutil -insert EnvironmentVariables.VAULTLENS_LLM_HEALTH_HOST \
-    -string "$VAULTLENS_LLM_HEALTH_HOST" "$DEST"
-fi
-if [[ -n "${VAULTLENS_LLM_IDENTITY:-}" ]]; then
-  /usr/bin/plutil -insert EnvironmentVariables.VAULTLENS_LLM_IDENTITY \
-    -string "$VAULTLENS_LLM_IDENTITY" "$DEST"
-fi
-if [[ -n "${VAULTLENS_SCHEDULE_ENHANCE:-}" ]]; then
-  /usr/bin/plutil -insert EnvironmentVariables.VAULTLENS_SCHEDULE_ENHANCE \
-    -string "$VAULTLENS_SCHEDULE_ENHANCE" "$DEST"
-fi
-
-echo "==> scheduled LLM backend: $LLM_CLI"
+cp "$PREPARED" "$DEST"
 
 echo "==> unloading any existing $LABEL from $DOMAIN"
 launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
 
 if [[ "$MODE" == "--prepare-disabled" ]]; then
   launchctl disable "$DOMAIN/$LABEL"
-  echo "Prepared and disabled. Backend is stored as $LLM_CLI."
+  echo "Prepared and disabled. Provider selection is validated above."
   echo "Enable later with: tools/schedule/install.sh --enable-prepared"
   exit 0
 fi
@@ -86,8 +81,7 @@ fi
 echo "==> (re)bootstrapping $LABEL into $DOMAIN"
 launchctl enable "$DOMAIN/$LABEL"
 launchctl bootstrap "$DOMAIN" "$DEST"
-echo "==> kickstarting one run now"
-launchctl kickstart -k "$DOMAIN/$LABEL" || true
+echo "RunAtLoad starts one gate-check now; calendar triggers handle later runs."
 
 cat <<EOF
 
@@ -96,13 +90,16 @@ Installed. Useful commands:
   python3 "$HERE/dispatch.py" status      # ledger / accounts / wakes
   python3 "$HERE/dispatch.py" run --dry-run
 
-Backend selection is captured when this installer runs:
-  VAULTLENS_LLM_CLI=claude tools/schedule/install.sh
-  VAULTLENS_LLM_CLI=codex tools/schedule/install.sh   # after one-time profile logins
-  VAULTLENS_LLM_CLI=codex tools/schedule/install.sh --prepare-disabled
-  tools/schedule/install.sh --enable-prepared         # uses the stored backend
-Optional overrides: VAULTLENS_LLM_MODEL, VAULTLENS_LLM_HEALTH_HOST,
-VAULTLENS_LLM_IDENTITY. Nightly wiki enhancement is paused by default; opt in
+Provider selection normally follows tools/llm.local.json on each new tick:
+  python3 tools/llm_provider.py select claude
+  python3 tools/llm_provider.py select codex   # after one-time profile logins
+  tools/schedule/install.sh --prepare-disabled
+  tools/schedule/install.sh --enable-prepared
+  tools/schedule/install.sh --render /tmp/brain-schedule.plist   # preview only
+Explicit VAULTLENS_LLM_CLI, VAULTLENS_LLM_MODEL, VAULTLENS_LLM_HEALTH_HOST,
+or VAULTLENS_LLM_IDENTITY overrides are captured in the installed plist and
+take precedence over the shared file. Reinstall without them to remove them.
+Nightly wiki enhancement is paused by default; opt in
 when installing with VAULTLENS_SCHEDULE_ENHANCE=1.
 
 To enable the overnight forced wake (AC-gated in the dispatcher), run with sudo:

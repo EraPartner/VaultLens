@@ -39,4 +39,4 @@ synthetic processes to test timeout cancellation, signal death, and retained par
 Interruption/restart fixtures verify the persistent in-flight marker and corrupt-ledger refusal.
 The adversarial document
 fixture checks transport separation only. Resistance to prompt injection by an actual model is
-**not evaluated**. Runtime container termination cannot be inferred from this local child test.
+**not evaluated**. Whole-process runtime termination cannot be inferred from this local child test.

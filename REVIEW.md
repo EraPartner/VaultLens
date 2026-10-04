@@ -9,7 +9,8 @@ lives in the maintainer's head, so review catches issues automatically (see `AGE
       (`ghp_`/`github_pat_`/`sk-ant-`/`AKIA`/`xox`/`BEGIN ... PRIVATE KEY`) and hard-coded
       `*_TOKEN=`/`*_API_KEY=` assignments. Mark a known-safe line `pragma: allowlist secret`.
 - [ ] No force-added gitignored content — raw sources, generated `wiki/` pages, `projects/*`,
-      `.claude/settings.local.json`, `.devcontainer/mount-roots.local` stay local (never `git add -f`).
+      `.claude/settings.local.json`, local access/model preferences, and native authentication
+      or runtime state stay local (never `git add -f`).
 - [ ] No blob > 1 MiB staged (pre-commit blocks; override only with `ALLOW_LARGE_FILES=1`).
 
 ## Correctness & invariants
@@ -27,9 +28,12 @@ lives in the maintainer's head, so review catches issues automatically (see `AGE
 - [ ] `python3 -m compileall -q tools` passes (syntax gate).
 - [ ] Tooling tests pass — run each `python3 tools/tests/test_*.py` with Python 3.12 as in CI
       (CI discovers every suite; the git hooks run `test_wiki.py` + `test_schedule.py`).
-- [ ] Cloud shell syntax and `.codex/cloud/tests/*.test.sh` pass; the CI test job runs both.
 - [ ] Context baseline matches (`python3 tools/context_evaluation.py --check`); no model-quality
       claim is inferred from fixture character counts.
+- [ ] Generated provider adapters match (`python3 tools/agents/generate-adapters.py --check`).
+      A provider directory that cannot be read is unverified, not evidence of drift.
+- [ ] Preview commands leave source files and scheduler state unchanged. Recovery tests
+      restore edited projects and defer writes when a snapshot cannot be created.
 - [ ] CI (the `CI` workflow, required check `CI Complete`: secrets-scan + lint + test) expected green on every tracked path;
       weekly `codeql.yml` Python scan also runs.
 

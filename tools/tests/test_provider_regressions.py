@@ -1,0 +1,408 @@
+"""Offline fixtures for provider capabilities, dry runs, and adapter export."""
+
+from __future__ import annotations
+
+import contextlib
+import importlib.util
+import io
+from pathlib import Path
+import shutil
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+TOOLS = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(TOOLS))
+
+from agent_capabilities import (  # noqa: E402
+    CAPABILITIES,
+    claude_builtin_tools,
+    claude_tools,
+    profile_capabilities,
+)
+from agent_profiles import AGENT_FILES, load_role  # noqa: E402
+
+
+def load_module(name, filename):
+    spec = importlib.util.spec_from_file_location(name, TOOLS / "agents" / filename)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class ProviderRegressionTests(unittest.TestCase):
+    def setUp(self):
+        fixture = tempfile.TemporaryDirectory(prefix="vaultlens-provider-")
+        self.addCleanup(fixture.cleanup)
+        self.root = Path(fixture.name)
+        self.roles = self.root / ".agents" / "roles"
+        self.roles.mkdir(parents=True)
+        for source in (TOOLS.parent / ".agents" / "roles").glob("*.md"):
+            shutil.copy2(source, self.roles / source.name)
+        shutil.copy2(TOOLS.parent / ".agents" / "context-policy.md", self.roles.parent)
+        (self.root / "tools").mkdir()
+        shutil.copy2(TOOLS / "model-profiles.json", self.root / "tools")
+        for directory in (self.root, self.root / "wiki", self.root / "projects"):
+            directory.mkdir(exist_ok=True)
+            (directory / "AGENTS.md").write_text("Fixture instructions\n")
+        self.agent = load_module("regression_agent", "wiki-agent.py")
+        boundary = mock.patch.object(self.agent, "verify_active_boundary")
+        boundary.start()
+        self.addCleanup(boundary.stop)
+        self.generator = load_module("regression_generator", "generate-adapters.py")
+
+    def generator_paths(self):
+        return mock.patch.multiple(
+            self.generator,
+            ROOT=self.root,
+            ROLES_DIR=self.roles,
+            PROJECTS_DIR=self.root / "projects",
+            CLAUDE_DIR=self.root / ".claude" / "agents",
+            CODEX_DIR=self.root / ".codex" / "agents",
+        )
+
+    def test_every_role_shares_capabilities_and_grants_qmd(self):
+        for name, filename in AGENT_FILES.items():
+            with self.subTest(role=name):
+                role = load_role(self.roles / filename)
+                perms = profile_capabilities(role.permission_profile)
+                self.assertEqual(self.agent._agent_permissions(name), perms)
+                allowed = self.agent._build_allowed_tools(perms)
+                native = claude_tools(perms, scoped_shell=False)
+                self.assertIn("mcp__qmd__*", allowed)
+                self.assertIn("mcp__qmd__*", native)
+                self.assertEqual("Bash" in native, perms["shell"])
+                for tool in ("Edit", "Write"):
+                    self.assertEqual(tool in native, perms["write"])
+                    self.assertEqual(tool in allowed, perms["write"])
+                self.assertEqual("Bash(python3 *)" in allowed, name == "project-run")
+                self.assertNotIn("Task", native)
+                self.assertNotIn("Agent", native)
+                with self.generator_paths():
+                    manifest = self.generator.claude_manifest(role)
+                self.assertIn(f"tools: {', '.join(native)}\n", manifest)
+                self.assertIn("disallowedTools: Agent, Task\n", manifest)
+
+    def test_headless_tool_availability_and_retention_for_every_profile(self):
+        for profile in CAPABILITIES:
+            with self.subTest(profile=profile):
+                perms = profile_capabilities(profile)
+                command = self.agent.build_cli_command(
+                    "claude", "", None, "ROLE", "TASK", perms
+                )
+                available = command[command.index("--tools") + 1].split(",")
+                allowed = command[command.index("--allowedTools") + 1].split(",")
+                expected = ["Read", "Grep", "Glob"]
+                if perms["shell"]:
+                    expected.append("Bash")
+                if perms["write"]:
+                    expected.extend(["Edit", "Write"])
+                self.assertEqual(available, expected)
+                self.assertEqual(claude_builtin_tools(perms), expected)
+                # --tools controls built-ins only. MCP permission patterns stay
+                # in --allowedTools rather than being mistaken for tool names.
+                self.assertIn("mcp__qmd__*", allowed)
+                self.assertNotIn("mcp__qmd__*", available)
+                self.assertNotIn("Bash", allowed)
+                self.assertTrue(all("(" not in name for name in available))
+                self.assertIn("--no-session-persistence", command)
+                self.assertIn("-p", command)
+                self.assertEqual(command[-1], "TASK")
+                self.assertNotIn("--dangerously-skip-permissions", command)
+                if perms["shell"]:
+                    self.assertIn("Bash(python3 tools/wiki.py lint)", allowed)
+                    self.assertEqual(
+                        "Bash(python3 *)" in allowed,
+                        profile == "project-write",
+                    )
+
+    def test_debug_pdf_tasks_do_not_preprocess_or_promote(self):
+        inbox = self.root / "raw" / "inbox"
+        inbox.mkdir(parents=True)
+        pdf = inbox / "example.pdf"
+        original = b"fixture PDF: debug must not read or move it"
+        pdf.write_bytes(original)
+        for flags in (
+            ["ingest", "--source", "raw/inbox/example.pdf"],
+            ["enhance", "--source", "raw/inbox/example.pdf"],
+            ["enhance", "--pdf", "raw/inbox/example.pdf"],
+        ):
+            with self.subTest(flags=flags):
+                args = self.agent.build_parser().parse_args([*flags, "--debug"])
+                args.cli, args.model, args.effort = "claude", "sonnet", "medium"
+                with (
+                    mock.patch.object(self.agent, "ROOT", self.root),
+                    mock.patch.object(self.agent, "AGENTS_DIR", self.roles),
+                    mock.patch.object(self.agent, "validate_cli", return_value=True),
+                    mock.patch.object(
+                        self.agent, "_resolve_pdf_to_markdown"
+                    ) as preprocess,
+                    mock.patch.object(self.agent.subprocess, "run") as provider,
+                    contextlib.redirect_stdout(io.StringIO()) as output,
+                    contextlib.redirect_stderr(io.StringIO()),
+                ):
+                    self.assertEqual(self.agent.run_agent(args), 0)
+                preprocess.assert_not_called()
+                provider.assert_not_called()
+                self.assertIn(str(pdf), output.getvalue())
+                self.assertEqual(pdf.read_bytes(), original)
+                self.assertFalse((self.root / "raw" / "sources").exists())
+
+    def source_page(self, pdf_name="example.pdf", *, summary="A source summary."):
+        return (
+            "---\n"
+            "title: Example\ntype: source\nstatus: active\n"
+            "created: 2026-10-03\nupdated: 2026-10-03\n"
+            f"summary: {summary}\n"
+            "source_id: src-2026-10-03-001\nsource_type: pdf\n"
+            "origin: fixture\ningested_on: 2026-10-03\n---\n\n"
+            f"# Example\n\nEvidence extracted.\n\n## Sources\n"
+            f"- Source PDF: [[raw/inbox/{pdf_name}]]\n"
+        )
+
+    def run_ingest_fixture(self, provider):
+        inbox = self.root / "raw" / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / "example.pdf").write_bytes(b"fixture PDF")
+        args = self.agent.build_parser().parse_args(
+            ["ingest", "--source", "raw/inbox/example.pdf"]
+        )
+        args.cli, args.model, args.effort = "claude", "sonnet", "medium"
+        with (
+            mock.patch.object(self.agent, "ROOT", self.root),
+            mock.patch.object(self.agent, "validate_cli", return_value=True),
+            mock.patch.object(
+                self.agent, "_resolve_pdf_to_markdown", return_value="prepared.md"
+            ) as preprocess,
+            mock.patch.object(self.agent, "invoke_agent", side_effect=provider),
+            contextlib.redirect_stderr(io.StringIO()) as error,
+        ):
+            result = self.agent.run_agent(args)
+        preprocess.assert_called_once_with(args.source)
+        self.assertEqual((inbox / "example.pdf").read_bytes(), b"fixture PDF")
+        return result, 0, error.getvalue()
+
+    def test_ingest_accepts_changed_valid_page_without_mutating_sources(self):
+        sources = self.root / "wiki" / "sources"
+        sources.mkdir()
+        page = sources / "src-2026-10-03-001.md"
+        for existing in (False, True):
+            with self.subTest(existing=existing):
+                if existing:
+                    page.write_text(self.source_page(summary="Previous summary."))
+                else:
+                    page.unlink(missing_ok=True)
+
+                def provider(*args, **kwargs):
+                    page.write_text(self.source_page())
+                    return 0
+
+                result, promotions, error = self.run_ingest_fixture(provider)
+                self.assertEqual((result, promotions, error), (0, 0, ""))
+
+    def test_ingest_rejects_absent_invalid_unrelated_and_unchanged_output(self):
+        sources = self.root / "wiki" / "sources"
+        sources.mkdir()
+        page = sources / "src-2026-10-03-001.md"
+        for name, output in (
+            ("absent", None),
+            ("blank metadata", self.source_page(summary="")),
+            ("wrong PDF", self.source_page(pdf_name="different.pdf")),
+            ("draft", self.source_page().replace("status: active", "status: draft")),
+            (
+                "invalid date",
+                self.source_page().replace("created: 2026-10-03", "created: yesterday"),
+            ),
+            (
+                "moved source citation",
+                self.source_page().replace("raw/inbox/", "raw/sources/"),
+            ),
+            ("unchanged", self.source_page()),
+        ):
+            with self.subTest(case=name):
+                page.unlink(missing_ok=True)
+                if name == "unchanged":
+                    page.write_text(output)
+
+                def provider(*args, **kwargs):
+                    if output is not None:
+                        page.write_text(output)
+                    return 0
+
+                result, promotions, error = self.run_ingest_fixture(provider)
+                self.assertEqual((result, promotions), (2, 0))
+                self.assertIn("PDF remains in raw/inbox/", error)
+
+    def test_ingest_provider_failure_never_promotes(self):
+        result, promotions, error = self.run_ingest_fixture(lambda *a, **kw: 1)
+        self.assertEqual((result, promotions, error), (1, 0, ""))
+
+    def test_ingest_accepts_relative_markdown_pdf_citation(self):
+        sources = self.root / "wiki" / "sources"
+        sources.mkdir()
+        page = sources / "src-2026-10-03-001.md"
+
+        def provider(*args, **kwargs):
+            page.write_text(
+                self.source_page().replace(
+                    "[[raw/inbox/example.pdf]]",
+                    "[PDF](<../../raw/inbox/example.pdf>)",
+                )
+            )
+            return 0
+
+        self.assertEqual(self.run_ingest_fixture(provider), (0, 0, ""))
+
+    def test_ingest_matches_special_pdf_names_and_large_source_ids(self):
+        from urllib.parse import quote
+
+        sources = self.root / "wiki" / "sources"
+        sources.mkdir()
+        page = sources / "src-2026-10-03-1000.md"
+        for name in ("Example [1] #2.pdf", "Example Project.pdf"):
+            with (
+                self.subTest(name=name),
+                mock.patch.object(self.agent, "ROOT", self.root),
+            ):
+                content = (
+                    self.source_page(pdf_name=name)
+                    .replace("src-2026-10-03-001", page.stem)
+                    .replace(
+                        f"[[raw/inbox/{name}]]",
+                        f"[PDF](<../../raw/inbox/{quote(name)}>)",
+                    )
+                )
+                before = self.agent._source_page_snapshot()
+                page.write_text(content)
+                self.assertTrue(self.agent._verify_ingest_result(self.root / "raw/inbox" / name, before))
+
+    def test_ingest_code_examples_do_not_certify_a_pdf_citation(self):
+        sources = self.root / "wiki" / "sources"
+        sources.mkdir()
+        page = sources / "src-2026-10-03-001.md"
+        for citation in (
+            "`[PDF](<../../raw/inbox/example.pdf>)`",
+            "\n```md\n[PDF](<../../raw/inbox/example.pdf>)\n```",
+        ):
+            with (
+                self.subTest(citation=citation),
+                mock.patch.object(self.agent, "ROOT", self.root),
+            ):
+                page.write_text(
+                    self.source_page().replace("[[raw/inbox/example.pdf]]", citation)
+                )
+                self.assertFalse(
+                    self.agent._verify_ingest_result(self.root / "raw/inbox/example.pdf", {})
+                )
+
+    def test_export_roundtrip_checks_without_deployed_provider_access(self):
+        output = self.root / "export"
+        with self.generator_paths(), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.generator.main(["--output-dir", str(output)]), 0)
+            self.assertEqual(
+                self.generator.main(["--check", "--output-dir", str(output)]), 0
+            )
+        for provider in (".claude", ".codex"):
+            self.assertEqual(
+                len(list((output / provider / "agents").iterdir())), len(AGENT_FILES)
+            )
+            self.assertFalse((self.root / provider).exists())
+        for path in (
+            output / "CLAUDE.md",
+            output / "wiki" / "CLAUDE.md",
+            output / "projects" / "CLAUDE.md",
+        ):
+            self.assertEqual(path.read_text(), "@AGENTS.md\n")
+
+    def test_provider_launches_from_nested_project_use_vault_root(self):
+        project = self.root / "projects" / "nested-project"
+        project.mkdir(parents=True)
+        for provider in ("claude", "codex"):
+            with (
+                self.subTest(provider=provider),
+                contextlib.chdir(project),
+                mock.patch.object(self.agent, "ROOT", self.root),
+                mock.patch.object(self.agent, "AGENTS_DIR", self.roles),
+                mock.patch.object(
+                    self.agent,
+                    "_run_agent_command",
+                    return_value=0,
+                ) as run,
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                self.assertEqual(
+                    self.agent.invoke_agent(
+                        "search",
+                        provider,
+                        "",
+                        "medium",
+                        "Find a page",
+                        "",
+                        [],
+                        timeout=42,
+                    ),
+                    0,
+                )
+                self.assertEqual(
+                    run.call_args.kwargs, {"cwd": self.root, "timeout": 42}
+                )
+                self.assertEqual(Path.cwd(), project.resolve())
+
+    def test_generated_roles_resolve_from_repository_root_without_host_paths(self):
+        import tomllib
+
+        with self.generator_paths():
+            for role in self.generator.load_roles():
+                with self.subTest(role=role.name):
+                    instruction = self.generator._role_instruction(role)
+                    self.assertIn("vault repository root", instruction)
+                    self.assertIn("ancestor containing both `AGENTS.md`", instruction)
+                    self.assertIn(
+                        f"`{role.path.relative_to(self.root).as_posix()}`", instruction
+                    )
+                    self.assertNotIn(str(self.root), instruction)
+                    self.assertIn(instruction, self.generator.claude_manifest(role))
+                    codex = tomllib.loads(self.generator.codex_manifest(role))
+                    self.assertIn(instruction, codex["developer_instructions"])
+
+    def test_blocked_adapter_directory_reports_blocked_not_drift(self):
+        with (
+            self.generator_paths(),
+            mock.patch.object(
+                Path, "iterdir", side_effect=PermissionError("fixture denial")
+            ),
+        ):
+            with self.assertRaises(self.generator.AdapterAccessError):
+                self.generator._check_adapter_set(self.root / ".claude", ".md", set())
+        with (
+            self.generator_paths(),
+            mock.patch.object(
+                self.generator,
+                "_check_adapter_set",
+                side_effect=self.generator.AdapterAccessError("fixture denial"),
+            ),
+            contextlib.redirect_stderr(io.StringIO()) as error,
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertEqual(
+                self.generator.main(["--check", "--provider", "claude"]), 2
+            )
+        self.assertIn("BLOCKED adapter verification", error.getvalue())
+        self.assertNotIn("stale or missing", output.getvalue())
+
+    def test_unreadable_adapter_does_not_become_missing_drift(self):
+        with mock.patch.object(
+            Path, "read_text", side_effect=PermissionError("fixture denial")
+        ):
+            with self.assertRaises(self.generator.AdapterAccessError):
+                self.generator._sync(self.root / "unreadable.md", "expected", True)
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertFalse(
+                self.generator._sync(self.root / "missing.md", "expected", True)
+            )
+        self.assertIn("stale or missing", output.getvalue())
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
