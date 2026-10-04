@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import IO, Unpack
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -22,23 +23,42 @@ import local_access as access
 import local_runtime as runtime
 import process_control
 import provider_commands
+from process_control import SupervisedOptions, SupervisedProcess
+
+# Tests exercise runtime internals directly; bind each private name once, justified here.
+_absent_provider_config_reads = runtime._absent_provider_config_reads  # pyright: ignore[reportPrivateUsage] - unit tests drive runtime internals
+_auth_directory = runtime._auth_directory  # pyright: ignore[reportPrivateUsage] - unit tests drive runtime internals
+_disposable_run = runtime._disposable_run  # pyright: ignore[reportPrivateUsage] - unit tests drive runtime internals
+_execute_prepared = runtime._execute_prepared  # pyright: ignore[reportPrivateUsage] - unit tests drive runtime internals
+_prepare_auth_store = runtime._prepare_auth_store  # pyright: ignore[reportPrivateUsage] - unit tests drive runtime internals
+_prepare_workspace = runtime._prepare_workspace  # pyright: ignore[reportPrivateUsage] - unit tests drive runtime internals
+_private_directory = runtime._private_directory  # pyright: ignore[reportPrivateUsage] - unit tests drive runtime internals
+_run = runtime._run  # pyright: ignore[reportPrivateUsage] - unit tests drive runtime internals
+_snapshot = runtime._snapshot  # pyright: ignore[reportPrivateUsage] - unit tests drive runtime internals
+_transfer_auth = runtime._transfer_auth  # pyright: ignore[reportPrivateUsage] - unit tests drive runtime internals
+_verify_preflight = runtime._verify_preflight  # pyright: ignore[reportPrivateUsage] - unit tests drive runtime internals
 
 
 class RuntimeTests(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         # These unit fixtures exercise preparation, not operating-system evidence.
         verification = mock.patch.object(runtime, "require_verified_runtime")
         verification.start()
         self.addCleanup(verification.stop)
 
-        def synthetic_launch(command, *, run, interactive=False, **options):
+        def synthetic_launch(
+            command: list[str],
+            *,
+            run: Path,
+            interactive: bool = False,
+            **options: Unpack[SupervisedOptions],
+        ) -> SupervisedProcess:
             # A public unit fixture must never bootstrap a real launchd job.
-            return runtime.subprocess.Popen(
-                command,
-                start_new_session=not interactive,
-                **({"process_group": 0} if interactive else {}),
-                **options,
-            )
+            if interactive:
+                return runtime.subprocess.Popen(
+                    command, start_new_session=False, process_group=0, **options
+                )
+            return runtime.subprocess.Popen(command, start_new_session=True, **options)
 
         supervisor = mock.patch.object(
             runtime, "launch_supervised", side_effect=synthetic_launch
@@ -58,9 +78,9 @@ class RuntimeTests(unittest.TestCase):
         )
         account.start()
         self.addCleanup(account.stop)
-        self.run = self.root / "public-run-fixture"
-        self.run.mkdir()
-        (self.run / "mcp.json").write_text('{"mcpServers":{}}')
+        self.run_dir = self.root / "public-run-fixture"
+        self.run_dir.mkdir()
+        (self.run_dir / "mcp.json").write_text('{"mcpServers":{}}')
         (self.root / "tools").mkdir()
         policy = {
             "version": 1,
@@ -100,26 +120,35 @@ class RuntimeTests(unittest.TestCase):
             path.write_text("Public synthetic fixture\n")
         self.scope = access.resolve_scope(self.root, "reader", capability="read")
         self.env = {
-            "HOME": str(self.run / "home"),
-            "VAULTLENS_RUNTIME_MANIFEST": str(self.run / "scope.json"),
+            "HOME": str(self.run_dir / "home"),
+            "VAULTLENS_RUNTIME_MANIFEST": str(self.run_dir / "scope.json"),
         }
 
-    def prepared(self):
-        return contextlib.nullcontext((Path("/public-runtime/srt"), self.run, self.env))
+    def prepared(self) -> contextlib.nullcontext[tuple[Path, Path, dict[str, str]]]:
+        return contextlib.nullcontext(
+            (Path("/public-runtime/srt"), self.run_dir, self.env)
+        )
 
-    def test_private_run_is_removed_after_confirmed_success(self):
-        with runtime._disposable_run() as run:
+    def prepared_any(
+        self, *_args: object, **_kwargs: object
+    ) -> contextlib.nullcontext[tuple[Path, Path, dict[str, str]]]:
+        """Stand-in for ``prepared_run`` that ignores its arguments."""
+        return self.prepared()
+
+    def test_private_run_is_removed_after_confirmed_success(self) -> None:
+        with _disposable_run() as run:
             (run / "public-protocol.json").write_text('{"public":true}')
             self.assertEqual(stat.S_IMODE(run.stat().st_mode), 0o700)
         self.assertFalse(run.exists())
 
-    def test_preparation_failure_removes_private_run(self):
+    def test_preparation_failure_removes_private_run(self) -> None:
+        run = Path("/nonexistent-public-run")
         with self.assertRaisesRegex(ValueError, "public preparation failure"):
-            with runtime._disposable_run() as run:
+            with _disposable_run() as run:
                 raise ValueError("public preparation failure")
         self.assertFalse(run.exists())
 
-    def test_private_cwd_preserves_vault_identity_and_required_preflight(self):
+    def test_private_cwd_preserves_vault_identity_and_required_preflight(self) -> None:
         with (
             mock.patch.object(
                 runtime, "prepared_run", return_value=self.prepared()
@@ -127,59 +156,61 @@ class RuntimeTests(unittest.TestCase):
             mock.patch.object(runtime, "_verify_preflight") as preflight,
             mock.patch.object(runtime, "_execute_prepared", return_value=0) as execute,
         ):
-            result = runtime._run(
+            result = _run(
                 ["public-status-command"], scope=self.scope, cli=None, private_cwd=True
             )
         self.assertEqual(result, 0)
         self.assertEqual(prepared.call_args.args, (self.scope, None))
         self.assertEqual(preflight.call_args.args[-1], self.root)
-        self.assertEqual(execute.call_args.args[4], self.run / "home")
+        self.assertEqual(execute.call_args.args[4], self.run_dir / "home")
 
     def test_private_workspace_exposes_selected_paths_without_host_provider_config(
         self,
-    ):
+    ) -> None:
         selected = self.root / "wiki/concepts/public.md"
         scope = dataclasses.replace(self.scope, read_paths=(selected,))
         ambient = self.root / ".codex/config.toml"
         ambient.parent.mkdir()
         ambient.write_text("PUBLIC_AMBIENT_CONFIG_FIXTURE")
-        workspace = runtime._prepare_workspace(scope, self.run)
+        workspace = _prepare_workspace(scope, self.run_dir)
         self.assertFalse(workspace.is_symlink())
         self.assertEqual((workspace / "wiki/concepts/public.md").resolve(), selected)
         self.assertFalse((workspace / "wiki/concepts/private").exists())
         self.assertFalse((workspace / ".codex").exists())
         self.assertEqual((workspace / "tools").resolve(), self.root / "tools")
-        settings = runtime.compile_settings(scope, self.run, None)
+        settings = runtime.compile_settings(scope, self.run_dir, None)
         self.assertIn(str(workspace), settings["filesystem"]["denyWrite"])
         self.assertNotIn(str(workspace), settings["filesystem"]["allowWrite"])
 
-    def test_private_project_workspace_preserves_original_write_boundary(self):
+    def test_private_project_workspace_preserves_original_write_boundary(self) -> None:
         scope = access.resolve_scope(self.root, "project-write", project="alpha")
-        workspace = runtime._prepare_workspace(scope, self.run)
+        workspace = _prepare_workspace(scope, self.run_dir)
         self.assertEqual(
             (workspace / "projects/alpha").resolve(), self.root / "projects/alpha"
         )
         self.assertFalse((workspace / "projects/beta").exists())
         self.assertEqual(scope.write_paths, (self.root / "projects/alpha",))
         with mock.patch.dict(
-            os.environ, {"VAULTLENS_RUNTIME_MANIFEST": str(self.run / "scope.json")}
+            os.environ, {"VAULTLENS_RUNTIME_MANIFEST": str(self.run_dir / "scope.json")}
         ):
             self.assertEqual(runtime.active_working_directory(), workspace)
 
-    def test_native_config_probes_grant_only_missing_exact_filenames(self):
+    def test_native_config_probes_grant_only_missing_exact_filenames(self) -> None:
         path = self.root / "native-policy/requirements.toml"
         with mock.patch.object(
             runtime, "PROVIDER_CONFIG_PROBES", {"codex": (str(path),)}
         ):
-            settings = runtime.compile_settings(self.scope, self.run, "codex")
-            self.assertEqual(runtime._absent_provider_config_reads("claude"), ())
+            settings = runtime.compile_settings(self.scope, self.run_dir, "codex")
+            self.assertEqual(_absent_provider_config_reads("claude"), ())
         self.assertIn(str(path), settings["filesystem"]["allowRead"])
         self.assertNotIn(str(path.parent), settings["filesystem"]["allowRead"])
         self.assertNotIn(
             str(path.parent / "other.toml"), settings["filesystem"]["allowRead"]
         )
 
-    def test_existing_native_config_and_parent_aliases_stop_before_content_read(self):
+    def test_existing_native_config_and_parent_aliases_stop_before_content_read(
+        self,
+    ) -> None:
         path = self.root / "native-policy/requirements.toml"
         path.parent.mkdir()
         path.write_text("Public administrator fixture\n")
@@ -187,7 +218,7 @@ class RuntimeTests(unittest.TestCase):
             runtime, "PROVIDER_CONFIG_PROBES", {"codex": (str(path),)}
         ):
             with self.assertRaisesRegex(ValueError, "requires review"):
-                runtime.compile_settings(self.scope, self.run, "codex")
+                runtime.compile_settings(self.scope, self.run_dir, "codex")
         path.unlink()
         alias = self.root / "native-policy-alias"
         alias.symlink_to(path.parent, target_is_directory=True)
@@ -195,9 +226,9 @@ class RuntimeTests(unittest.TestCase):
             runtime, "PROVIDER_CONFIG_PROBES", {"codex": (str(alias / path.name),)}
         ):
             with self.assertRaisesRegex(ValueError, "cannot follow aliases"):
-                runtime.compile_settings(self.scope, self.run, "codex")
+                runtime.compile_settings(self.scope, self.run_dir, "codex")
 
-    def test_macos_native_probes_include_exact_system_alias_metadata(self):
+    def test_macos_native_probes_include_exact_system_alias_metadata(self) -> None:
         missing = (
             "/etc/codex/requirements.toml",
             "/private/etc/codex/requirements.toml",
@@ -208,13 +239,15 @@ class RuntimeTests(unittest.TestCase):
                 runtime, "_absent_provider_config_reads", return_value=missing
             ),
         ):
-            env = runtime.clean_environment(self.run, self.root, "codex")
+            env = runtime.clean_environment(self.run_dir, self.root, "codex")
         self.assertEqual(
             json.loads(env["VAULTLENS_PROVIDER_METADATA"]),
             ["/etc/codex", "/private/etc/codex", "/etc"],
         )
 
-    def test_macos_codex_uses_public_pem_roots_without_inherited_ca_settings(self):
+    def test_macos_codex_uses_public_pem_roots_without_inherited_ca_settings(
+        self,
+    ) -> None:
         with (
             mock.patch.object(runtime.sys, "platform", "darwin"),
             mock.patch.dict(
@@ -226,16 +259,16 @@ class RuntimeTests(unittest.TestCase):
                 },
             ),
         ):
-            env = runtime.clean_environment(self.run, self.root, "codex")
+            env = runtime.clean_environment(self.run_dir, self.root, "codex")
             self.assertEqual(env["SSL_CERT_FILE"], "/private/etc/ssl/cert.pem")
             self.assertNotIn("SSL_CERT_DIR", env)
             self.assertNotIn("CODEX_CA_CERTIFICATE", env)
-            settings = runtime.compile_settings(self.scope, self.run, "codex")
+            settings = runtime.compile_settings(self.scope, self.run_dir, "codex")
             self.assertIn("/private/etc/ssl", settings["filesystem"]["allowRead"])
             self.assertNotIn("/Library/Keychains", settings["filesystem"]["allowRead"])
             self.assertNotIn("enableWeakerNetworkIsolation", settings["network"])
 
-    def test_missing_runtime_never_starts_child_or_gathers_notes(self):
+    def test_missing_runtime_never_starts_child_or_gathers_notes(self) -> None:
         with (
             mock.patch.object(
                 runtime, "runtime_executable", side_effect=ValueError("runtime missing")
@@ -246,7 +279,7 @@ class RuntimeTests(unittest.TestCase):
             mock.patch.object(runtime.subprocess, "Popen") as child,
         ):
             with self.assertRaisesRegex(ValueError, "runtime missing"):
-                runtime._run(["public-workload"], scope=self.scope, cli=None)
+                _run(["public-workload"], scope=self.scope, cli=None)
             child.assert_not_called()
             documents.assert_not_called()
             snapshot.assert_not_called()
@@ -254,7 +287,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_missing_verification_blocks_before_auth_snapshot_or_private_environment(
         self,
-    ):
+    ) -> None:
         with (
             mock.patch.object(
                 runtime, "runtime_executable", return_value=Path("/public-runtime/srt")
@@ -270,13 +303,13 @@ class RuntimeTests(unittest.TestCase):
             mock.patch.object(runtime.subprocess, "Popen") as execute,
         ):
             with self.assertRaisesRegex(ValueError, "receipt missing"):
-                runtime._run(["public-workload"], scope=self.scope, cli="codex")
+                _run(["public-workload"], scope=self.scope, cli="codex")
         environment.assert_not_called()
         snapshot.assert_not_called()
         authentication.assert_not_called()
         execute.assert_not_called()
 
-    def test_private_environment_has_no_ambient_provider_or_ssh_access(self):
+    def test_private_environment_has_no_ambient_provider_or_ssh_access(self) -> None:
         inherited = {
             "HOME": "/public-host-home",
             "PATH": "/public-unapproved-bin",
@@ -295,7 +328,7 @@ class RuntimeTests(unittest.TestCase):
         with mock.patch.dict(os.environ, inherited, clear=True):
             for cli, key in (("codex", "CODEX_HOME"), ("claude", "CLAUDE_CONFIG_DIR")):
                 with self.subTest(cli=cli):
-                    run = self.run / cli
+                    run = self.run_dir / cli
                     run.mkdir()
                     env = runtime.clean_environment(
                         run,
@@ -338,10 +371,10 @@ class RuntimeTests(unittest.TestCase):
                     self.assertEqual(env["TMPDIR"], str(run / "scratch"))
                     self.assertEqual(env["VAULTLENS_SCOPED_MCP"], str(run / "mcp.json"))
 
-    def test_settings_compile_exact_notes_and_private_provider_state(self):
+    def test_settings_compile_exact_notes_and_private_provider_state(self) -> None:
         scope = access.resolve_scope(self.root, "writer", capability="wiki-write")
         settings = runtime.compile_settings(
-            scope, self.run, "codex", executables=(Path(sys.executable),)
+            scope, self.run_dir, "codex", executables=(Path(sys.executable),)
         )
         filesystem = settings["filesystem"]
         self.assertIn(str(self.root / "wiki/concepts"), filesystem["allowRead"])
@@ -354,7 +387,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn(
             str(self.root / "tools/public-script.py"), filesystem["denyWrite"]
         )
-        self.assertIn(str(self.run / "provider"), filesystem["allowWrite"])
+        self.assertIn(str(self.run_dir / "provider"), filesystem["allowWrite"])
         self.assertFalse(
             any("runtime-state/providers" in grant for grant in filesystem["allowRead"])
         )
@@ -366,8 +399,8 @@ class RuntimeTests(unittest.TestCase):
             "read-canary",
             "write-canary",
         ):
-            self.assertIn(str(self.run / path), filesystem["denyWrite"])
-        self.assertIn(str(self.run / "read-canary"), filesystem["denyRead"])
+            self.assertIn(str(self.run_dir / path), filesystem["denyWrite"])
+        self.assertIn(str(self.run_dir / "read-canary"), filesystem["denyRead"])
         for pattern in access.SECRET_NAMES:
             self.assertIn(
                 str(self.root / "wiki" / "**" / pattern), filesystem["denyRead"]
@@ -391,7 +424,9 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(settings["enableWeakerNetworkIsolation"])
         self.assertFalse(settings["allowAppleEvents"])
 
-    def test_native_discovery_finds_standard_user_install_without_login_shell(self):
+    def test_native_discovery_finds_standard_user_install_without_login_shell(
+        self,
+    ) -> None:
         home = self.root / "public-user-home"
         native = home / ".local/share/claude/versions/public-version"
         native.parent.mkdir(parents=True)
@@ -406,7 +441,7 @@ class RuntimeTests(unittest.TestCase):
         ):
             self.assertEqual(runtime.native_executable("claude"), native)
 
-    def test_native_discovery_refuses_retired_launcher_paths(self):
+    def test_native_discovery_refuses_retired_launcher_paths(self) -> None:
         legacy = self.root / ".devcontainer/bin/claude"
         legacy.parent.mkdir(parents=True)
         legacy.write_text("PUBLIC_RETIRED_LAUNCHER_FIXTURE")
@@ -415,7 +450,7 @@ class RuntimeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "retired container launcher"):
                 runtime.native_executable("claude")
 
-    def test_headless_report_captures_public_output_after_cleanup(self):
+    def test_headless_report_captures_public_output_after_cleanup(self) -> None:
         import io
         from run_reports import Recorder
 
@@ -431,10 +466,10 @@ class RuntimeTests(unittest.TestCase):
             mock.patch.object(runtime, "terminate_group") as cleanup,
             contextlib.redirect_stdout(echo),
         ):
-            result = runtime._execute_prepared(
+            result = _execute_prepared(
                 ["public-workload"],
                 Path("/public-runtime/srt"),
-                self.run,
+                self.run_dir,
                 self.env,
                 self.root,
                 recorder=recorder,
@@ -447,7 +482,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("PUBLIC_REPORT_SENTINEL", report.read_text())
         self.assertEqual(stat.S_IMODE(report.stat().st_mode), 0o600)
 
-    def test_incomplete_report_pipe_quarantines_instead_of_success(self):
+    def test_incomplete_report_pipe_quarantines_instead_of_success(self) -> None:
         from run_reports import ReportCaptureError
 
         child = mock.Mock(pid=12345)
@@ -461,10 +496,10 @@ class RuntimeTests(unittest.TestCase):
             mock.patch.object(runtime, "terminate_group"),
         ):
             with self.assertRaisesRegex(runtime.ProcessCleanupError, "EOF unconfirmed"):
-                runtime._execute_prepared(
+                _execute_prepared(
                     ["public-workload"],
                     Path("/public-runtime/srt"),
-                    self.run,
+                    self.run_dir,
                     self.env,
                     self.root,
                     recorder=recorder,
@@ -472,9 +507,9 @@ class RuntimeTests(unittest.TestCase):
 
     def test_research_domains_need_explicit_profile_and_no_provider_means_no_model_egress(
         self,
-    ):
+    ) -> None:
         self.assertEqual(
-            runtime.compile_settings(self.scope, self.run, None)["network"][
+            runtime.compile_settings(self.scope, self.run_dir, None)["network"][
                 "allowedDomains"
             ],
             [],
@@ -488,13 +523,15 @@ class RuntimeTests(unittest.TestCase):
             ("example.org:443",),
             self.scope.reports,
         )
-        settings = runtime.compile_settings(scope, self.run, "claude")
+        settings = runtime.compile_settings(scope, self.run_dir, "claude")
         self.assertEqual(
             settings["network"]["allowedDomains"],
             [*runtime.PROVIDER_DOMAINS["claude"], "example.org:443"],
         )
 
-    def test_authentication_transfer_only_copies_public_whitelisted_fixtures(self):
+    def test_authentication_transfer_only_copies_public_whitelisted_fixtures(
+        self,
+    ) -> None:
         source, destination = (
             self.root / "public-login-source",
             self.root / "public-login-destination",
@@ -507,7 +544,7 @@ class RuntimeTests(unittest.TestCase):
         with mock.patch.object(
             runtime, "AUTH_FILES", {"codex": ("public-login.fixture",)}
         ):
-            runtime._transfer_auth(source, destination, "codex")
+            _transfer_auth(source, destination, "codex")
         self.assertEqual(
             sorted(path.name for path in destination.iterdir()),
             ["public-login.fixture"],
@@ -519,7 +556,7 @@ class RuntimeTests(unittest.TestCase):
             stat.S_IMODE((destination / "public-login.fixture").stat().st_mode), 0o600
         )
 
-    def test_auth_store_is_outside_vault_and_cloud_sync_on_both_platforms(self):
+    def test_auth_store_is_outside_vault_and_cloud_sync_on_both_platforms(self) -> None:
         vault = (
             self.root / "Library/Mobile Documents/iCloud~md~obsidian/Documents/Brain"
         )
@@ -544,7 +581,9 @@ class RuntimeTests(unittest.TestCase):
                     self.assertRegex(store.parent.parent.name, r"^[0-9a-f]{64}$")
                     self.assertFalse(store.exists())
 
-    def test_auth_store_separates_vaults_and_providers_with_canonical_identity(self):
+    def test_auth_store_separates_vaults_and_providers_with_canonical_identity(
+        self,
+    ) -> None:
         first = runtime.auth_store_path(self.root, "codex")
         second = runtime.auth_store_path(self.root / "projects/alpha", "codex")
         claude = runtime.auth_store_path(self.root, "claude")
@@ -559,14 +598,14 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "outside the vault"):
             runtime.auth_store_path(self.auth_home, "codex")
 
-    def test_auth_store_preparation_keeps_dedicated_directories_private(self):
+    def test_auth_store_preparation_keeps_dedicated_directories_private(self) -> None:
         library = self.auth_home / "Library"
         support = library / "Application Support"
         support.mkdir(parents=True)
         library.chmod(0o755)
         support.chmod(0o755)
         with mock.patch.object(runtime.sys, "platform", "darwin"):
-            store = runtime._prepare_auth_store(self.root, "codex")
+            store = _prepare_auth_store(self.root, "codex")
         self.assertEqual(stat.S_IMODE(library.stat().st_mode), 0o755)
         self.assertEqual(stat.S_IMODE(support.stat().st_mode), 0o755)
         for directory in (store, *store.parents):
@@ -576,7 +615,7 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(directory.stat().st_uid, os.getuid())
         self.assertEqual(list(store.iterdir()), [])
 
-    def test_auth_store_preparation_refuses_parent_and_leaf_symlinks(self):
+    def test_auth_store_preparation_refuses_parent_and_leaf_symlinks(self) -> None:
         for index, alias_kind in enumerate(
             ("general-parent", "dedicated-parent", "leaf")
         ):
@@ -599,27 +638,27 @@ class RuntimeTests(unittest.TestCase):
                     selected.parent.mkdir(parents=True, exist_ok=True)
                     selected.symlink_to(outside, target_is_directory=True)
                     with self.assertRaisesRegex(ValueError, "symbolic links"):
-                        runtime._prepare_auth_store(self.root, "codex")
+                        _prepare_auth_store(self.root, "codex")
                 self.assertEqual(list(outside.iterdir()), [])
 
-    def test_auth_store_preparation_refuses_shared_writable_parent(self):
+    def test_auth_store_preparation_refuses_shared_writable_parent(self) -> None:
         parent = self.auth_home / "Library"
         parent.mkdir(mode=0o700)
         parent.chmod(0o777)
         with mock.patch.object(runtime.sys, "platform", "darwin"):
             with self.assertRaisesRegex(ValueError, "writable by other accounts"):
-                runtime._prepare_auth_store(self.root, "codex")
+                _prepare_auth_store(self.root, "codex")
         self.assertEqual(stat.S_IMODE(parent.stat().st_mode), 0o777)
         parent.chmod(0o700)
         self.auth_home.chmod(0o777)
         try:
             with mock.patch.object(runtime.sys, "platform", "darwin"):
                 with self.assertRaisesRegex(ValueError, "Operator home.*writable"):
-                    runtime._prepare_auth_store(self.root, "codex")
+                    _prepare_auth_store(self.root, "codex")
         finally:
             self.auth_home.chmod(0o700)
 
-    def test_prepared_run_never_imports_ambient_or_legacy_login_state(self):
+    def test_prepared_run_never_imports_ambient_or_legacy_login_state(self) -> None:
         host = self.auth_home / ".codex"
         legacy = self.root / "tools/runtime-state/providers/codex"
         for directory in (host, legacy):
@@ -636,7 +675,7 @@ class RuntimeTests(unittest.TestCase):
                 runtime, "native_executable", return_value=Path(sys.executable)
             ),
             mock.patch.object(
-                runtime, "_transfer_auth", wraps=runtime._transfer_auth
+                runtime, "_transfer_auth", wraps=_transfer_auth
             ) as transfer,
             mock.patch.dict(os.environ, {"CODEX_HOME": str(host)}),
         ):
@@ -660,7 +699,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_authentication_transfer_rejects_aliases_large_files_and_destination_links(
         self,
-    ):
+    ) -> None:
         source, destination = (
             self.root / "public-source",
             self.root / "public-destination",
@@ -673,32 +712,34 @@ class RuntimeTests(unittest.TestCase):
         with mock.patch.object(runtime, "AUTH_FILES", {"codex": (selected.name,)}):
             selected.symlink_to(original)
             with self.assertRaisesRegex(ValueError, "regular file"):
-                runtime._transfer_auth(source, destination, "codex")
+                _transfer_auth(source, destination, "codex")
             selected.unlink()
             os.link(original, selected)
             with self.assertRaisesRegex(ValueError, "regular file"):
-                runtime._transfer_auth(source, destination, "codex")
+                _transfer_auth(source, destination, "codex")
             selected.unlink()
             selected.write_bytes(b"x" * (1024 * 1024 + 1))
             with self.assertRaisesRegex(ValueError, "regular file"):
-                runtime._transfer_auth(source, destination, "codex")
+                _transfer_auth(source, destination, "codex")
             selected.write_text("public allowed fixture")
             (destination / selected.name).symlink_to(original)
             with self.assertRaisesRegex(ValueError, "destination.*symbolic link"):
-                runtime._transfer_auth(source, destination, "codex")
+                _transfer_auth(source, destination, "codex")
         self.assertEqual(original.read_text(), "public login fixture")
 
-    def test_runtime_state_directory_cannot_be_aliased_into_unrelated_storage(self):
+    def test_runtime_state_directory_cannot_be_aliased_into_unrelated_storage(
+        self,
+    ) -> None:
         (self.root / "tools/runtime-state").symlink_to(
-            self.run, target_is_directory=True
+            self.run_dir, target_is_directory=True
         )
         with self.assertRaisesRegex(ValueError, "symbolic links"):
-            runtime._private_directory(
+            _private_directory(
                 self.root / "tools/runtime-state/providers/codex", self.root
             )
-        self.assertFalse((self.run / "providers").exists())
+        self.assertFalse((self.run_dir / "providers").exists())
 
-    def test_authentication_transfer_rejects_links_in_directory_chain(self):
+    def test_authentication_transfer_rejects_links_in_directory_chain(self) -> None:
         outside = self.root / "public-outside"
         outside.mkdir()
         (outside / "public-login.fixture").write_text("PUBLIC_OUTSIDE_SENTINEL")
@@ -715,7 +756,7 @@ class RuntimeTests(unittest.TestCase):
                     with self.assertRaisesRegex(
                         ValueError, "directory.*symbolic links"
                     ):
-                        runtime._transfer_auth(source, destination, "codex")
+                        _transfer_auth(source, destination, "codex")
         self.assertEqual(
             (safe / "public-login.fixture").read_text(), "PUBLIC_APPROVED_SENTINEL"
         )
@@ -723,7 +764,7 @@ class RuntimeTests(unittest.TestCase):
             (outside / "public-login.fixture").read_text(), "PUBLIC_OUTSIDE_SENTINEL"
         )
 
-    def test_retained_auth_directory_refuses_replacement_before_refresh(self):
+    def test_retained_auth_directory_refuses_replacement_before_refresh(self) -> None:
         source, destination = (
             self.root / "public-source",
             self.root / "public-destination",
@@ -735,18 +776,18 @@ class RuntimeTests(unittest.TestCase):
             mock.patch.object(
                 runtime, "AUTH_FILES", {"codex": ("public-login.fixture",)}
             ),
-            runtime._auth_directory(source) as retained,
+            _auth_directory(source) as retained,
         ):
             source.rename(self.root / "public-old-source")
             source.mkdir()
             (source / "public-login.fixture").write_text("PUBLIC_REPLACEMENT_SENTINEL")
             with self.assertRaisesRegex(ValueError, "directory changed"):
-                runtime._transfer_auth(source, destination, "codex", source_fd=retained)
+                _transfer_auth(source, destination, "codex", source_fd=retained)
         self.assertEqual(list(destination.iterdir()), [])
 
     def test_prepared_run_auth_roundtrip_excludes_prior_configuration_and_sessions(
         self,
-    ):
+    ) -> None:
         store = runtime.auth_store_path(self.root, "codex")
         store.mkdir(parents=True)
         (store / "public-login.fixture").write_text("public initial login")
@@ -792,7 +833,9 @@ class RuntimeTests(unittest.TestCase):
             (store / "public-config.fixture").read_text(), "public prior configuration"
         )
 
-    def test_unfinished_run_discards_disposable_state_and_releases_provider_lock(self):
+    def test_unfinished_run_discards_disposable_state_and_releases_provider_lock(
+        self,
+    ) -> None:
         store = runtime.auth_store_path(self.root, "codex")
         store.mkdir(parents=True)
         (store / "public-login.fixture").write_text("public original login")
@@ -805,6 +848,7 @@ class RuntimeTests(unittest.TestCase):
             ),
             mock.patch.object(runtime.shutil, "which", return_value=sys.executable),
         ):
+            run = Path("/nonexistent-public-run")
             with self.assertRaisesRegex(RuntimeError, "public cancellation"):
                 with runtime.prepared_run(self.scope, "codex", snapshot=False) as (
                     _executable,
@@ -822,7 +866,9 @@ class RuntimeTests(unittest.TestCase):
             (store / "public-login.fixture").read_text(), "public original login"
         )
 
-    def test_writer_lock_serializes_overlapping_scopes_and_releases_after_exit(self):
+    def test_writer_lock_serializes_overlapping_scopes_and_releases_after_exit(
+        self,
+    ) -> None:
         scope = access.resolve_scope(self.root, "writer", capability="wiki-write")
         with mock.patch.object(
             runtime, "runtime_executable", return_value=Path("/public-runtime/srt")
@@ -834,11 +880,14 @@ class RuntimeTests(unittest.TestCase):
             with runtime.prepared_run(scope, None, snapshot=False):
                 pass
 
-    def test_writer_snapshot_contains_only_selected_project_and_is_recoverable(self):
+    def test_writer_snapshot_contains_only_selected_project_and_is_recoverable(
+        self,
+    ) -> None:
         scope = access.resolve_scope(
             self.root, "project-write", project="alpha", capability="project-write"
         )
-        backup = runtime._snapshot(scope, "public-snapshot")
+        backup = _snapshot(scope, "public-snapshot")
+        assert backup is not None  # narrows Optional for the type checker
         original = self.root / "projects/alpha/notes/public.md"
         original.write_text("public changed contents")
         self.assertEqual(
@@ -851,12 +900,12 @@ class RuntimeTests(unittest.TestCase):
             json.loads((backup / "scope.json").read_text())["write"],
             [str(self.root / "projects/alpha")],
         )
-        self.assertIsNone(runtime._snapshot(self.scope, "public-reader"))
+        self.assertIsNone(_snapshot(self.scope, "public-reader"))
 
-    def test_ambient_marker_cannot_forge_a_whole_process_boundary(self):
-        (self.run / "scope.json").write_text(json.dumps(self.scope.manifest()))
-        (self.run / "read-canary").write_text("public readable canary")
-        (self.run / "write-canary").write_text("public untouched canary")
+    def test_ambient_marker_cannot_forge_a_whole_process_boundary(self) -> None:
+        (self.run_dir / "scope.json").write_text(json.dumps(self.scope.manifest()))
+        (self.run_dir / "read-canary").write_text("public readable canary")
+        (self.run_dir / "write-canary").write_text("public untouched canary")
         with (
             mock.patch.dict(os.environ, self.env, clear=True),
             mock.patch.object(access.RunScope, "document_paths") as documents,
@@ -865,20 +914,27 @@ class RuntimeTests(unittest.TestCase):
                 runtime.verify_active_boundary()
             documents.assert_not_called()
         self.assertEqual(
-            (self.run / "write-canary").read_text(), "public untouched canary"
+            (self.run_dir / "write-canary").read_text(), "public untouched canary"
         )
         with mock.patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(ValueError, "No whole-process runtime"):
                 runtime.verify_active_boundary()
 
-    def test_boundary_requires_both_read_and_write_denial(self):
-        (self.run / "scope.json").write_text(json.dumps(self.scope.manifest()))
+    def test_boundary_requires_both_read_and_write_denial(self) -> None:
+        (self.run_dir / "scope.json").write_text(json.dumps(self.scope.manifest()))
         original_open = Path.open
 
-        def confined_open(path, *args, **kwargs):
-            if path in {self.run / "read-canary", self.run / "write-canary"}:
+        def confined_open(
+            path: Path,
+            mode: str = "r",
+            buffering: int = -1,
+            encoding: str | None = None,
+            errors: str | None = None,
+            newline: str | None = None,
+        ) -> IO[str]:
+            if path in {self.run_dir / "read-canary", self.run_dir / "write-canary"}:
                 raise PermissionError("public simulated OS denial")
-            return original_open(path, *args, **kwargs)
+            return original_open(path, mode, buffering, encoding, errors, newline)
 
         with (
             mock.patch.dict(os.environ, self.env, clear=True),
@@ -886,13 +942,15 @@ class RuntimeTests(unittest.TestCase):
         ):
             self.assertEqual(runtime.verify_active_boundary(), self.scope)
 
-    def test_invalid_manifest_fails_before_any_note_context(self):
-        (self.run / "scope.json").write_text('{"root":"/public-forged-root"}')
+    def test_invalid_manifest_fails_before_any_note_context(self) -> None:
+        (self.run_dir / "scope.json").write_text('{"root":"/public-forged-root"}')
         with mock.patch.dict(os.environ, self.env, clear=True):
             with self.assertRaisesRegex(ValueError, "Invalid active runtime manifest"):
                 runtime.verify_active_boundary()
 
-    def test_runtime_command_preserves_argv_through_the_runtime_quoting_layer(self):
+    def test_runtime_command_preserves_argv_through_the_runtime_quoting_layer(
+        self,
+    ) -> None:
         arguments = [
             "/public executable path/agent",
             "--prompt",
@@ -902,26 +960,29 @@ class RuntimeTests(unittest.TestCase):
         ]
         wrapped = runtime.runtime_command(
             Path("/public runtime path/srt"),
-            self.run / "settings with spaces.json",
+            self.run_dir / "settings with spaces.json",
             arguments,
         )
         self.assertEqual(wrapped[4:], arguments)
         self.assertEqual(shlex.split(shlex.join(wrapped[4:])), arguments)
-        self.assertEqual(wrapped[2], str(self.run / "settings with spaces.json"))
-        for invalid in (
+        self.assertEqual(wrapped[2], str(self.run_dir / "settings with spaces.json"))
+        invalid_argvs: tuple[object, ...] = (
             [],
             "single shell string",
             [""],
             ["agent", None],
             ["agent", "null\0byte"],
-        ):
+        )
+        for invalid in invalid_argvs:
             with self.subTest(invalid=invalid):
                 with self.assertRaises(ValueError):
                     runtime.runtime_command(
-                        Path("/runtime/srt"), self.run / "settings.json", invalid
+                        Path("/runtime/srt"),
+                        self.run_dir / "settings.json",
+                        invalid,  # pyright: ignore[reportArgumentType] - deliberately malformed argv
                     )
 
-    def test_preflight_uses_exact_workload_settings_and_reports_failure(self):
+    def test_preflight_uses_exact_workload_settings_and_reports_failure(self) -> None:
         child = mock.Mock(pid=12345, returncode=0)
         child.communicate.return_value = ("", "")
         with (
@@ -930,8 +991,8 @@ class RuntimeTests(unittest.TestCase):
             ) as execute,
             mock.patch.object(runtime, "terminate_group") as cleanup,
         ):
-            runtime._verify_preflight(
-                Path("/public-runtime/srt"), self.run, self.env, self.root
+            _verify_preflight(
+                Path("/public-runtime/srt"), self.run_dir, self.env, self.root
             )
         argv = execute.call_args.args[0]
         self.assertEqual(
@@ -939,7 +1000,7 @@ class RuntimeTests(unittest.TestCase):
             [
                 "/public-runtime/srt",
                 "--settings",
-                str(self.run / "settings.json"),
+                str(self.run_dir / "settings.json"),
                 "--",
             ],
         )
@@ -951,7 +1012,7 @@ class RuntimeTests(unittest.TestCase):
             ],
         )
         self.assertEqual(execute.call_args.kwargs["env"], self.env)
-        self.assertEqual(execute.call_args.kwargs["cwd"], self.run / "workspace")
+        self.assertEqual(execute.call_args.kwargs["cwd"], self.run_dir / "workspace")
         self.assertTrue(execute.call_args.kwargs["start_new_session"])
         child.communicate.assert_called_once_with(timeout=30)
         cleanup.assert_called_once_with(child)
@@ -964,11 +1025,13 @@ class RuntimeTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 ValueError, "preflight failed.*public confinement failure"
             ):
-                runtime._verify_preflight(
-                    Path("/public-runtime/srt"), self.run, self.env, self.root
+                _verify_preflight(
+                    Path("/public-runtime/srt"), self.run_dir, self.env, self.root
                 )
 
-    def test_preflight_timeout_cleans_the_entire_group_and_restores_handlers(self):
+    def test_preflight_timeout_cleans_the_entire_group_and_restores_handlers(
+        self,
+    ) -> None:
         child = mock.Mock(pid=12345)
         child.communicate.side_effect = subprocess.TimeoutExpired(
             "public preflight", 30
@@ -981,30 +1044,33 @@ class RuntimeTests(unittest.TestCase):
             mock.patch.object(runtime, "terminate_group") as cleanup,
         ):
             with self.assertRaisesRegex(ValueError, "preflight.*timed out"):
-                runtime._verify_preflight(
-                    Path("/public-runtime/srt"), self.run, self.env, self.root
+                _verify_preflight(
+                    Path("/public-runtime/srt"), self.run_dir, self.env, self.root
                 )
         cleanup.assert_called_once_with(child)
         self.assertEqual({sig: signal.getsignal(sig) for sig in previous}, previous)
 
-    def test_preflight_precedes_workload_and_failed_preflight_never_starts_child(self):
-        events = []
+    def test_preflight_precedes_workload_and_failed_preflight_never_starts_child(
+        self,
+    ) -> None:
+        events: list[str] = []
         child = mock.Mock(pid=12345)
         child.wait.return_value = 23
         child.poll.return_value = 23
 
-        def start(*args, **kwargs):
+        def record_preflight(*_args: object) -> None:
+            events.append("preflight")
+
+        def start(*_args: object, **_kwargs: object) -> mock.Mock:
             events.append("workload")
             return child
 
         with (
-            mock.patch.object(
-                runtime, "prepared_run", side_effect=lambda *_a, **_k: self.prepared()
-            ),
+            mock.patch.object(runtime, "prepared_run", side_effect=self.prepared_any),
             mock.patch.object(
                 runtime,
                 "_verify_preflight",
-                side_effect=lambda *_a: events.append("preflight"),
+                side_effect=record_preflight,
             ),
             mock.patch.object(
                 runtime.subprocess, "Popen", side_effect=start
@@ -1013,7 +1079,7 @@ class RuntimeTests(unittest.TestCase):
             mock.patch.object(runtime, "terminate_group") as cleanup,
         ):
             self.assertEqual(
-                runtime._run(
+                _run(
                     ["public-workload", "argument with spaces"],
                     scope=self.scope,
                     cli=None,
@@ -1028,16 +1094,14 @@ class RuntimeTests(unittest.TestCase):
             [
                 "/public-runtime/srt",
                 "--settings",
-                str(self.run / "settings.json"),
+                str(self.run_dir / "settings.json"),
                 "--",
             ],
         )
         self.assertEqual(argv[4:], ["public-workload", "argument with spaces"])
         self.assertTrue(execute.call_args.kwargs["start_new_session"])
         with (
-            mock.patch.object(
-                runtime, "prepared_run", side_effect=lambda *_a, **_k: self.prepared()
-            ),
+            mock.patch.object(runtime, "prepared_run", side_effect=self.prepared_any),
             mock.patch.object(
                 runtime,
                 "_verify_preflight",
@@ -1046,24 +1110,27 @@ class RuntimeTests(unittest.TestCase):
             mock.patch.object(runtime.subprocess, "Popen") as execute,
         ):
             with self.assertRaisesRegex(ValueError, "public rejected preflight"):
-                runtime._run(["public-workload"], scope=self.scope, cli=None)
+                _run(["public-workload"], scope=self.scope, cli=None)
             execute.assert_not_called()
 
-    def test_cancellation_terminates_process_group_and_restores_signal_handlers(self):
+    def test_cancellation_terminates_process_group_and_restores_signal_handlers(
+        self,
+    ) -> None:
         child = mock.Mock(pid=12345)
         child.wait.side_effect = KeyboardInterrupt()
         child.poll.return_value = None
-        handlers = {}
-        previous = {signal.SIGTERM: object(), signal.SIGINT: object()}
+        handlers: dict[signal.Signals, object] = {}
+        previous: dict[signal.Signals, object] = {
+            signal.SIGTERM: object(),
+            signal.SIGINT: object(),
+        }
 
-        def install(signum, handler):
+        def install(signum: signal.Signals, handler: object) -> object:
             handlers[signum] = handler
             return previous[signum]
 
         with (
-            mock.patch.object(
-                runtime, "prepared_run", side_effect=lambda *_a, **_k: self.prepared()
-            ),
+            mock.patch.object(runtime, "prepared_run", side_effect=self.prepared_any),
             mock.patch.object(runtime, "_verify_preflight"),
             mock.patch.object(runtime.subprocess, "Popen", return_value=child),
             mock.patch.object(runtime.signal, "signal", side_effect=install),
@@ -1072,11 +1139,11 @@ class RuntimeTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 runtime.ProcessCleanupError, "Outer runtime interrupted"
             ):
-                runtime._run(["public-workload"], scope=self.scope, cli=None)
+                _run(["public-workload"], scope=self.scope, cli=None)
         cleanup.assert_called_once_with(child, grace=6.0)
         self.assertEqual(handlers, previous)
 
-    def test_group_cleanup_terminates_descendants_after_leader_exits(self):
+    def test_group_cleanup_terminates_descendants_after_leader_exits(self) -> None:
         child = mock.Mock(pid=12345)
         child.poll.return_value = 0
         with (
@@ -1091,7 +1158,7 @@ class RuntimeTests(unittest.TestCase):
         pause.assert_called_once_with(0.01)
         child.wait.assert_called_once()
 
-    def test_unconfirmed_live_group_cleanup_raises_and_quarantines_vault(self):
+    def test_unconfirmed_live_group_cleanup_raises_and_quarantines_vault(self) -> None:
         child = mock.Mock(pid=12345)
         with (
             mock.patch.object(
@@ -1107,6 +1174,7 @@ class RuntimeTests(unittest.TestCase):
         ):
             with self.assertRaises(runtime.ProcessCleanupError):
                 process_control.signal_group(child, signal.SIGTERM)
+        run = Path("/nonexistent-public-run")
         with mock.patch.object(
             runtime, "runtime_executable", return_value=Path("/public-runtime/srt")
         ):
@@ -1131,8 +1199,8 @@ class RuntimeTests(unittest.TestCase):
                 with runtime.prepared_run(self.scope, None, snapshot=False):
                     self.fail("Unconfirmed cleanup did not quarantine the vault")
 
-    def test_inner_cancellation_exit_preserves_reported_process_group(self):
-        evidence = self.run / "scratch/inner-cancellation.json"
+    def test_inner_cancellation_exit_preserves_reported_process_group(self) -> None:
+        evidence = self.run_dir / "scratch/inner-cancellation.json"
         evidence.parent.mkdir()
         evidence.write_text('{"group_id":12345}')
         child = mock.Mock(pid=23456)
@@ -1143,10 +1211,10 @@ class RuntimeTests(unittest.TestCase):
             mock.patch.object(runtime, "terminate_group") as cleanup,
         ):
             with self.assertRaises(runtime.ProcessCleanupError) as failure:
-                runtime._execute_prepared(
+                _execute_prepared(
                     ["public-workload"],
                     Path("/public-runtime/srt"),
-                    self.run,
+                    self.run_dir,
                     self.env,
                     self.root,
                 )
@@ -1155,7 +1223,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_interactive_provider_uses_model_effort_project_cwd_and_prompt_delimiter(
         self,
-    ):
+    ) -> None:
         for provider in ("codex", "claude"):
             with self.subTest(provider=provider):
                 child = mock.Mock(pid=12345)
@@ -1169,7 +1237,7 @@ class RuntimeTests(unittest.TestCase):
                     mock.patch.object(
                         runtime,
                         "prepared_run",
-                        side_effect=lambda *_a, **_k: self.prepared(),
+                        side_effect=self.prepared_any,
                     ),
                     mock.patch.object(runtime, "_verify_preflight") as preflight,
                     mock.patch.object(
@@ -1203,7 +1271,7 @@ class RuntimeTests(unittest.TestCase):
                 request = build.call_args.args[1]
                 self.assertEqual(request.model, "future/provider/model")
                 self.assertEqual(request.effort, "provider-flex")
-                self.assertEqual(request.cwd, self.run / "workspace")
+                self.assertEqual(request.cwd, self.run_dir / "workspace")
                 self.assertIn("Work inside projects/alpha", request.role_prompt)
                 self.assertEqual(request.task_prompt, "Review selected notes")
                 self.assertEqual(
@@ -1212,7 +1280,7 @@ class RuntimeTests(unittest.TestCase):
                 self.assertTrue(request.interactive)
                 self.assertFalse(request.web_search)
                 self.assertEqual(
-                    execute.call_args.kwargs["cwd"], self.run / "workspace"
+                    execute.call_args.kwargs["cwd"], self.run_dir / "workspace"
                 )
                 native = execute.call_args.args[0][4:]
                 self.assertIn("future/provider/model", native)
@@ -1221,7 +1289,7 @@ class RuntimeTests(unittest.TestCase):
                 self.assertIn("Review selected notes", native[-1])
                 preflight.assert_called_once()
 
-    def test_interactive_policy_escape_flags_fail_before_preparation(self):
+    def test_interactive_policy_escape_flags_fail_before_preparation(self) -> None:
         for flag in (
             "--yolo",
             "--dangerously-bypass-approvals-and-sandbox",
