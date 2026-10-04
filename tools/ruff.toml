@@ -14,8 +14,6 @@ select = ["E4", "E7", "E9", "F", "ANN"]
 # never add one. New files are checked from their first commit.
 [lint.per-file-ignores]
 "agents/wiki-agent.py" = ["ANN"]
-"context_budget.py" = ["ANN"]
-"context_evaluation.py" = ["ANN"]
 "runtime/check_boundary.py" = ["ANN"]
 "runtime/maintain.py" = ["ANN"]
 "runtime/probe.py" = ["ANN"]
