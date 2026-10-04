@@ -9,16 +9,28 @@ from __future__ import annotations
 import datetime as dt
 import re
 import stat
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import InitVar, dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, TypedDict
 
 from context_sources import read_inbox_preview
+
+if TYPE_CHECKING:
+    from local_access import RunScope
 
 
 CONSENT = (
     "Consent required: raw/review-inbox entries are names only. Ask the operator "
     "before reading, summarizing, moving, or ingesting any item."
 )
+
+
+class ReviewEntry(TypedDict):
+    """Name and size of a raw/review-inbox entry, as listed in the runtime manifest."""
+
+    name: str
+    size: int
 
 
 def task_priority(text: str, today: dt.date) -> tuple[int, int]:
@@ -34,22 +46,22 @@ def task_priority(text: str, today: dt.date) -> tuple[int, int]:
 class ContextSource:
     path: str
     items: list[str]
-    total_items: int | None = None
+    total_items: InitVar[int | None] = None
     critical_indexes: set[int] = field(default_factory=set)
     critical_label: str = "urgent"
     prioritize_critical: bool = False
     unit: str = "items"
+    total: int = field(init=False)
 
-    def __post_init__(self):
-        if self.total_items is None:
-            self.total_items = len(self.items)
-        if self.total_items < len(self.items):
+    def __post_init__(self, total_items: int | None) -> None:
+        self.total = len(self.items) if total_items is None else total_items
+        if self.total < len(self.items):
             raise ValueError("source total cannot be smaller than candidate count")
 
 
 def select_context(
     mandatory: str,
-    sources: list[ContextSource | tuple[str, list[str]]],
+    sources: Sequence[ContextSource | tuple[str, list[str]]],
     budget: int,
 ) -> str:
     """Round-robin across ranked sources, retaining whole evidence lines."""
@@ -65,10 +77,8 @@ def select_context(
         rows = ["", "## Context selection (characters, not tokens)"]
         for source, chosen in zip(normalized, selections):
             shown = len(source.items) if reserve else len(chosen)
-            omitted = (
-                source.total_items if reserve else source.total_items - len(chosen)
-            )
-            preselected = source.total_items - len(source.items)
+            omitted = source.total if reserve else source.total - len(chosen)
+            preselected = source.total - len(source.items)
             budget_omitted = (
                 len(source.items) if reserve else len(source.items) - len(chosen)
             )
@@ -97,7 +107,7 @@ def select_context(
             f"characters, exceeding budget {budget}; nothing was silently truncated"
         )
 
-    def consider(source_index: int, index: int):
+    def consider(source_index: int, index: int) -> None:
         nonlocal remaining
         source = normalized[source_index]
         item = f"\n[{source.path}] {source.items[index]}"
@@ -142,8 +152,8 @@ def gather_context(
     budget: int,
     today: dt.date,
     *,
-    scope=None,
-    review_queue=(),
+    scope: RunScope | None = None,
+    review_queue: Sequence[ReviewEntry] = (),
 ) -> str:
     """Collect full mandatory data and all task candidates before selection."""
     from project_state import project_status
@@ -250,8 +260,8 @@ def gather_context(
             )
             continue
         directory = root / queue
-        entries = []
-        sizes = {}
+        entries: list[Path] = []
+        sizes: dict[Path, int] = {}
         if (
             not directory.is_symlink()
             and directory.is_dir()
@@ -363,7 +373,7 @@ def scheduler_attention(lines: list[str]) -> set[int]:
         r"(?<![a-z])(?:fail(?:ed|ure|ing)?|error|warning|timeout|timed.out|cancelled|blocked|stale|limited|unconfirmed|transient)(?![a-z])",
         re.I,
     )
-    attention = set()
+    attention: set[int] = set()
     for index, line in enumerate(lines):
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         failed_result = (
