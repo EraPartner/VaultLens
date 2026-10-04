@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
+import email.message
 import errno
-import importlib.util
 import json
 import os
 import shutil
@@ -14,13 +14,13 @@ import tempfile
 import unittest
 import urllib.error
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
+from _loader import load_module
+
 SCRIPT = Path(__file__).resolve().parents[1] / "runtime/probe.py"
-SPEC = importlib.util.spec_from_file_location("runtime_probe", SCRIPT)
-assert SPEC and SPEC.loader
-probe = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(probe)
+probe = load_module("runtime_probe", SCRIPT)
 
 
 class ProbeHarnessTests(unittest.TestCase):
@@ -62,7 +62,7 @@ class ProbeHarnessTests(unittest.TestCase):
         self.fixture_base = self.base / "synthetic"
         self.fixture_base.mkdir()
 
-    def fixture(self):
+    def fixture(self) -> tuple[Path, dict[str, Any]]:
         return probe.make_fixture(
             self.source,
             self.fixture_base,
@@ -72,7 +72,7 @@ class ProbeHarnessTests(unittest.TestCase):
             },
         )
 
-    def test_fixture_runtime_dependencies_import_without_host_tools(self):
+    def test_fixture_runtime_dependencies_import_without_host_tools(self) -> None:
         root, _ = self.fixture()
         result = subprocess.run(
             [
@@ -88,7 +88,7 @@ class ProbeHarnessTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_missing_runtime_stops_before_fixture_network_or_provider_state(self):
+    def test_missing_runtime_stops_before_fixture_network_or_provider_state(self) -> None:
         with (
             mock.patch.object(
                 probe.local_runtime,
@@ -111,7 +111,7 @@ class ProbeHarnessTests(unittest.TestCase):
         )
         self.assertFalse((self.source / "tools/runtime-state").exists())
 
-    def test_explicit_failed_probe_revokes_old_receipt_without_reading_it(self):
+    def test_explicit_failed_probe_revokes_old_receipt_without_reading_it(self) -> None:
         state = self.source / "tools/runtime-state"
         state.mkdir(mode=0o700)
         receipt = state / "verification.json"
@@ -121,13 +121,13 @@ class ProbeHarnessTests(unittest.TestCase):
         self.assertFalse(receipt.exists())
         self.assertFalse(report["os_isolation_verified"])
 
-    def test_lifecycle_declares_both_normal_and_cancel_inner_and_outer_cases(self):
+    def test_lifecycle_declares_both_normal_and_cancel_inner_and_outer_cases(self) -> None:
         self.assertEqual(len(probe.LIFECYCLE_CHECKS), 8)
         expected = probe.expected_checks()
         self.assertEqual(len(expected), len(set(expected)))
         self.assertTrue(set(probe.LIFECYCLE_CHECKS).issubset(expected))
 
-    def test_macos_receipts_require_guard_denials_and_linux_does_not_invent_them(self):
+    def test_macos_receipts_require_guard_denials_and_linux_does_not_invent_them(self) -> None:
         linux = set(probe.expected_checks(platform="linux"))
         macos = set(probe.expected_checks(platform="darwin"))
         guard = {"selected-read." + name for name in probe.MACOS_GUARD_CHECKS}
@@ -136,7 +136,7 @@ class ProbeHarnessTests(unittest.TestCase):
         self.assertIn("selected-read.macos.host-shared-memory-read", guard)
         self.assertIn("selected-read.macos.host-semaphore-open", guard)
 
-    def test_lifecycle_refuses_natural_expiry_as_cleanup_proof(self):
+    def test_lifecycle_refuses_natural_expiry_as_cleanup_proof(self) -> None:
         heartbeat = self.base / "public-heartbeat.json"
         record = {"status": "spawned", "pid": 123456789, "token": "synthetic"}
         heartbeat.write_text(
@@ -156,7 +156,7 @@ class ProbeHarnessTests(unittest.TestCase):
         ):
             probe._stopped_heartbeat(record, heartbeat)
 
-    def test_lifecycle_rejects_live_descendant_even_with_stopped_heartbeat(self):
+    def test_lifecycle_rejects_live_descendant_even_with_stopped_heartbeat(self) -> None:
         heartbeat = self.base / "public-heartbeat.json"
         record = {"status": "spawned", "pid": 123456789, "token": "synthetic"}
         heartbeat.write_text(
@@ -180,7 +180,7 @@ class ProbeHarnessTests(unittest.TestCase):
 
     def test_cleanup_refuses_reused_or_unknown_process_identity_without_signalling(
         self,
-    ):
+    ) -> None:
         record = {
             "pid": 123456789,
             "group_id": 123456789,
@@ -196,7 +196,7 @@ class ProbeHarnessTests(unittest.TestCase):
             probe._cleanup_fixture_process(record)
         kill.assert_not_called()
 
-    def test_existing_cancellation_gate_stops_before_runtime_or_fixture(self):
+    def test_existing_cancellation_gate_stops_before_runtime_or_fixture(self) -> None:
         marker = self.source / "tools/runtime-state/cancellation-unconfirmed.json"
         marker.parent.mkdir()
         marker.write_text('{"group_id":123456789}')
@@ -208,7 +208,7 @@ class ProbeHarnessTests(unittest.TestCase):
         self.assertFalse(report["os_isolation_verified"])
         self.assertIn("unconfirmed", report["checks"][0]["detail"])
 
-    def test_fixture_copies_only_reviewed_tools_and_synthetic_documents(self):
+    def test_fixture_copies_only_reviewed_tools_and_synthetic_documents(self) -> None:
         root, metadata = self.fixture()
         self.assertEqual(
             set(metadata["trusted_source_sha256"]), set(probe.TRUSTED_FILES)
@@ -238,7 +238,7 @@ class ProbeHarnessTests(unittest.TestCase):
                 (root.parent / "excluded.md").stat().st_ino,
             )
 
-    def test_fixture_rejects_symlink_or_hardlink_trusted_sources(self):
+    def test_fixture_rejects_symlink_or_hardlink_trusted_sources(self) -> None:
         source = self.source / "tools/runtime/check_boundary.py"
         data = source.read_bytes()
         original = self.base / "source-copy.py"
@@ -252,7 +252,7 @@ class ProbeHarnessTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "single-link"):
             probe._regular_source(source)
 
-    def test_fixture_profiles_exclude_selected_and_future_denied_material(self):
+    def test_fixture_profiles_exclude_selected_and_future_denied_material(self) -> None:
         root, _metadata = self.fixture()
         selected = probe.resolve_scope(root, "probe-selected-read")
         self.assertTrue(selected.readable(root / "wiki/approved/note.md"))
@@ -268,7 +268,7 @@ class ProbeHarnessTests(unittest.TestCase):
         self.assertFalse(project.readable(future))
         self.assertFalse(project.writable(future))
 
-    def test_declared_checks_match_all_child_operations(self):
+    def test_declared_checks_match_all_child_operations(self) -> None:
         root, metadata = self.fixture()
         run = self.base / "run"
         with mock.patch.dict(
@@ -284,14 +284,14 @@ class ProbeHarnessTests(unittest.TestCase):
                     case + "." + name
                     for name, _operation in probe.child_checks(scope, metadata, case)
                 }
-                host_checks = (
+                host_checks: set[str] = (
                     {"selected-read.macos.job-absent"}
                     if case == "selected-read" and probe.sys.platform == "darwin"
                     else set()
                 )
                 self.assertEqual(actual | host_checks, set(probe._expected(case)))
 
-    def test_permission_denial_helper_refuses_missing_paths_or_success(self):
+    def test_permission_denial_helper_refuses_missing_paths_or_success(self) -> None:
         probe._denied(mock.Mock(side_effect=PermissionError(errno.EACCES, "denied")))
         with self.assertRaises(FileNotFoundError):
             probe._denied(
@@ -302,7 +302,7 @@ class ProbeHarnessTests(unittest.TestCase):
 
     def test_spawned_shell_requires_permission_evidence_and_passes_paths_as_arguments(
         self,
-    ):
+    ) -> None:
         literal_path = Path("/tmp/literal $(name) `value` note.md")
         result = subprocess.CompletedProcess([], 1, "", "cat: Operation not permitted")
         with mock.patch.object(probe, "_subprocess", return_value=result) as command:
@@ -316,11 +316,11 @@ class ProbeHarnessTests(unittest.TestCase):
         ):
             probe._shell(literal_path, write=False, allowed=False)
 
-    def test_dns_timeouts_and_generic_http_errors_are_not_denial_proof(self):
+    def test_dns_timeouts_and_generic_http_errors_are_not_denial_proof(self) -> None:
         values = (
             urllib.error.URLError("Name or service not known"),
             TimeoutError("timed out"),
-            urllib.error.HTTPError(probe.PUBLIC_URL, 403, "Forbidden", {}, None),
+            urllib.error.HTTPError(probe.PUBLIC_URL, 403, "Forbidden", email.message.Message(), None),
         )
         for value in values:
             self.assertEqual(probe.network_error_kind(value), "unavailable")
@@ -334,7 +334,7 @@ class ProbeHarnessTests(unittest.TestCase):
             probe.network_error_kind(PermissionError(errno.EPERM, "denied")), "denied"
         )
 
-    def test_network_missing_baseline_skips_without_making_request(self):
+    def test_network_missing_baseline_skips_without_making_request(self) -> None:
         metadata = {
             "network_baseline": {"status": "skipped", "detail": "DNS unavailable"}
         }
@@ -345,7 +345,7 @@ class ProbeHarnessTests(unittest.TestCase):
             probe._network_http(metadata)
         request.assert_not_called()
 
-    def test_partial_mocked_results_never_mark_os_isolation_verified(self):
+    def test_partial_mocked_results_never_mark_os_isolation_verified(self) -> None:
         with (
             mock.patch.object(
                 probe.local_runtime,
@@ -370,7 +370,7 @@ class ProbeHarnessTests(unittest.TestCase):
         self.assertTrue(any(item["status"] == "skipped" for item in report["checks"]))
         record.assert_not_called()
 
-    def test_unconfirmed_cleanup_retains_fixture_and_persists_launch_gate(self):
+    def test_unconfirmed_cleanup_retains_fixture_and_persists_launch_gate(self) -> None:
         failure = probe.ProcessCleanupError(
             "Synthetic descendant cleanup unconfirmed", group_id=123456789
         )

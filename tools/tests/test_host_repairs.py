@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import plistlib
@@ -14,20 +13,19 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from _loader import load_module
+
 TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS / "schedule"))
 from render_plist import render_plist, validate_plist  # noqa: E402
 
-spec = importlib.util.spec_from_file_location(
-    "host_repairs", TOOLS / "scripts/repair-provider-host.py"
+repairs = load_module(
+    "host_repairs", TOOLS / "scripts/repair-provider-host.py", register=True
 )
-repairs = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = repairs
-spec.loader.exec_module(repairs)
 
 
 class HostRepairTests(unittest.TestCase):
-    def installer_fixture(self, root):
+    def installer_fixture(self, root: Path) -> tuple[Path, dict[str, str]]:
         schedule = root / "vault/tools/schedule"
         schedule.mkdir(parents=True)
         for name in ("install.sh", "render_plist.py"):
@@ -66,7 +64,7 @@ class HostRepairTests(unittest.TestCase):
         )
         return schedule / "install.sh", env
 
-    def test_installer_bootstraps_once_and_preserves_python_override(self):
+    def test_installer_bootstraps_once_and_preserves_python_override(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             installer, env = self.installer_fixture(root)
@@ -95,7 +93,7 @@ class HostRepairTests(unittest.TestCase):
                         sys.executable,
                     )
 
-    def test_installer_render_is_read_only_and_rejects_old_python_early(self):
+    def test_installer_render_is_read_only_and_rejects_old_python_early(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             installer, env = self.installer_fixture(root)
@@ -131,14 +129,13 @@ class HostRepairTests(unittest.TestCase):
             self.assertFalse((root / "calls").exists())
             self.assertFalse(Path(env["HOME"]).exists())
 
-    def test_renderer_python_override_preserves_source_and_dispatcher(self):
-        source = {
-            "ProgramArguments": [
-                "/missing/python3",
-                "/vault/tools/schedule/dispatch.py",
-                "run",
-            ]
-        }
+    def test_renderer_python_override_preserves_source_and_dispatcher(self) -> None:
+        arguments = [
+            "/missing/python3",
+            "/vault/tools/schedule/dispatch.py",
+            "run",
+        ]
+        source: dict[str, object] = {"ProgramArguments": arguments}
         result = render_plist(
             source,
             {},
@@ -147,9 +144,9 @@ class HostRepairTests(unittest.TestCase):
         )
         self.assertEqual(
             result["ProgramArguments"],
-            [sys.executable, *source["ProgramArguments"][1:]],
+            [sys.executable, *arguments[1:]],
         )
-        self.assertEqual(source["ProgramArguments"][0], "/missing/python3")
+        self.assertEqual(arguments[0], "/missing/python3")
         for executable in ("python3", "/missing/python3"):
             with (
                 self.subTest(executable=executable),
@@ -157,7 +154,7 @@ class HostRepairTests(unittest.TestCase):
             ):
                 render_plist(source, {}, python_executable=executable)
 
-    def test_plist_uses_target_vault_configuration_and_remains_read_only(self):
+    def test_plist_uses_target_vault_configuration_and_remains_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             checkout_config = root / "checkout/tools/llm.local.json"
@@ -168,7 +165,7 @@ class HostRepairTests(unittest.TestCase):
             dispatcher = target_config.parent / "schedule/dispatch.py"
             dispatcher.parent.mkdir()
             dispatcher.write_text("# fixture; never execute\n")
-            source = {
+            source: dict[str, object] = {
                 "ProgramArguments": ["/fixture/python3", str(dispatcher), "run"],
                 "Disabled": True,
             }
@@ -198,7 +195,7 @@ class HostRepairTests(unittest.TestCase):
                 {path: path.read_bytes() for path in root.rglob("*") if path.is_file()},
             )
 
-    def test_plist_rejects_missing_relative_or_ambiguous_dispatcher(self):
+    def test_plist_rejects_missing_relative_or_ambiguous_dispatcher(self) -> None:
         for arguments in (
             None,
             "python dispatch.py",
@@ -220,7 +217,7 @@ class HostRepairTests(unittest.TestCase):
             ):
                 validate_plist({"ProgramArguments": arguments})
 
-    def test_plist_configuration_follows_resolved_dispatcher(self):
+    def test_plist_configuration_follows_resolved_dispatcher(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             target = root / "target/tools/schedule/dispatch.py"
@@ -236,18 +233,19 @@ class HostRepairTests(unittest.TestCase):
                 "codex",
             )
 
-    def test_plist_follows_shared_provider_and_keeps_enablement_and_enhancement(self):
+    def test_plist_follows_shared_provider_and_keeps_enablement_and_enhancement(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             config = Path(temporary) / "llm.local.json"
             config.write_text('{"cli":"claude"}')
-            source = {
+            source_environment = {
+                "PATH": "/fixture/bin",
+                "VAULTLENS_LLM_CLI": "codex",
+                "VAULTLENS_LLM_MODEL": "codex-model",
+                "VAULTLENS_SCHEDULE_ENHANCE": "1",
+            }
+            source: dict[str, object] = {
                 "Disabled": True,
-                "EnvironmentVariables": {
-                    "PATH": "/fixture/bin",
-                    "VAULTLENS_LLM_CLI": "codex",
-                    "VAULTLENS_LLM_MODEL": "codex-model",
-                    "VAULTLENS_SCHEDULE_ENHANCE": "1",
-                },
+                "EnvironmentVariables": source_environment,
             }
             result = render_plist(source, {}, config_path=config)
             self.assertEqual(validate_plist(result, config_path=config), "claude")
@@ -259,13 +257,11 @@ class HostRepairTests(unittest.TestCase):
                     "VAULTLENS_SCHEDULE_ENHANCE": "1",
                 },
             )
-            self.assertEqual(
-                source["EnvironmentVariables"]["VAULTLENS_LLM_CLI"], "codex"
-            )
+            self.assertEqual(source_environment["VAULTLENS_LLM_CLI"], "codex")
             config.write_text('{"cli":"codex"}')
             self.assertEqual(validate_plist(result, config_path=config), "codex")
 
-    def test_explicit_scheduler_override_and_bad_prepared_backend(self):
+    def test_explicit_scheduler_override_and_bad_prepared_backend(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             config = Path(temporary) / "missing.json"
             result = render_plist(
@@ -286,7 +282,7 @@ class HostRepairTests(unittest.TestCase):
                 with self.subTest(env=env), self.assertRaises(ValueError):
                     validate_plist({"EnvironmentVariables": env}, config_path=config)
 
-    def fixture(self, root):
+    def fixture(self, root: Path) -> tuple[Path, Path, Path, Path]:
         vault, source, functions = root / "vault", root / "source", root / "functions"
         (source / "tools/shell").mkdir(parents=True)
         (source / "tools/shell/brain-wiki.fish").write_text(
@@ -319,7 +315,7 @@ class HostRepairTests(unittest.TestCase):
         )
         return vault, source, functions, plist
 
-    def test_plan_apply_backups_and_idempotence(self):
+    def test_plan_apply_backups_and_idempotence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             vault, source, functions, plist = self.fixture(root)
@@ -348,12 +344,12 @@ class HostRepairTests(unittest.TestCase):
 
     def test_existing_container_aliases_migrate_with_backups_and_keep_custom_functions(
         self,
-    ):
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             vault, source, functions, plist = self.fixture(root)
             functions.mkdir()
-            originals = {}
+            originals: dict[Path, bytes] = {}
             for legacy in repairs.LEGACY_FUNCTIONS:
                 path = functions / f"{legacy}.fish"
                 originals[path] = (
@@ -396,7 +392,7 @@ class HostRepairTests(unittest.TestCase):
             self.assertEqual(repairs.plan_repairs(vault, source, functions, plist), [])
 
     @staticmethod
-    def installed_alias(name, fallback):
+    def installed_alias(name: str, fallback: Path) -> str:
         provider = name.removeprefix("vaultlens-")
         return (
             f"function {name} --description 'Run the VaultLens tooling-dev sandbox (apple/container)'\n"
@@ -405,7 +401,7 @@ class HostRepairTests(unittest.TestCase):
             f"    __project_{provider} VaultLens $fallback VAULTLENS_PROJECT_ROOT {name} $argv\nend\n"
         )
 
-    def test_installed_generic_wrappers_migrate_without_container_paths(self):
+    def test_installed_generic_wrappers_migrate_without_container_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             vault, source, functions, plist = self.fixture(root)
@@ -433,7 +429,7 @@ class HostRepairTests(unittest.TestCase):
                     proposed.after, repairs.native_alias(name, str(source))
                 )
 
-    def test_custom_aliases_with_markers_or_extra_commands_are_not_replaced(self):
+    def test_custom_aliases_with_markers_or_extra_commands_are_not_replaced(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             vault, source, functions, plist = self.fixture(root)
@@ -471,7 +467,7 @@ class HostRepairTests(unittest.TestCase):
                     )
                     self.assertEqual(alias.read_text(), contents)
 
-    def test_existing_custom_root_helper_is_refused(self):
+    def test_existing_custom_root_helper_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             vault, source, functions, plist = self.fixture(root)
@@ -484,7 +480,7 @@ class HostRepairTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "root helper needs manual review"):
                 repairs.plan_repairs(vault, source, functions, plist)
 
-    def test_managed_native_aliases_refresh_helper_from_deployed_tools(self):
+    def test_managed_native_aliases_refresh_helper_from_deployed_tools(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             vault, source, functions, plist = self.fixture(root)
@@ -537,7 +533,7 @@ class HostRepairTests(unittest.TestCase):
                 )
             self.assertEqual(alias.read_bytes(), original_alias)
 
-    def test_custom_edit_to_a_stamped_helper_requires_review(self):
+    def test_custom_edit_to_a_stamped_helper_requires_review(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             vault, source, functions, plist = self.fixture(root)
@@ -557,7 +553,9 @@ class HostRepairTests(unittest.TestCase):
     @unittest.skipUnless(
         shutil.which("fish"), "fish is required for native alias validation"
     )
-    def test_native_aliases_preserve_source_routing_and_provider_preferences(self):
+    def test_native_aliases_preserve_source_routing_and_provider_preferences(self) -> None:
+        fish = shutil.which("fish")
+        assert fish is not None  # guaranteed by the skipUnless guard above
         with tempfile.TemporaryDirectory(prefix="VaultLens alias ") as temporary:
             root = Path(temporary).resolve()
             source = root / "source checkout"
@@ -620,7 +618,7 @@ class HostRepairTests(unittest.TestCase):
                 alias = functions / f"{name}.fish"
                 alias.write_bytes(repairs.native_alias(name, str(source)))
                 syntax = subprocess.run(
-                    [shutil.which("fish"), "--no-config", "--no-execute", str(alias)],
+                    [fish, "--no-config", "--no-execute", str(alias)],
                     text=True,
                     capture_output=True,
                 )
@@ -649,7 +647,7 @@ class HostRepairTests(unittest.TestCase):
                 ):
                     with self.subTest(name=name, cwd=cwd, root=expected_root):
                         result = subprocess.run(
-                            [shutil.which("fish"), "--no-config", str(probe)],
+                            [fish, "--no-config", str(probe)],
                             cwd=cwd,
                             env={**environment, **extra},
                             text=True,
@@ -669,7 +667,7 @@ class HostRepairTests(unittest.TestCase):
                                 [provider, "--model", f"{prefix}-{provider}"],
                             )
 
-    def test_unrelated_custom_alias_is_preserved_and_symlink_requires_review(self):
+    def test_unrelated_custom_alias_is_preserved_and_symlink_requires_review(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             vault, source, functions, plist = self.fixture(root)
@@ -687,7 +685,7 @@ class HostRepairTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "alias needs manual review"):
                 repairs.plan_repairs(vault, source, functions, plist)
 
-    def test_scheduler_symlink_is_preserved(self):
+    def test_scheduler_symlink_is_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             vault, source, functions, plist = self.fixture(root)
@@ -699,7 +697,7 @@ class HostRepairTests(unittest.TestCase):
             repairs.apply_repairs(changes, root / "backups")
             self.assertTrue(link.is_symlink())
 
-    def test_stale_plan_and_symlinks_are_refused_before_other_changes(self):
+    def test_stale_plan_and_symlinks_are_refused_before_other_changes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             first, second = root / "first", root / "second"
@@ -716,7 +714,7 @@ class HostRepairTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "symlink"):
                 repairs.change(link, b"new")
 
-    def test_partial_write_failure_rolls_back(self):
+    def test_partial_write_failure_rolls_back(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             first, second = root / "first", root / "second"
@@ -724,7 +722,7 @@ class HostRepairTests(unittest.TestCase):
             changes = [repairs.change(first, b"new"), repairs.change(second, b"new")]
             original = repairs._atomic_write
 
-            def fail_second(path, payload, mode=0o644):
+            def fail_second(path: Path, payload: bytes, mode: int = 0o644) -> None:
                 if path == second:
                     raise OSError("fixture failure")
                 original(path, payload, mode)
