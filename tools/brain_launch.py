@@ -40,8 +40,8 @@ class Launch:
 
 def _provider_args(args: list[str]) -> tuple[str | None, list[str]]:
     """Consume both flag forms so the runtime receives one explicit CLI."""
-    cli = None
-    remaining = []
+    cli: str | None = None
+    remaining: list[str] = []
     index = 0
     while index < len(args):
         value = args[index]
@@ -88,8 +88,8 @@ def _access_args(
 ) -> tuple[str | None, str | None, tuple[str, ...], list[str]]:
     """Keep launcher policy options out of the native provider argument list."""
     values: dict[str, str] = {}
-    read_paths = []
-    remaining = []
+    read_paths: list[str] = []
+    remaining: list[str] = []
     index = 0
     flags = {"--access-profile", "--project", "--read-path"}
     while index < len(args):
