@@ -11,7 +11,7 @@ TOOLS = Path(__file__).resolve().parents[1]
 
 
 class HostRuntimeTests(unittest.TestCase):
-    def test_old_python_fails_cleanly_before_host_commands(self):
+    def test_old_python_fails_cleanly_before_host_commands(self) -> None:
         for relative, arguments in (
             ("llm_provider.py", ["select", "claude"]),
             ("brain_launch.py", ["agent"]),

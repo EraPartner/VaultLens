@@ -19,17 +19,17 @@ import wiki_archive  # noqa: E402
 import wiki_ingest  # noqa: E402
 import wiki_inventory  # noqa: E402
 
-PASSED = 0
-FAILED = 0
+passed = 0
+failed = 0
 
 
 def check(name: str, condition: bool, detail: str = "") -> None:
-    global PASSED, FAILED
+    global passed, failed
     if condition:
-        PASSED += 1
+        passed += 1
         print(f"  PASS  {name}")
     else:
-        FAILED += 1
+        failed += 1
         print(f"  FAIL  {name}  {detail}")
 
 
@@ -58,8 +58,10 @@ def test_ingest() -> None:
         pdf.write_bytes(b"pdf")
         text_dir = root / "text"
 
-        def extract(command, **kwargs):
-            check("PDF subprocess has a timeout", kwargs.get("timeout", 0) > 0)
+        def extract(
+            command: list[str], *, timeout: float = 0, **_kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            check("PDF subprocess has a timeout", timeout > 0)
             Path(command[-1]).write_text("extracted words", encoding="utf-8")
             return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -79,15 +81,15 @@ def test_ingest() -> None:
         )
 
         permission_error = "Copying of text from this document is not allowed"
-        calls = 0
+        # A list so the count survives the closure without a narrowed-literal comparison.
+        calls = [0]
 
-        def decrypt(command, **kwargs):
-            nonlocal calls
-            calls += 1
-            check(
-                f"decryption call {calls} has a timeout", kwargs.get("timeout", 0) > 0
-            )
-            if calls == 1:
+        def decrypt(
+            command: list[str], *, timeout: float = 0, **_kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            calls[0] += 1
+            check(f"decryption call {calls[0]} has a timeout", timeout > 0)
+            if calls[0] == 1:
                 return subprocess.CompletedProcess(command, 1, "", permission_error)
             if command[0] == "qpdf":
                 Path(command[-1]).write_bytes(b"decrypted")
@@ -105,7 +107,7 @@ def test_ingest() -> None:
             "copy-protected PDF uses qpdf fallback",
             status is wiki_ingest.ExtractStatus.DECRYPTED,
         )
-        check("qpdf fallback performs three bounded calls", calls == 3, str(calls))
+        check("qpdf fallback performs three bounded calls", calls[0] == 3, str(calls[0]))
         check(
             "decrypted temporary file is cleaned",
             not path.with_suffix(".decrypted.pdf").exists(),
@@ -220,8 +222,8 @@ def main() -> int:
     test_ingest()
     test_archive_reconciliation()
     test_inventory()
-    print(f"\n{PASSED} passed, {FAILED} failed")
-    return 1 if FAILED else 0
+    print(f"\n{passed} passed, {failed} failed")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

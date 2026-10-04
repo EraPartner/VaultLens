@@ -44,6 +44,7 @@ class RootDiscoveryTests(unittest.TestCase):
     def resolve(
         self, cwd: Path, *, fallback: Path | None = None
     ) -> subprocess.CompletedProcess[str]:
+        assert FISH is not None  # class is skipped without fish
         return subprocess.run(
             [
                 FISH,

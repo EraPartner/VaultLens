@@ -124,7 +124,7 @@ class ScopedSearchTests(unittest.TestCase):
         original_readable = self.scope.readable
         swapped = False
 
-        def readable(path):
+        def readable(path: Path) -> bool:
             nonlocal swapped
             approved = original_readable(path)
             if path == self.note and not swapped:
@@ -215,7 +215,7 @@ class ScopedSearchTests(unittest.TestCase):
             load_scope(Path("relative.json"))
 
     def test_mcp_initialization_tools_notifications_and_calls(self) -> None:
-        requests = [
+        requests: list[dict[str, object]] = [
             {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -289,7 +289,7 @@ class ScopedSearchTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertNotIn("Denied-", result.stdout)
             self.assertEqual(len(json.loads(result.stdout)["results"]), 3)
-        request = {
+        request: dict[str, object] = {
             "jsonrpc": "2.0",
             "id": 7,
             "method": "tools/call",
