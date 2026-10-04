@@ -32,10 +32,12 @@ import stat
 import subprocess
 import sys
 import tempfile
+from collections.abc import Generator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Callable
+from types import FrameType
+from typing import Any, Callable, NamedTuple, TextIO, TypedDict, cast
 
 # --------------------------------------------------------------------------- #
 # Paths & constants
@@ -51,8 +53,7 @@ REPORTS_DIR = ROOT / "wiki" / "reports"
 
 # Resolve once per dispatcher process so a complete batch uses one provider.
 sys.path.insert(0, str(ROOT / "tools"))
-from llm_provider import (  # noqa: E402, F401
-    BACKENDS,
+from llm_provider import (  # noqa: E402
     LlmConfig,
     RoleModels,
     load_config,
@@ -79,7 +80,7 @@ def freeze_role_models(
     cli: str,
     *,
     root: Path = ROOT,
-    environ: dict,
+    environ: Mapping[str, str],
     config: LlmConfig,
     profile_models: RoleModels,
 ) -> dict[str, str]:
@@ -97,39 +98,58 @@ def freeze_role_models(
     }
 
 
-_PROVIDER_ERROR = ""
-CLI, MODEL = "", ""
-ROLE_MODELS = {}
-BACKEND_HEALTH_HOST = BACKEND_IDENTITY = ""
-ACCOUNTS = []
-SCHEDULE_ENHANCE = False
-try:
-    _PROVIDER_ENV = dict(os.environ)
-    _PROVIDER_CONFIG = load_config()
-    _PROFILE_MODELS = load_profile_models()
-    _PROVIDER = resolve_provider(
-        environ=_PROVIDER_ENV,
-        config=_PROVIDER_CONFIG,
-        profile_models=_PROFILE_MODELS,
+class _ProviderState(NamedTuple):
+    error: str
+    cli: str
+    model: str
+    role_models: dict[str, str]
+    health_host: str
+    identity: str
+    accounts: list[str]
+    enhance: bool
+
+
+def _load_provider_state() -> _ProviderState:
+    try:
+        environ = dict(os.environ)
+        config = load_config()
+        profile_models = load_profile_models()
+        provider = resolve_provider(
+            environ=environ,
+            config=config,
+            profile_models=profile_models,
+        )
+        role_models = freeze_role_models(
+            provider.cli,
+            environ=environ,
+            config=config,
+            profile_models=profile_models,
+        )
+        enhance = _env_flag("VAULTLENS_SCHEDULE_ENHANCE", default=False)
+    except (ValueError, OSError, UnicodeError) as exc:
+        # Invalid model policy blocks all model jobs without disabling host-side
+        # diagnostics, maintenance or recovery. Never fall back to another provider.
+        return _ProviderState(str(exc), "", "", {}, "", "", [], False)
+    return _ProviderState(
+        "",
+        provider.cli,
+        provider.model,
+        role_models,
+        provider.health_host,
+        provider.identity,
+        [provider.identity],
+        enhance,
     )
-    _ROLE_MODELS = freeze_role_models(
-        _PROVIDER.cli,
-        environ=_PROVIDER_ENV,
-        config=_PROVIDER_CONFIG,
-        profile_models=_PROFILE_MODELS,
-    )
-    _SCHEDULE_ENHANCE = _env_flag("VAULTLENS_SCHEDULE_ENHANCE", default=False)
-except (ValueError, OSError, UnicodeError) as exc:
-    # Invalid model policy blocks all model jobs without disabling host-side
-    # diagnostics, maintenance or recovery. Never fall back to another provider.
-    _PROVIDER_ERROR = str(exc)
-else:
-    CLI, MODEL = _PROVIDER.cli, _PROVIDER.model
-    ROLE_MODELS = _ROLE_MODELS
-    BACKEND_HEALTH_HOST = _PROVIDER.health_host
-    BACKEND_IDENTITY = _PROVIDER.identity
-    ACCOUNTS = [BACKEND_IDENTITY]
-    SCHEDULE_ENHANCE = _SCHEDULE_ENHANCE
+
+
+_PROVIDER_STATE = _load_provider_state()
+_PROVIDER_ERROR = _PROVIDER_STATE.error
+CLI, MODEL = _PROVIDER_STATE.cli, _PROVIDER_STATE.model
+ROLE_MODELS = _PROVIDER_STATE.role_models
+BACKEND_HEALTH_HOST = _PROVIDER_STATE.health_host
+BACKEND_IDENTITY = _PROVIDER_STATE.identity
+ACCOUNTS = _PROVIDER_STATE.accounts
+SCHEDULE_ENHANCE = _PROVIDER_STATE.enhance
 ENHANCE_ITERATIONS = 5
 
 # Windows are [start_hour, end_hour). Generous so a morning wake still catches a
@@ -215,24 +235,31 @@ def in_window(now: datetime, window: tuple[int, int]) -> bool:
 # Ledger (per-step last_ok + per-account cooldown)
 # --------------------------------------------------------------------------- #
 
+# Any: the ledger is persisted JSON whose shape load_ledger validates, and tests and
+# recovery code build and pass plain dicts. A TypedDict is deferred until those callers
+# are typed (D6).
+Ledger = dict[str, Any]
 
-def load_ledger() -> dict:
+
+def load_ledger() -> Ledger:
     try:
-        data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        loaded: object = json.loads(STATE_FILE.read_text(encoding="utf-8"))
     except FileNotFoundError:
         if STATE_FILE.is_symlink():
             raise RuntimeError(
                 "Schedule ledger is a broken link; refusing unattended work."
             )
-        data = {}
+        loaded = {}
     except (json.JSONDecodeError, OSError, UnicodeError) as exc:
         raise RuntimeError(
             "Schedule ledger is unreadable or corrupt; refusing unattended work. Inspect and recover it explicitly."
         ) from exc
-    if not isinstance(data, dict):
+    if not isinstance(loaded, dict):
         raise RuntimeError(
             "Schedule ledger must be an object; refusing unattended work."
         )
+    # JSON object keys are always str; values are validated below.
+    data = cast(Ledger, loaded)
     data.setdefault("jobs", {})
     data.setdefault("accounts", {})
     for key in ("jobs", "accounts"):
@@ -268,7 +295,7 @@ def load_ledger() -> dict:
     return data
 
 
-def save_ledger(ledger: dict) -> None:
+def save_ledger(ledger: Ledger) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = STATE_FILE.with_suffix(".json.tmp")
     with tmp.open("w", encoding="utf-8") as output:
@@ -317,7 +344,7 @@ def classify_failure(returncode: int, text: str) -> str:
     return "transient"
 
 
-def backend_available(ledger: dict, now: datetime) -> bool:
+def backend_available(ledger: Ledger, now: datetime) -> bool:
     """True if the selected backend is not in a usage-limit cooldown."""
     if _PROVIDER_ERROR:
         return False
@@ -326,7 +353,7 @@ def backend_available(ledger: dict, now: datetime) -> bool:
     return not lu or parse(lu) <= now
 
 
-def mark_limited(ledger: dict, acct: str, cls: str, now: datetime) -> None:
+def mark_limited(ledger: Ledger, acct: str, cls: str, now: datetime) -> None:
     """Record a rate-limit/quota hit and set the cooldown for this account."""
     st = ledger["accounts"].setdefault(acct, {})
     if cls == "quota":
@@ -339,7 +366,7 @@ def mark_limited(ledger: dict, acct: str, cls: str, now: datetime) -> None:
     st["last_error"] = cls
 
 
-def clear_account(ledger: dict, acct: str) -> None:
+def clear_account(ledger: Ledger, acct: str) -> None:
     st = ledger["accounts"].setdefault(acct, {})
     st["backoff"] = 0
     st["last_error"] = None
@@ -347,7 +374,7 @@ def clear_account(ledger: dict, acct: str) -> None:
     st["limited_until"] = None
 
 
-def step_due(step: "Step", ledger: dict, now: datetime) -> bool:
+def step_due(step: "Step", ledger: Ledger, now: datetime) -> bool:
     """Whether a step is due now (window + cadence vs last success)."""
     if not in_window(now, step.window):
         return False
@@ -388,7 +415,7 @@ class Step:
     report: bool = False  # capture stdout into excluded wiki/reports/agents/scheduled
 
 
-def _slugify(text: str) -> str:
+def _slugify(text: str) -> str:  # pyright: ignore[reportUnusedFunction]  # no production caller; exercised by test_schedule.py
     """Lowercase-hyphen slug matching the wiki's source-page / source-text naming."""
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
@@ -800,7 +827,7 @@ def build_steps() -> list[Step]:
 
 
 class Gates:
-    def __init__(self, log: Callable[[str], None], *, read_only: bool = False):
+    def __init__(self, log: Callable[[str], None], *, read_only: bool = False) -> None:
         self.log = log
         self.read_only = read_only
         self._cache: dict[str, bool] = {}
@@ -929,7 +956,7 @@ def exec_brain_wiki(
 def _run_agent_process(
     command: list[str],
     timeout: float,
-    env: dict,
+    env: Mapping[str, str],
     log_dir: Path,
     *,
     cwd: Path | None = None,
@@ -1003,9 +1030,9 @@ def _run_agent_process(
         return process.returncode, output
 
 
-def _cancel_agent_group(process) -> str:
+def _cancel_agent_group(process: subprocess.Popen[str] | subprocess.Popen[bytes]) -> str:
     """Best-effort local cleanup; do not claim anything about detached work."""
-    issues = []
+    issues: list[str] = []
     for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
             os.killpg(process.pid, sig)
@@ -1119,7 +1146,7 @@ def run_llm(
     args: list[str],
     effort: str,
     timeout: int,
-    ledger: dict,
+    ledger: Ledger,
     now: datetime,
     log: Callable[[str], None],
 ) -> tuple[str, str, str]:
@@ -1208,7 +1235,9 @@ def write_report(name: str, text: str, now: datetime) -> Path:
 
 
 @contextlib.contextmanager
-def _report_directory(*, private: bool, create: bool = True):
+def _report_directory(
+    *, private: bool, create: bool = True
+) -> Generator[tuple[Path, int] | None, None, None]:
     """Open every directory without following links; retain the final descriptor."""
     if REPORTS_DIR != ROOT / "wiki" / "reports":
         raise ValueError(
@@ -1217,7 +1246,7 @@ def _report_directory(*, private: bool, create: bool = True):
     parts = (
         ("wiki", "reports", "agents", "scheduled") if private else ("wiki", "reports")
     )
-    descriptors = []
+    descriptors: list[int] = []
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     try:
         parent = os.open(ROOT, flags)
@@ -1257,7 +1286,10 @@ def _write_report_text(filename: str, text: str, *, private: bool) -> Path:
     """Atomically replace a host-owned report using only its directory descriptor."""
     if not re.fullmatch(r"[a-z0-9][a-z0-9.-]*\.md", filename):
         raise ValueError("Report filename must be a simple Markdown filename")
-    with _report_directory(private=private) as (destination, directory):
+    with _report_directory(private=private) as target:
+        if target is None:  # only possible with create=False
+            raise ValueError("Report destination is unavailable")
+        destination, directory = target
         try:
             metadata = os.stat(filename, dir_fd=directory, follow_symlinks=False)
         except FileNotFoundError:
@@ -1311,7 +1343,9 @@ _STALE_DAYS = {"daily": 2, "weekly": 9}
 
 
 def format_schedule_status(
-    jobs: dict, accounts: dict, step_meta: list[tuple[str, str]], now: datetime
+    jobs: dict[str, dict[str, Any]],
+    accounts: dict[str, dict[str, Any]],
+    step_meta: list[tuple[str, str]], now: datetime
 ) -> str:
     """Render a compact scheduler-health summary as markdown. Pure / no I/O.
 
@@ -1380,7 +1414,7 @@ def format_schedule_status(
     return "\n".join(lines)
 
 
-def write_schedule_status(ledger: dict, steps: list["Step"], now: datetime) -> Path:
+def write_schedule_status(ledger: Ledger, steps: list["Step"], now: datetime) -> Path:
     """Mirror the run ledger into the vault as a compact health page.
 
     The live ledger lives at ~/.brain (outside the vault and the agent sandbox),
@@ -1498,7 +1532,7 @@ def notify(title: str, msg: str) -> None:
 
 # The shared routed-work-item grammar for BOTH CoS proposals and inter-role
 # handoffs: `<keyword>:: <target-project> | <imperative task> | <why-or-ref>`.
-def _routed_re(keyword: str):
+def _routed_re(keyword: str) -> re.Pattern[str]:
     return re.compile(
         rf"^\s*{keyword}::\s*(?P<target>[^|]+?)\s*\|\s*(?P<task>[^|]+?)\s*\|\s*(?P<why>.+?)\s*$"
     )
@@ -1521,12 +1555,18 @@ def strip_cos_proposals(text: str) -> str:
     return text or ""
 
 
-def _parse_routed(text: str, pattern) -> list[dict]:
+class RoutedItem(TypedDict):
+    target: str
+    task: str
+    why: str
+
+
+def _parse_routed(text: str, pattern: re.Pattern[str]) -> list[RoutedItem]:
     """Extract routed work-item lines matching `pattern`. Pure / side-effect-free
     (tested in test_schedule.py). Malformed lines (wrong pipe count, empty
     target/task) are skipped, so a sloppy producer degrades to "nothing routed"
     rather than corrupting an inbox."""
-    out: list[dict] = []
+    out: list[RoutedItem] = []
     for line in (text or "").splitlines():
         m = pattern.match(line)
         if not m:
@@ -1541,12 +1581,12 @@ def _parse_routed(text: str, pattern) -> list[dict]:
     return out
 
 
-def parse_cos_proposals(text: str) -> list[dict]:
+def parse_cos_proposals(text: str) -> list[RoutedItem]:
     """CoS `proposal:: <project> | <task> | <why>` lines from a brief."""
     return _parse_routed(text, _PROPOSAL_RE)
 
 
-def parse_handoffs(text: str) -> list[dict]:
+def parse_handoffs(text: str) -> list[RoutedItem]:
     """Inter-role `handoff:: <to-project> | <ask> | <deliverable-ref>` lines from a
     producer agent's output."""
     return _parse_routed(text, _HANDOFF_RE)
@@ -1583,7 +1623,7 @@ def resolve_proposal_dest(target: str, projects_dir: Path | None = None) -> Path
     return cand
 
 
-def format_work_item(source: str, item: dict) -> str:
+def format_work_item(source: str, item: Mapping[str, object]) -> str:
     """One inbox bullet body for a routed work-item. Provenance `[from:<source>]`
     (no date) so an identical item re-routed on a later day dedupes against the
     existing line, and so every hop is visible/auditable in the receiving inbox."""
@@ -1615,7 +1655,7 @@ class RoutingGuard:
 
     cap: int = MAX_ROUTED_PER_TICK
     routed: int = 0
-    edges: set = field(default_factory=set)
+    edges: set[str] = field(default_factory=set)
 
     def allow(self, source: str, dest_slug: str) -> tuple[bool, str]:
         if source == dest_slug:
@@ -1635,7 +1675,7 @@ class RoutingGuard:
 
 
 def _route_work_items(
-    items: list[dict],
+    items: list[RoutedItem],
     source: str,
     now: datetime,
     log: Callable[[str], None],
@@ -1813,7 +1853,7 @@ def make_logger() -> Callable[[str], None]:
     return log
 
 
-def acquire_lock():
+def acquire_lock() -> TextIO | None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     fh = open(LOCK_FILE, "w")
     try:
@@ -1834,13 +1874,16 @@ def _lint_findings(step: Step, args: list[str], rc: int, output: str) -> bool:
     if step.kind != "host" or args != ["lint", "--json"] or rc != 1:
         return False
     try:
-        report = json.loads(output)
+        parsed: object = json.loads(output)
     except (ValueError, TypeError):
         return False
+    if not isinstance(parsed, dict):
+        return False
+    report = cast(dict[str, object], parsed)  # JSON object keys are always str
+    error_count = report.get("error_count")
     return (
-        isinstance(report, dict)
-        and type(report.get("error_count")) is int
-        and report["error_count"] > 0
+        type(error_count) is int
+        and error_count > 0
         and isinstance(report.get("errors"), dict)
         and type(report.get("pages_checked")) is int
     )
@@ -1848,7 +1891,7 @@ def _lint_findings(step: Step, args: list[str], rc: int, output: str) -> bool:
 
 def _run_steps(
     steps: list[Step],
-    ledger: dict,
+    ledger: Ledger,
     gates: "Gates",
     now: datetime,
     dry_run: bool,
@@ -1994,7 +2037,7 @@ def cmd_run(dry_run: bool = False) -> int:
         return 0
     previous_sigterm = signal.getsignal(signal.SIGTERM)
 
-    def interrupted(_signum, _frame):
+    def interrupted(_signum: int, _frame: FrameType | None) -> None:
         raise InterruptedError("Dispatcher interrupted by SIGTERM")
 
     signal.signal(signal.SIGTERM, interrupted)
@@ -2067,7 +2110,7 @@ def cmd_run(dry_run: bool = False) -> int:
             pass
 
 
-def _record(ledger: dict, name: str, now: datetime, result: str) -> None:
+def _record(ledger: Ledger, name: str, now: datetime, result: str) -> None:
     """Record a step outcome. `last_ok` advances only on success-equivalent
     results (ok/noop) and still drives step_due; every attempt also updates
     `last_attempt`/`last_result`, so failures stay visible to the status summary
