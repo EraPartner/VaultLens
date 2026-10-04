@@ -62,31 +62,31 @@ class PlannerTests(unittest.TestCase):
         )
 
     def test_deterministic_commands_do_not_require_an_agent_profile(self) -> None:
-        cases = [
-            (["lint"], "reader"),
-            (["lint", "--fix"], "author"),
-            (["append-log", "entry"], "author"),
-            (["preprocess"], "raw"),
-            (["index"], "reader"),
-            (["index", "--rebuild"], "author"),
-            (["links", "--fix"], "reader"),
-            (["links", "--write"], "reader"),
-            (["links", "--fix", "--write"], "author"),
-            (["inventory", "list"], "reader"),
-            (["inventory", "new"], "author"),
-            (["archive", "list"], "reader"),
-            (["archive", "page", "concepts/demo"], "author"),
-            (["archive", "restore", "concepts/demo"], "author"),
+        cases: list[list[str]] = [
+            ["lint"],
+            ["lint", "--fix"],
+            ["append-log", "entry"],
+            ["preprocess"],
+            ["index"],
+            ["index", "--rebuild"],
+            ["links", "--fix"],
+            ["links", "--write"],
+            ["links", "--fix", "--write"],
+            ["inventory", "list"],
+            ["inventory", "new"],
+            ["archive", "list"],
+            ["archive", "page", "concepts/demo"],
+            ["archive", "restore", "concepts/demo"],
         ]
         for action in ("new", "link", "freeze", "unfreeze"):
-            cases.append((["project", action, "demo"], "projects"))
+            cases.append(["project", action, "demo"])
         for action in ("list", "show"):
-            cases.append((["project", action, "demo"], "reader"))
+            cases.append(["project", action, "demo"])
         for action in ("enable", "disable", "scaffold-all", "complete", "resolve"):
-            cases.append((["project", "agenda", action, "demo"], "projects"))
+            cases.append(["project", "agenda", action, "demo"])
         for action in ("due", "clarifications", "status", "lint", "new-id"):
-            cases.append((["project", "agenda", action, "demo"], "reader"))
-        for argv, _access in cases:
+            cases.append(["project", "agenda", action, "demo"])
+        for argv in cases:
             with self.subTest(argv=argv):
                 plan = self.plan(argv)
                 self.assertEqual(plan.profile, "")
