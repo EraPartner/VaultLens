@@ -10,11 +10,17 @@ from __future__ import annotations
 import json
 import math
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
-from agent_capabilities import claude_builtin_tools, claude_tools, codex_sandbox
+from agent_capabilities import (
+    Capabilities,
+    claude_builtin_tools,
+    claude_tools,
+    codex_sandbox,
+)
 
 
 @dataclass(frozen=True)
@@ -51,7 +57,7 @@ class ProviderCommandRequest:
         if any(not path.is_absolute() for path in paths):
             raise ValueError("Provider command paths must be absolute")
 
-    def permissions(self) -> dict:
+    def permissions(self) -> Capabilities:
         """A fresh legacy capability mapping for existing tool grant helpers."""
         return {
             "shell": self.shell,
@@ -99,23 +105,30 @@ def build_provider_command(
     return adapter.build_command(request, executable=executable or cli)
 
 
-def _scoped_mcp_servers(path: Path | None) -> dict:
+def _scoped_mcp_servers(path: Path | None) -> dict[str, dict[str, object]]:
     """Only accept explicitly prepared local stdio servers, never ambient MCP."""
     if path is None:
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        loaded: object = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"Cannot read scoped MCP configuration {path}: {exc}") from exc
-    if not isinstance(data, dict) or set(data) != {"mcpServers"}:
+    # JSON object keys are always str, so the narrowed dict is dict[str, object].
+    data = cast("dict[str, object]", loaded) if isinstance(loaded, dict) else None
+    if data is None or set(data) != {"mcpServers"}:
         raise ValueError("Scoped MCP configuration must contain only mcpServers")
-    servers = data["mcpServers"]
-    if not isinstance(servers, dict):
+    raw_servers = data["mcpServers"]
+    if not isinstance(raw_servers, dict):
         raise ValueError("Scoped MCP servers must be an object")
-    for name, config in servers.items():
+    servers = cast("dict[str, object]", raw_servers)  # JSON keys are always str
+    checked: dict[str, dict[str, object]] = {}
+    for name, entry in servers.items():
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", name):
             raise ValueError("Scoped MCP server names must be plain identifiers")
-        if not isinstance(config, dict) or set(config) - {
+        if not isinstance(entry, dict):
+            raise ValueError(f"{name}: only local stdio MCP servers are supported")
+        config = cast("dict[str, object]", entry)  # JSON keys are always str
+        if set(config) - {
             "type",
             "command",
             "args",
@@ -128,13 +141,15 @@ def _scoped_mcp_servers(path: Path | None) -> dict:
         args = config.get("args", [])
         if not isinstance(command, str) or not Path(command).is_absolute():
             raise ValueError(f"{name}: MCP command must be an absolute path")
-        if not isinstance(args, list) or any(not isinstance(arg, str) for arg in args):
-            raise ValueError(f"{name}: MCP arguments must be strings")
-        if "cwd" in config and (
-            not isinstance(config["cwd"], str) or not Path(config["cwd"]).is_absolute()
+        if not isinstance(args, list) or any(
+            not isinstance(arg, str) for arg in cast("list[object]", args)
         ):
+            raise ValueError(f"{name}: MCP arguments must be strings")
+        cwd = config.get("cwd")
+        if "cwd" in config and (not isinstance(cwd, str) or not Path(cwd).is_absolute()):
             raise ValueError(f"{name}: MCP working directory must be an absolute path")
-    return servers
+        checked[name] = config
+    return checked
 
 
 def _toml(value: object) -> str:
@@ -146,11 +161,13 @@ def _toml(value: object) -> str:
     if isinstance(value, int) or isinstance(value, float) and math.isfinite(value):
         return str(value)
     if isinstance(value, (list, tuple)):
-        return "[" + ",".join(_toml(item) for item in value) + "]"
+        items = cast("Sequence[object]", value)  # element types are checked per item
+        return "[" + ",".join(_toml(item) for item in items) + "]"
     if isinstance(value, dict):
+        table = cast("dict[object, object]", value)  # keys and values checked per item
         return (
             "{"
-            + ",".join(f"{_toml(key)}={_toml(item)}" for key, item in value.items())
+            + ",".join(f"{_toml(key)}={_toml(item)}" for key, item in table.items())
             + "}"
         )
     raise ValueError(f"Unsupported TOML override type: {type(value).__name__}")
@@ -243,7 +260,7 @@ class CodexAdapter:
             else codex_sandbox(request.permissions())
         )
         command.extend(["-C", str(request.cwd), "--sandbox", sandbox])
-        overrides = {
+        overrides: dict[str, object] = {
             "approval_policy": "never",
             "agents.enabled": False,
             "features.multi_agent": False,

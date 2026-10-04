@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
-from llm_provider import MODEL_PROFILES, ROOT, Provider, resolve_provider
+from llm_provider import MODEL_PROFILES, ROOT, LlmConfig, Provider, resolve_provider
 
 EFFORTS = {"low", "medium", "high", "xhigh"}
 
@@ -94,8 +94,8 @@ def resolve_role_settings(
     *,
     root: Path = ROOT,
     environ: Mapping[str, str] | None = None,
-    config: dict | None = None,
-    profile_models: Mapping | None = None,
+    config: LlmConfig | None = None,
+    profile_models: Mapping[str, Mapping[str, str]] | None = None,
 ) -> tuple[Provider, str]:
     if agent not in AGENT_FILES:
         raise ValueError(f"Unknown wiki agent: {agent}")

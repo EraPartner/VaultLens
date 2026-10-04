@@ -10,7 +10,7 @@ import sys
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping, cast
 
 
 if sys.version_info < (3, 11):
@@ -25,10 +25,19 @@ CONFIG_PATH = ROOT / "tools" / "llm.local.json"
 PROFILE_PATH = ROOT / "tools" / "model-profiles.json"
 MODEL_PROFILES = {"standard", "deep"}
 DEFAULT_CLI = "claude"
-BACKENDS = {
+BACKENDS: dict[str, dict[str, str]] = {
     "claude": {"model": "", "health_host": "api.anthropic.com"},
     "codex": {"model": "", "health_host": "chatgpt.com"},
 }
+
+
+RoleModels = dict[str, dict[str, str]]
+
+
+# Validated JSON document (cli, models, profiles). Any: untyped callers (schedule/dispatch.py
+# and tests) pass it around as bare dict and index it directly; tighten to a TypedDict once
+# they are typed.
+LlmConfig = dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -39,14 +48,24 @@ class Provider:
     identity: str
 
 
-def load_config(path: Path = CONFIG_PATH) -> dict:
+def _json_object(value: object) -> dict[str, object] | None:
+    """Return ``value`` when it is a JSON object, else None."""
+    if not isinstance(value, dict):
+        return None
+    # JSON object keys are always str, so the isinstance-narrowed dict[Unknown, Unknown]
+    # is exactly dict[str, object].
+    return cast("dict[str, object]", value)
+
+
+def load_config(path: Path = CONFIG_PATH) -> LlmConfig:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        loaded: object = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"Cannot read provider configuration {path}: {exc}") from exc
-    if not isinstance(data, dict) or set(data) - {"cli", "models", "profiles"}:
+    data = _json_object(loaded)
+    if data is None or set(data) - {"cli", "models", "profiles"}:
         raise ValueError(
             f"{path}: expected an object with only cli, models and profiles"
         )
@@ -54,8 +73,8 @@ def load_config(path: Path = CONFIG_PATH) -> dict:
         not isinstance(data["cli"], str) or data["cli"] not in BACKENDS
     ):
         raise ValueError(f"{path}: cli must be claude or codex")
-    models = data.get("models", {})
-    if not isinstance(models, dict) or set(models) - BACKENDS.keys():
+    models = _json_object(data.get("models", {}))
+    if models is None or set(models) - BACKENDS.keys():
         raise ValueError(f"{path}: models must map claude or codex to model names")
     if any(not isinstance(model, str) for model in models.values()):
         raise ValueError(f"{path}: model names must be strings")
@@ -63,28 +82,31 @@ def load_config(path: Path = CONFIG_PATH) -> dict:
     return data
 
 
-def _validate_profiles(data: object, path: Path) -> None:
-    if not isinstance(data, dict) or set(data) - BACKENDS.keys():
+def _validate_profiles(data: object, path: Path) -> RoleModels:
+    roles = _json_object(data)
+    if roles is None or set(roles) - BACKENDS.keys():
         raise ValueError(f"{path}: profiles must map claude or codex to role models")
-    for profiles in data.values():
+    for value in roles.values():
+        profiles = _json_object(value)
         if (
-            not isinstance(profiles, dict)
+            profiles is None
             or set(profiles) - MODEL_PROFILES
             or any(not isinstance(model, str) for model in profiles.values())
         ):
             raise ValueError(
                 f"{path}: role models must map standard or deep to strings"
             )
+    # Every level was checked above: backend -> profile -> model name (str).
+    return cast("RoleModels", roles)
 
 
-def load_profile_models(path: Path = PROFILE_PATH) -> dict:
+def load_profile_models(path: Path = PROFILE_PATH) -> RoleModels:
     """Load the tracked provider mappings; malformed policy fails closed."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data: object = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"Cannot read model profiles {path}: {exc}") from exc
-    _validate_profiles(data, path)
-    return data
+    return _validate_profiles(data, path)
 
 
 def resolve_provider(
@@ -94,16 +116,15 @@ def resolve_provider(
     path: Path = CONFIG_PATH,
     environ: Mapping[str, str] | None = None,
     profile: str | None = None,
-    config: dict | None = None,
-    profile_models: Mapping | None = None,
+    config: LlmConfig | None = None,
+    profile_models: Mapping[str, Mapping[str, str]] | None = None,
 ) -> Provider:
     """Explicit arguments override environment, local configuration, then defaults."""
     env = os.environ if environ is None else environ
     config = load_config(path) if config is None else config
+    configured_cli: str = config.get("cli", DEFAULT_CLI)
     selected = (
-        cli
-        if cli is not None
-        else env.get("VAULTLENS_LLM_CLI", config.get("cli", DEFAULT_CLI))
+        cli if cli is not None else env.get("VAULTLENS_LLM_CLI", configured_cli)
     )
     selected = selected.strip().lower()
     if selected not in BACKENDS:
@@ -123,13 +144,9 @@ def resolve_provider(
             .get(selected, {})
             .get(profile, mappings.get(selected, {}).get(profile, default_model))
         )
+    configured_model: str = config.get("models", {}).get(selected, default_model)
     selected_model = (
-        model
-        if model is not None
-        else env.get(
-            "VAULTLENS_LLM_MODEL",
-            config.get("models", {}).get(selected, default_model),
-        )
+        model if model is not None else env.get("VAULTLENS_LLM_MODEL", configured_model)
     )
     host = env.get("VAULTLENS_LLM_HEALTH_HOST", defaults["health_host"]).strip()
     identity = env.get("VAULTLENS_LLM_IDENTITY", f"{selected}-plan").strip()
