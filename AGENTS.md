@@ -2,7 +2,9 @@
 
 This vault implements the "LLM Wiki" pattern (after Karpathy's llm-wiki) as a persistent,
 compounding knowledge base. This file is the provider-neutral source of truth for how AI agents
-operate here. Claude Code, ChatGPT, and Codex load it directly.
+operate here. Codex and ChatGPT load it directly; Claude Code loads it through the `@AGENTS.md`
+import in `CLAUDE.md`. The global working agreement applies (signing, publication, safety); this
+file lists project-specific rules only.
 
 Multi-step **runbooks** (ingest, maintenance, projects, agents) live in `.agents/skills/*/SKILL.md`
 and load automatically when relevant. Canonical custom-agent role bodies live in `.agents/roles/`;
@@ -38,11 +40,8 @@ template. The Chief of Staff launcher injects it automatically into its live con
 
 Read `.agents/context-policy.md` when using live document context. The headless launcher applies
 that shared policy to both providers and supplies live documents as task data, separately from
-trusted role instructions. `VAULTLENS_COS_CONTEXT_CHARS` enables an experimental character budget
-for Chief of Staff live context; it is unset by default pending model quality evaluation. It keeps
-the complete profile, consent gate, project/desk overview and review-queue names. It scans all open
-tasks before fair priority selection, reports source paths and omissions, and fails explicitly if
-mandatory context cannot fit. See `tools/evals/README.md` for the fixture baseline and limitations.
+trusted role instructions. Leave the experimental `VAULTLENS_COS_CONTEXT_CHARS` budget unset
+unless the operator asks; see `tools/evals/README.md`.
 
 ## Directory contract
 
@@ -79,20 +78,12 @@ PDFs, `python3 tools/wiki.py preprocess` pre-extracts `raw/sources/*.pdf` → `r
 
 ## Tool permissions
 
-Launch agents through `tools/local_runtime.py` or the `brain-*` wrappers. The runtime resolves a
-versioned access profile before running the native Claude or Codex client. Profiles define approved
-read paths, writable output paths, protected paths, and network access independently of model choice.
-The whole-process sandbox applies to file tools, shell commands, hooks, and local search servers;
-provider tool permissions add a second layer. Missing runtime support or invalid policy stops the
-launch. A direct operator request authorizes the scoped edits and checks needed for that request.
-Headless roles are mapped by `wiki-agent.py`, and may never spawn another agent. Interactive native
-subagents inherit the parent process's access boundary; narrower role instructions do not create a
-new operating-system sandbox. See `.agents/skills/wiki-agents/SKILL.md`.
-
-`raw/` may contain symlinks to files/dirs outside the vault. An access profile never grants the
-outside target implicitly. Headless inbox previews never follow directory or file links, because
-those links could bypass the review-inbox consent gate. Restricted material must also be absent
-from the search index. Runtime search uses the selected files rather than a shared vault index.
+Launch agents through `tools/local_runtime.py` or the `brain-*` wrappers. Each launch runs inside a
+versioned access profile that fixes read, write, protected, and network paths. Do not bypass it.
+Headless roles are mapped by `wiki-agent.py` and may never spawn another agent. Interactive
+subagents share the parent's boundary, so a narrow role prompt is not separate isolation.
+`raw/` may contain symlinks to outside files; a profile never grants their targets implicitly.
+Runtime internals: `tools/runtime/README.md` and `.agents/skills/wiki-agents/SKILL.md`.
 
 ## Projects layer
 
@@ -165,14 +156,10 @@ opt-in. Scheduling, recovery, gates, provider selection, and installation are de
 
 ## Search
 
-[qmd](https://www.npmjs.com/package/@tobilu/qmd) is the primary engine — hybrid BM25 + vector +
-LLM-rerank for explicit operator search. Agent runs use an isolated lexical search service with the
-qmd-compatible CLI and MCP tool names over their approved files. It does not reuse the host's full
-vault index or vector models. This keeps excluded material out of retrieval results and permits
-search without an additional provider. **All search-using agents prefer the scoped qmd tools when
-available.** `python3 tools/wiki.py search "<query>"` is the substring fallback inside the same
-boundary. One-time full-vault host setup and re-indexing remain explicit operator actions in
-`tools/scripts/setup-qmd.sh`.
+**All search-using agents prefer the scoped qmd tools when available.** In agent runs they search
+only the approved files. `python3 tools/wiki.py search "<query>"` is the substring fallback inside
+the same boundary. Full-vault setup and re-indexing (`tools/scripts/setup-qmd.sh`, `qmd update`)
+are explicit operator actions. Engine design: `README.md` (Scoped search).
 
 
 ## Obsidian skills
@@ -193,4 +180,9 @@ python3 tools/wiki.py lint                       # fast health check (links, met
 python3 tools/wiki.py search "term"              # substring search (qmd preferred — see Search)
 qmd search "<keywords>"                          # scoped lexical search in agent runs
 qmd update                                       # full-vault re-index: explicit operator workflow
+ruff check tools/                                # lint (CI pins ruff 0.15.17)
+for t in tools/tests/test_*.py; do python3 "$t"; done   # tooling tests, as CI runs them
 ```
+
+Run each test file directly. `python -m unittest discover` finds nothing, because the suites are
+not an importable package. CI uses Python 3.12 and also runs `python -m compileall -q tools`.
