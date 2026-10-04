@@ -354,8 +354,8 @@ def apply_repairs(changes: list[Change], backup_directory: Path) -> None:
         if proposed.path.is_symlink() or current != proposed.before:
             raise ValueError(f"Target changed since preview: {proposed.path}")
     backup_directory.mkdir(parents=True, exist_ok=False)
-    records = []
-    modes = []
+    records: list[str] = []
+    modes: list[int] = []
     for index, proposed in enumerate(changes):
         modes.append(
             proposed.path.stat().st_mode & 0o777
@@ -369,7 +369,7 @@ def apply_repairs(changes: list[Change], backup_directory: Path) -> None:
             f"{index}\t{proposed.path}\t{'new' if proposed.before is None else 'saved'}"
         )
     (backup_directory / "manifest.txt").write_text("\n".join(records) + "\n")
-    applied = []
+    applied: list[tuple[Change, int]] = []
     try:
         for proposed, mode in zip(changes, modes):
             _atomic_write(proposed.path, proposed.after, mode)
