@@ -2,9 +2,9 @@
 
 This vault implements the "LLM Wiki" pattern (after Karpathy's llm-wiki) as a persistent,
 compounding knowledge base. This file is the provider-neutral source of truth for how AI agents
-operate here. Codex and ChatGPT load it directly; Claude Code loads it through the `@AGENTS.md`
-import in `CLAUDE.md`. The global working agreement applies (signing, publication, safety); this
-file lists project-specific rules only.
+operate here. Codex, ChatGPT and Claude Code load it directly (Claude Code v2.1.277 or newer;
+add no `CLAUDE.md`, which takes precedence and hides this file). The global working agreement
+applies (signing, publication, safety); this file lists project-specific rules only.
 
 Multi-step **runbooks** (ingest, maintenance, projects, agents) live in `.agents/skills/*/SKILL.md`
 and load automatically when relevant. Canonical custom-agent role bodies live in `.agents/roles/`;

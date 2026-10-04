@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate thin provider adapters from canonical agent and project guidance."""
+"""Generate thin provider adapters from canonical agent guidance."""
 
 from __future__ import annotations
 
@@ -23,9 +23,6 @@ from agent_capabilities import (  # noqa: E402
 ROLES_DIR = ROOT / ".agents" / "roles"
 CLAUDE_DIR = ROOT / ".claude" / "agents"
 CODEX_DIR = ROOT / ".codex" / "agents"
-PROJECTS_DIR = ROOT / "projects"
-
-CLAUDE_INSTRUCTION_IMPORT = "@AGENTS.md\n"
 
 
 class AdapterAccessError(OSError):
@@ -44,26 +41,6 @@ def load_roles() -> list[Role]:
     if not roles:
         raise ValueError(f"no canonical roles found under {ROLES_DIR}")
     return roles
-
-
-def load_projects() -> list[Path]:
-    """Return real project workspaces and require their neutral adapter source."""
-    projects: list[Path] = []
-    for project_md in sorted(PROJECTS_DIR.glob("*/project.md")):
-        project = project_md.parent
-        if not (project / "AGENTS.md").is_file():
-            raise ValueError(f"{project}: missing provider-neutral AGENTS.md")
-        projects.append(project)
-    return projects
-
-
-def claude_instruction_paths(projects: list[Path]) -> list[Path]:
-    """Keep Claude discovery thin while AGENTS.md remains the shared source."""
-    directories = [ROOT, ROOT / "wiki", PROJECTS_DIR, *projects]
-    for directory in directories:
-        if not (directory / "AGENTS.md").is_file():
-            raise ValueError(f"{directory}: missing provider-neutral AGENTS.md")
-    return [directory / "CLAUDE.md" for directory in directories]
 
 
 def _role_instruction(role: Role) -> str:
@@ -191,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        help="Export adapters and instruction imports under this directory instead of the checkout",
+        help="Export adapters under this directory instead of the checkout",
     )
     args = parser.parse_args(argv)
 
@@ -200,10 +177,8 @@ def main(argv: list[str] | None = None) -> int:
     codex_dir = output / ".codex" / "agents" if args.output_dir else CODEX_DIR
     try:
         roles = load_roles()
-        projects = load_projects()
         ok = True
         if args.provider in (None, "claude"):
-            instruction_paths = claude_instruction_paths(projects)
             ok &= _check_adapter_set(
                 claude_dir, ".md", {f"{role.name}.md" for role in roles}
             )
@@ -211,11 +186,6 @@ def main(argv: list[str] | None = None) -> int:
                 ok &= _sync(
                     claude_dir / f"{role.name}.md", claude_manifest(role), args.check
                 )
-            for path in instruction_paths:
-                destination = (
-                    output / path.relative_to(ROOT) if args.output_dir else path
-                )
-                ok &= _sync(destination, CLAUDE_INSTRUCTION_IMPORT, args.check)
         if args.provider in (None, "codex"):
             ok &= _check_adapter_set(
                 codex_dir, ".toml", {f"{role.name}.toml" for role in roles}

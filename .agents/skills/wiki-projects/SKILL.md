@@ -29,7 +29,6 @@ Never hand-edit `wiki_refs` frontmatter — `project link` preserves YAML and bu
 projects/<slug>/
   project.md      ← metadata + Description + Layout + Rules + Key questions + Context + linked wiki pages
   AGENTS.md       ← provider-neutral project instructions; requires reading project.md
-  CLAUDE.md       ← Claude compatibility import for AGENTS.md + project.md
   TODO.md         ← per-project todo, embedded into projects/TODO.md
   AGENDA.md       ← dormant autonomous-runner agenda (opt-in via enabled flag)
   queries/        ← default Q&A landing zone (overridable in ## Rules)

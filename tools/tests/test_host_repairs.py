@@ -333,9 +333,7 @@ class HostRepairTests(unittest.TestCase):
             ignored = (vault / ".gitignore").read_text()
             self.assertIn("tools/access.local.json", ignored)
             self.assertIn("tools/runtime-state/", ignored)
-            self.assertEqual(
-                (vault / "projects/example/CLAUDE.md").read_text(), "@AGENTS.md\n"
-            )
+            self.assertFalse((vault / "projects/example/CLAUDE.md").exists())
             installed = plistlib.loads(plist.read_bytes())
             self.assertTrue(installed["Disabled"])
             self.assertEqual(
@@ -687,13 +685,6 @@ class HostRepairTests(unittest.TestCase):
             )
             alias.symlink_to(target)
             with self.assertRaisesRegex(ValueError, "alias needs manual review"):
-                repairs.plan_repairs(vault, source, functions, plist)
-
-    def test_unreviewed_instruction_changes_are_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            vault, source, functions, plist = self.fixture(Path(temporary))
-            (vault / "CLAUDE.md").write_text("personal instructions\n")
-            with self.assertRaisesRegex(ValueError, "manual review"):
                 repairs.plan_repairs(vault, source, functions, plist)
 
     def test_scheduler_symlink_is_preserved(self):

@@ -10,8 +10,9 @@ workspaces. You drop sources into `raw/`; agents distil them into a curated `wik
 
 Clone it, point Obsidian at it, and start a ChatGPT/Codex or Claude Code session.
 `AGENTS.md` is the shared operating schema for these agents.
-Thin `CLAUDE.md` imports load that same schema on Claude versions whose native
-`AGENTS.md` discovery is unavailable. Keep operating instructions in `AGENTS.md`.
+Claude Code reads `AGENTS.md` natively (v2.1.277 or newer), so the repo has no `CLAUDE.md`
+files; adding one makes Claude read it instead of `AGENTS.md`. Keep operating instructions in
+`AGENTS.md`.
 
 ## Architecture — four layers
 

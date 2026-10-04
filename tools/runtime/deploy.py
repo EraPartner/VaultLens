@@ -110,9 +110,6 @@ INSTRUCTION_EXPORTS = {
     **{f"roles/{name}.md": f".agents/roles/{name}.md" for name in ROLE_NAMES},
 }
 ADAPTER_EXPORTS = (
-    "CLAUDE.md",
-    "projects/CLAUDE.md",
-    "wiki/CLAUDE.md",
     *(f".claude/agents/{name}.md" for name in ROLE_NAMES),
     *(f".codex/agents/{name}.toml" for name in ROLE_NAMES),
 )
