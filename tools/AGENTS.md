@@ -74,11 +74,12 @@ Do not claim isolation is verified from a cloud run.
   and typing jobs and never imported by tooling. The hooks assume `git` and `python3` only.
 - Lint is `ruff check` (`E4`, `E7`, `E9`, `F`, `ANN`; rules in `tools/ruff.toml`). Formatting is
   not enforced. Do not reformat unrelated code.
-- Typing is `basedpyright` in `all` mode (`tools/pyrightconfig.json`), checked against
+- Typing is `basedpyright` in `all` mode (`tools/pyrightconfig.json`), with
+  `reportAny` and `reportUnusedCallResult` switched off, checked against
   `tools/typing-baseline.json`. The baseline holds the findings that predate the switch from
   `strict`; any new finding fails CI. Shrink the baseline as you fix code
   (`basedpyright --project tools/pyrightconfig.json --writebaseline` after fixing, never to admit
-  new findings). Do not disable rules, add `# pyright: ignore`, bare `Any` or `cast` without a
+  new findings). Do not disable further rules, add `# pyright: ignore`, bare `Any` or `cast` without a
   one-line reason. Ruff `ANN` has no `per-file-ignores`; do not add any.
 - Conventional Commit subjects: `type(scope): summary`, at most 72 characters. The `commit-msg`
   hook accepts `feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert`.
