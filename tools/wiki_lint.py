@@ -13,13 +13,14 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from typing import NotRequired, TypedDict
 
 from wiki import (
     ROOT,
     SPECIAL_LINK_TARGETS,
     Page,
     Project,
-    _set_frontmatter_field,
+    set_frontmatter_field,
     build_page_indexes,
     compute_inbound_links,
     list_content_pages,
@@ -213,7 +214,7 @@ def check_dates(pages: list[Page]) -> tuple[list[str], list[str]]:
             continue
         parsed: dict[str, dt.date] = {}
         for field in ("created", "updated"):
-            raw = page._scalar(field).strip()
+            raw = page.scalar(field).strip()
             if not raw:
                 continue
             try:
@@ -247,10 +248,10 @@ def apply_fixes(pages: list[Page]) -> list[str]:
         text = page.path.read_text(encoding="utf-8")
         changed = False
         for field, allowed in valid.items():
-            raw = page._scalar(field)
+            raw = page.scalar(field)
             normalized = raw.strip().lower()
             if raw and raw != normalized and normalized in allowed:
-                text = _set_frontmatter_field(text, field, normalized)
+                text = set_frontmatter_field(text, field, normalized)
                 fixes.append(
                     f"{page.rel.as_posix()}: {field} '{raw}' -> '{normalized}'"
                 )
@@ -260,7 +261,17 @@ def apply_fixes(pages: list[Page]) -> list[str]:
     return fixes
 
 
-def build_report(pages: list[Page], strict: bool) -> dict:
+class LintReport(TypedDict):
+    pages_checked: int
+    projects_checked: int
+    errors: dict[str, list[str]]
+    warnings: dict[str, list[str]]
+    error_count: int
+    warning_count: int
+    fixes_applied: NotRequired[list[str]]
+
+
+def build_report(pages: list[Page], strict: bool) -> LintReport:
     canonical, basename_map = build_page_indexes(pages)
     inbound, broken_links, ambiguous_links = compute_inbound_links(
         pages, canonical, basename_map, skip_categories=LINK_VALIDATION_SKIP_CATEGORIES
@@ -288,7 +299,7 @@ def build_report(pages: list[Page], strict: bool) -> dict:
         projects, canonical, basename_map
     )
 
-    errors = {
+    errors: dict[str, list[str]] = {
         "missing_fields": check_missing_fields(pages),
         "broken_links": broken_links,
         "ambiguous_links": ambiguous_links,
@@ -302,7 +313,7 @@ def build_report(pages: list[Page], strict: bool) -> dict:
     if strict:
         errors["orphans"] = orphan_pages
 
-    warnings = {
+    warnings: dict[str, list[str]] = {
         "stale_pages": check_staleness(pages),
         "low_confidence": low_confidence,
         "empty_required": check_empty_required(pages),

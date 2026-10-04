@@ -13,6 +13,8 @@ import datetime as dt
 import json
 import re
 import subprocess
+from pathlib import Path
+from typing import TypedDict
 
 import agenda
 from project_state import is_frozen_project
@@ -21,8 +23,8 @@ from wiki import (
     PROJECTS_DIR,
     ROOT,
     Project,
-    _load_project,
-    _set_frontmatter_field,
+    load_project,
+    set_frontmatter_field,
     list_projects,
     normalize_link_target,
     slug_to_title,
@@ -33,7 +35,7 @@ def _find_project(slug: str) -> Project | None:
     project_md = PROJECTS_DIR / slug / "project.md"
     if not project_md.exists():
         return None
-    return _load_project(project_md)
+    return load_project(project_md)
 
 
 PROJECT_TEMPLATE = """---
@@ -296,9 +298,31 @@ def _project_new(slug: str) -> int:
     return 0
 
 
-def _project_subfolders(project: Project) -> list[dict]:
+class SubfolderRow(TypedDict):
+    name: str
+    rel: str
+    md_count: int
+    file_count: int
+
+
+class DueTaskRow(TypedDict):
+    slug: str
+    id: str
+    title: str
+    schedule: str
+    next_due: str | None
+
+
+class ClarificationRow(TypedDict):
+    slug: str
+    id: str
+    title: str
+    questions: list[str]
+
+
+def _project_subfolders(project: Project) -> list[SubfolderRow]:
     """Enumerate every direct subfolder of the project root, with file counts."""
-    rows: list[dict] = []
+    rows: list[SubfolderRow] = []
     for child in sorted(project.root.iterdir()):
         if not child.is_dir() or child.name.startswith("."):
             continue
@@ -382,8 +406,8 @@ def _project_link(slug: str, ref: str) -> int:
     new_refs = existing + [cleaned]
     today = dt.datetime.now().strftime("%Y-%m-%d")
     text = project.path.read_text(encoding="utf-8")
-    text = _set_frontmatter_field(text, "wiki_refs", new_refs)
-    text = _set_frontmatter_field(text, "updated", today)
+    text = set_frontmatter_field(text, "wiki_refs", new_refs)
+    text = set_frontmatter_field(text, "updated", today)
     project.path.write_text(text, encoding="utf-8")
     print(f"Linked '{cleaned}' to project '{slug}' ({len(new_refs)} total wiki_refs)")
     return 0
@@ -407,8 +431,8 @@ def _project_freeze(slug: str, frozen: bool) -> int:
         return 1
     today = dt.date.today().isoformat()
     text = project.path.read_text(encoding="utf-8")
-    text = _set_frontmatter_field(text, "status", target)
-    text = _set_frontmatter_field(text, "updated", today)
+    text = set_frontmatter_field(text, "status", target)
+    text = set_frontmatter_field(text, "updated", today)
     project.path.write_text(text, encoding="utf-8")
     _rebuild_projects_todo()
     if frozen:
@@ -421,7 +445,7 @@ def _project_freeze(slug: str, frozen: bool) -> int:
     return 0
 
 
-def _agenda_path(slug: str):
+def _agenda_path(slug: str) -> Path:
     return PROJECTS_DIR / slug / "AGENDA.md"
 
 
@@ -464,21 +488,21 @@ def _project_agenda(
             )
             return 1
         text = path.read_text(encoding="utf-8")
-        text = _set_frontmatter_field(
+        text = set_frontmatter_field(
             text, "enabled", "true" if sub == "enable" else "false"
         )
-        text = _set_frontmatter_field(text, "updated", today.isoformat())
+        text = set_frontmatter_field(text, "updated", today.isoformat())
         path.write_text(text, encoding="utf-8")
         state = "enabled (nightly runs ON)" if sub == "enable" else "disabled (dormant)"
         print(f"Project '{proj}' agenda {state}.")
         return 0
 
     if sub == "due":
-        rows = []
+        due_rows: list[DueTaskRow] = []
         for slug in agenda.due_projects(PROJECTS_DIR, today):
             _, tasks = agenda.parse_agenda(_agenda_path(slug))
             for t in agenda.due_tasks(tasks, today):
-                rows.append(
+                due_rows.append(
                     {
                         "slug": slug,
                         "id": t.id,
@@ -488,16 +512,16 @@ def _project_agenda(
                     }
                 )
         if as_json:
-            print(json.dumps(rows, indent=2))
-        elif not rows:
+            print(json.dumps(due_rows, indent=2))
+        elif not due_rows:
             print("No due tasks in any enabled project.")
         else:
-            for r in rows:
+            for r in due_rows:
                 print(f"  {r['slug']:<24} [{r['id']}] {r['title']}  ({r['schedule']})")
         return 0
 
     if sub == "clarifications":
-        rows = []
+        clarification_rows: list[ClarificationRow] = []
         for slug in _all_agenda_slugs():
             try:
                 _, tasks = agenda.parse_agenda(_agenda_path(slug))
@@ -505,7 +529,7 @@ def _project_agenda(
                 continue
             for t in tasks:
                 if t.status == "needs-clarification":
-                    rows.append(
+                    clarification_rows.append(
                         {
                             "slug": slug,
                             "id": t.id,
@@ -514,11 +538,11 @@ def _project_agenda(
                         }
                     )
         if as_json:
-            print(json.dumps(rows, indent=2))
-        elif not rows:
+            print(json.dumps(clarification_rows, indent=2))
+        elif not clarification_rows:
             print("No pending clarifications.")
         else:
-            for r in rows:
+            for r in clarification_rows:
                 print(f"  {r['slug']:<24} [{r['id']}] {r['title']}")
                 for q in r["questions"]:
                     print(f"      - {q}")

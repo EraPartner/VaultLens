@@ -39,6 +39,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TypedDict
 
 from project_state import is_frozen_project
 
@@ -75,8 +76,12 @@ _SECTION_HEADING = re.compile(r"^##\s+(.*)$")
 
 # --- Frontmatter (minimal, stdlib-only) --------------------------------------
 
+# The shapes `_coerce_scalar` can produce.
+FrontmatterValue = str | bool | int | list[str]
+Frontmatter = dict[str, FrontmatterValue]
 
-def parse_frontmatter(text: str) -> dict:
+
+def parse_frontmatter(text: str) -> Frontmatter:
     """Parse the leading `--- ... ---` YAML block into a dict.
 
     Handles the scalar/list/bool/int shapes the agenda schema uses; not a full
@@ -88,7 +93,7 @@ def parse_frontmatter(text: str) -> dict:
     end = norm.find("\n---\n", 4)
     if end == -1:
         return {}
-    out: dict = {}
+    out: Frontmatter = {}
     for line in norm[4:end].split("\n"):
         if not line.strip() or line.lstrip().startswith("#"):
             continue
@@ -99,7 +104,7 @@ def parse_frontmatter(text: str) -> dict:
     return out
 
 
-def _coerce_scalar(raw: str):
+def _coerce_scalar(raw: str) -> FrontmatterValue:
     if raw.startswith("[") and raw.endswith("]"):
         inner = raw[1:-1].strip()
         if not inner:
@@ -113,7 +118,7 @@ def _coerce_scalar(raw: str):
     return raw.strip().strip("'\"")
 
 
-def is_enabled(fm: dict) -> bool:
+def is_enabled(fm: Frontmatter) -> bool:
     return fm.get("enabled") is True
 
 
@@ -239,7 +244,7 @@ def parse_tasks(text: str) -> list[Task]:
     return tasks
 
 
-def parse_agenda(path: str | Path) -> tuple[dict, list[Task]]:
+def parse_agenda(path: str | Path) -> tuple[Frontmatter, list[Task]]:
     text = Path(path).read_text(encoding="utf-8")
     return parse_frontmatter(text), parse_tasks(text)
 
@@ -247,7 +252,7 @@ def parse_agenda(path: str | Path) -> tuple[dict, list[Task]]:
 # --- Recurrence engine -------------------------------------------------------
 
 
-def parse_schedule(schedule: str) -> tuple[str, object]:
+def parse_schedule(schedule: str) -> tuple[str, int | list[int] | None]:
     """Validate + normalize a schedule string. Raises ValueError if malformed.
 
     Returns (kind, param):
@@ -271,7 +276,7 @@ def parse_schedule(schedule: str) -> tuple[str, object]:
         return ("every", int(rest))
     if s.startswith("weekdays:"):
         days = [d.strip()[:3] for d in s.split(":", 1)[1].split(",") if d.strip()]
-        wds = []
+        wds: list[int] = []
         for d in days:
             if d not in _WEEKDAYS:
                 raise ValueError(f"bad weekday in {schedule!r}")
@@ -284,13 +289,11 @@ def parse_schedule(schedule: str) -> tuple[str, object]:
 
 def _next_weekday(today: dt.date, weekdays: list[int]) -> dt.date:
     """Next date strictly after `today` whose weekday is in `weekdays`."""
-    best = None
-    for wd in weekdays:
-        ahead = (wd - today.weekday() + 7) % 7
-        ahead = ahead or 7  # strictly after today
-        cand = today + dt.timedelta(days=ahead)
-        best = cand if best is None or cand < best else best
-    return best
+    candidates = [
+        today + dt.timedelta(days=((wd - today.weekday() + 7) % 7) or 7)  # strictly after today
+        for wd in weekdays
+    ]
+    return min(candidates)
 
 
 def compute_next_due(
@@ -307,10 +310,10 @@ def compute_next_due(
         return None
     if kind == "nightly":
         return today + dt.timedelta(days=1)
-    if kind == "every":
-        return today + dt.timedelta(days=int(param))
-    if kind in ("weekly", "weekdays"):
-        return _next_weekday(today, list(param))
+    if kind == "every" and isinstance(param, int):
+        return today + dt.timedelta(days=param)
+    if kind in ("weekly", "weekdays") and isinstance(param, list):
+        return _next_weekday(today, param)
     return None
 
 
@@ -683,19 +686,31 @@ def append_inbox_items(
 _FROM_RE = re.compile(r"^\s*-?\s*\[from:([^\]]+)\]")
 
 
+class DeskStatus(TypedDict):
+    slug: str
+    enabled: bool
+    due: int
+    needs_clarification: int
+    blocked: int
+    done: int
+    inbox_total: int
+    inbox_routed: int
+    routed_sources: list[str]
+
+
 def desk_status(
     projects_dir: str | Path,
     today: dt.date,
     *,
     selected_projects: frozenset[str] | None = None,
-) -> list[dict]:
+) -> list[DeskStatus]:
     """Per-project ("desk") status snapshot for the CoS brief — one dict per
     `projects/*/AGENDA.md`. Pure / read-only. Each dict: slug, enabled, due (clear &
     due), needs_clarification, blocked, done, inbox_total (groomable lines),
     inbox_routed (lines tagged `[from:…]`), routed_sources (distinct senders).
     Sorted active-first, then by slug. Malformed agendas are skipped."""
     root = Path(projects_dir)
-    out: list[dict] = []
+    out: list[DeskStatus] = []
     if not root.is_dir():
         return out
     for agenda_path in sorted(root.glob("*/AGENDA.md")):
@@ -737,7 +752,7 @@ def desk_status(
     return out
 
 
-def format_desk_status(statuses: list[dict]) -> str:
+def format_desk_status(statuses: list[DeskStatus]) -> str:
     """Compact markdown for the CoS 'Agents / desks' section. One detail line per
     active desk (flagging due / needs-clarification / blocked / queued routed
     handoffs); dormant desks collapse into a single tail line."""
@@ -860,14 +875,23 @@ def scaffold_all(projects_dir: str | Path, today: dt.date | None = None) -> list
 # --- Runner bookkeeping (unacked-run stacking guard) -------------------------
 
 
-def load_runner_state() -> dict:
+class RunnerRecord(TypedDict, total=False):
+    unacked: int
+    last_run: str | None
+    acked_at: str
+
+
+RunnerState = dict[str, RunnerRecord]
+
+
+def load_runner_state() -> RunnerState:
     try:
         return json.loads(RUNNER_STATE_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 
 
-def save_runner_state(state: dict) -> None:
+def save_runner_state(state: RunnerState) -> None:
     RUNNER_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     RUNNER_STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
 

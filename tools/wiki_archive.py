@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from typing import cast
 
 from wiki import (
     WIKI_DIR,
-    _set_frontmatter_field,
+    Page,
+    set_frontmatter_field,
     build_page_indexes,
     list_content_pages,
     normalize_link_target,
@@ -33,7 +35,11 @@ def _load_registry() -> dict[str, dict[str, str]]:
     except json.JSONDecodeError:
         return {}
     archived = data.get("archived", {})
-    return archived if isinstance(archived, dict) else {}
+    if not isinstance(archived, dict):
+        return {}
+    # json.loads yields Unknown here; the registry is only written by _save_registry,
+    # which emits exactly this shape.
+    return cast("dict[str, dict[str, str]]", archived)
 
 
 def _save_registry(archived: dict[str, dict[str, str]]) -> None:
@@ -42,7 +48,7 @@ def _save_registry(archived: dict[str, dict[str, str]]) -> None:
     REGISTRY_PATH.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def _resolve_key(ref: str):
+def _resolve_key(ref: str) -> Page | None:
     """Resolve a page reference (e.g. concepts/foo) to its Page, or None."""
     target = normalize_link_target(ref)
     pages = list_content_pages()
@@ -54,11 +60,11 @@ def _resolve_key(ref: str):
     return None
 
 
-def _set_status(page, status: str) -> None:
+def _set_status(page: Page, status: str) -> None:
     today = dt.date.today().isoformat()
     text = page.path.read_text(encoding="utf-8")
-    text = _set_frontmatter_field(text, "status", status)
-    text = _set_frontmatter_field(text, "updated", today)
+    text = set_frontmatter_field(text, "status", status)
+    text = set_frontmatter_field(text, "updated", today)
     page.path.write_text(text, encoding="utf-8")
 
 
@@ -103,7 +109,7 @@ def list_archived(as_json: bool) -> int:
         for page in list_content_pages()
         if page.is_archived
     }
-    rows = []
+    rows: list[dict[str, str | bool]] = []
     for key in sorted(set(registry) | on_disk):
         entry = registry.get(key, {})
         rows.append(
