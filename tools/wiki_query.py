@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 import re
 from collections import defaultdict
+from collections.abc import Sequence
+from typing import TypedDict
 
 from wiki import (
     Page,
@@ -47,7 +49,27 @@ COVERAGE_SKIP_CATEGORIES = {"system", "root", "entities", "inventory", "reports"
 COVERAGE_RELATIVE_CATEGORIES = {"concepts", "topics"}
 
 
-def _page_metrics(page, inbound: dict[str, int]) -> dict:
+class PageMetrics(TypedDict):
+    path: str
+    category: str
+    title: str
+    words: int
+    inbound: int
+    outbound: int
+    concept_count: int
+
+
+class CoverageRow(PageMetrics, total=False):
+    # Only the absolute-floor path sets these; the relative fallback returns bare metrics.
+    sparse_topic: bool
+    shallow: bool
+    underlinked: bool
+    isolated: bool
+    score: int
+    origin: str
+
+
+def _page_metrics(page: Page, inbound: dict[str, int]) -> CoverageRow:
     """Per-page weakness metrics shared by both ranking paths."""
     key = page.rel.with_suffix("").as_posix()
     word_count = _body_word_count(page.body)
@@ -71,7 +93,9 @@ def _page_metrics(page, inbound: dict[str, int]) -> dict:
     }
 
 
-def rank_coverage(pages, inbound: dict[str, int], limit: int) -> tuple[list[dict], str]:
+def rank_coverage(
+    pages: Sequence[Page], inbound: dict[str, int], limit: int
+) -> tuple[list[CoverageRow], str]:
     """Rank coverage targets, returning ``(rows, mode)``.
 
     ``mode`` is ``"absolute"`` when at least one page trips an absolute floor
@@ -84,7 +108,7 @@ def rank_coverage(pages, inbound: dict[str, int], limit: int) -> tuple[list[dict
     Pure: no I/O, deterministic ordering. The CLI printer and the test suite
     both call this so they rank identically.
     """
-    rows: list[dict] = []
+    rows: list[CoverageRow] = []
     for page in pages:
         if page.category in COVERAGE_SKIP_CATEGORIES:
             continue
@@ -122,18 +146,18 @@ def rank_coverage(pages, inbound: dict[str, int], limit: int) -> tuple[list[dict
                 "underlinked": underlinked,
                 "isolated": isolated,
                 "score": score,
-                "origin": page._scalar("origin") if page.category == "sources" else "",
+                "origin": page.scalar("origin") if page.category == "sources" else "",
             }
         )
 
     if rows:
-        rows.sort(key=lambda row: (-row["score"], row["path"]))
+        rows.sort(key=lambda row: (-row.get("score", 0), row["path"]))
         return (rows[:limit] if limit > 0 else rows), "absolute"
 
     # Relative fallback: no page is starved by the absolute floors, but the
     # enhancer still needs targets. Rank the weakest concepts/topics so the
     # loop never silently degrades to a semantically blind wc -l ranking.
-    weak: list[dict] = []
+    weak: list[CoverageRow] = []
     for page in pages:
         if page.category not in COVERAGE_RELATIVE_CATEGORIES:
             continue
@@ -201,18 +225,18 @@ def coverage(as_json: bool, limit: int) -> int:
         f"{'score':>5}  {'words':>5}  {'in':>3}  {'out':>3}  flags                    path"
     )
     for row in top:
-        flags = []
-        if row["shallow"]:
+        flags: list[str] = []
+        if row.get("shallow"):
             flags.append("shallow")
-        if row["underlinked"]:
+        if row.get("underlinked"):
             flags.append("underlinked")
-        if row["isolated"]:
+        if row.get("isolated"):
             flags.append("isolated")
-        if row["sparse_topic"]:
+        if row.get("sparse_topic"):
             flags.append(f"sparse-topic({row['concept_count']})")
         flag_str = ",".join(flags)
         print(
-            f"{row['score']:>5}  {row['words']:>5}  {row['inbound']:>3}  "
+            f"{row.get('score', 0):>5}  {row['words']:>5}  {row['inbound']:>3}  "
             f"{row['outbound']:>3}  {flag_str:<24} {row['path']}"
         )
     return 0

@@ -64,7 +64,7 @@ def filler(words: int) -> str:
     return " ".join(["lorem"] * words)
 
 
-def rank_for(root: Path, limit: int = 25) -> tuple[list[dict], str]:
+def rank_for(root: Path, limit: int = 25) -> tuple[list[wiki_query.CoverageRow], str]:
     """Point the tooling at `root` and run the pure ranking helper."""
     wiki.WIKI_DIR = root
     pages = wiki.list_content_pages()
@@ -106,9 +106,9 @@ def test_absolute_path() -> None:
             str(paths),
         )
         stub = rows[0]
-        check("stub flagged shallow", stub["shallow"] is True)
-        check("stub flagged underlinked", stub["underlinked"] is True)
-        check("flagged rows carry a score", stub["score"] > 0, str(stub))
+        check("stub flagged shallow", stub.get("shallow") is True)
+        check("stub flagged underlinked", stub.get("underlinked") is True)
+        check("flagged rows carry a score", stub.get("score", 0) > 0, str(stub))
 
 
 def test_relative_fallback() -> None:
