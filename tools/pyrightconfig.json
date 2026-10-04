@@ -3,5 +3,6 @@
   "exclude": ["**/__pycache__"],
   "pythonVersion": "3.11",
   "extraPaths": [".", "schedule", "runtime", "scripts"],
-  "typeCheckingMode": "strict"
+  "typeCheckingMode": "all",
+  "baselineFile": "typing-baseline.json"
 }
