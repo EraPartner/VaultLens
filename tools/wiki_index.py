@@ -2,7 +2,7 @@
 """CLI-renderable derived indexes for the wiki.
 
 Obsidian's Dataview renders `wiki/index.md` only inside the app. Agents running
-headless in the devcontainer can't see those tables. This module generates plain
+headless without Obsidian can't see those tables. This module generates plain
 markdown `_index.md` files (one per category + a root summary) that are readable
 anywhere — terminal, GitHub, any markdown viewer — and rebuilt on demand.
 
@@ -122,10 +122,16 @@ def build_root_index(grouped: dict[str, list[Page]], today: str) -> str:
     ]
     for category in sorted(grouped):
         count = len(grouped[category])
-        lines.append(f"| {category} | {count} | [{category}/{INDEX_NAME}]({category}/{INDEX_NAME}) |")
+        lines.append(
+            f"| {category} | {count} | [{category}/{INDEX_NAME}]({category}/{INDEX_NAME}) |"
+        )
     lines.append("")
     if confidences:
-        dist = ", ".join(f"{k}: {confidences[k]}" for k in ("high", "medium", "low") if confidences.get(k))
+        dist = ", ".join(
+            f"{k}: {confidences[k]}"
+            for k in ("high", "medium", "low")
+            if confidences.get(k)
+        )
         lines += ["## Confidence distribution", "", dist, ""]
     return "\n".join(lines)
 
@@ -167,13 +173,19 @@ def rebuild_indexes() -> int:
     written = 0
     for category, cat_pages in grouped.items():
         index_path = WIKI_DIR / category / INDEX_NAME
-        index_path.write_text(build_category_index(category, cat_pages, today), encoding="utf-8")
+        index_path.write_text(
+            build_category_index(category, cat_pages, today), encoding="utf-8"
+        )
         written += 1
 
-    (WIKI_DIR / INDEX_NAME).write_text(build_root_index(grouped, today), encoding="utf-8")
+    (WIKI_DIR / INDEX_NAME).write_text(
+        build_root_index(grouped, today), encoding="utf-8"
+    )
     written += 1
 
-    print(f"Rebuilt {written} index files ({sum(len(v) for v in grouped.values())} pages).")
+    print(
+        f"Rebuilt {written} index files ({sum(len(v) for v in grouped.values())} pages)."
+    )
     return 0
 
 
