@@ -104,11 +104,11 @@ jobs:
           exit "$rc"
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Typing — strict mypy + ruff ANN ratchet. Files not in tools/typing-debt.txt must
-  # pass; the debt list may only shrink. mypy is a dev-only tool (pinned here).
+  # Typing — basedpyright strict against tools/typing-baseline.json (new errors fail;
+  # shrink the baseline as files are fixed). Dev-only tool, pinned here. ruff ANN runs in Lint.
   # ─────────────────────────────────────────────────────────────────────────────
   typing:
-    name: Typing (mypy strict)
+    name: Typing (basedpyright)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -122,10 +122,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install type tools (pinned)
-        run: pip install mypy==1.20.2 ruff==0.15.17
+        run: pip install basedpyright==1.40.2
 
-      - name: Typing ratchet
-        run: python tools/scripts/typing_gate.py
+      - name: basedpyright (strict, baselined)
+        run: basedpyright --project tools/pyrightconfig.json
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Quality Gate — all checks must pass. Single fan-in before CI Complete.
