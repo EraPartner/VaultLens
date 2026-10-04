@@ -62,27 +62,27 @@ class Page:
     text: str
     links: list[str]
 
-    def _scalar(self, key: str) -> str:
+    def scalar(self, key: str) -> str:
         value = self.frontmatter.get(key, "")
         return value if isinstance(value, str) else ""
 
     @property
     def title(self) -> str:
-        title = self._scalar("title").strip()
+        title = self.scalar("title").strip()
         if title:
             return title
         return slug_to_title(self.rel.stem)
 
     @property
     def summary(self) -> str:
-        summary = self._scalar("summary").strip()
+        summary = self.scalar("summary").strip()
         if summary:
             return summary
         return first_paragraph(self.body)
 
     @property
     def updated(self) -> str:
-        return self._scalar("updated")
+        return self.scalar("updated")
 
     @property
     def tags(self) -> list[str]:
@@ -90,7 +90,7 @@ class Page:
 
     @property
     def domain(self) -> str:
-        return self._scalar("domain").strip()
+        return self.scalar("domain").strip()
 
     @property
     def category(self) -> str:
@@ -100,7 +100,7 @@ class Page:
 
     @property
     def status(self) -> str:
-        return self._scalar("status").strip().lower()
+        return self.scalar("status").strip().lower()
 
     @property
     def is_archived(self) -> bool:
@@ -109,12 +109,12 @@ class Page:
     @property
     def confidence(self) -> str:
         """Trust signal: high|medium|low (empty when unset). Lowercased."""
-        return self._scalar("confidence").strip().lower()
+        return self.scalar("confidence").strip().lower()
 
     @property
     def volatility(self) -> str:
         """Refresh cadence: hot|warm|cold (empty when unset). Lowercased."""
-        return self._scalar("volatility").strip().lower()
+        return self.scalar("volatility").strip().lower()
 
 
 @dataclass
@@ -125,23 +125,23 @@ class Project:
     frontmatter: dict[str, str | list[str]]
     body: str
 
-    def _scalar(self, key: str) -> str:
+    def scalar(self, key: str) -> str:
         value = self.frontmatter.get(key, "")
         return value if isinstance(value, str) else ""
 
     @property
     def title(self) -> str:
-        title = self._scalar("title").strip()
+        title = self.scalar("title").strip()
         return title or slug_to_title(self.slug)
 
     @property
     def summary(self) -> str:
-        summary = self._scalar("summary").strip()
+        summary = self.scalar("summary").strip()
         return summary or first_paragraph(self.body)
 
     @property
     def status(self) -> str:
-        return self._scalar("status").strip().lower()
+        return self.scalar("status").strip().lower()
 
     @property
     def is_frozen(self) -> bool:
@@ -149,7 +149,7 @@ class Project:
 
     @property
     def domain(self) -> str:
-        return self._scalar("domain").strip()
+        return self.scalar("domain").strip()
 
     @property
     def tags(self) -> list[str]:
@@ -260,7 +260,7 @@ INLINE_CODE_RE = re.compile(r"`[^`]*`")
 
 
 def extract_wikilinks(text: str) -> list[str]:
-    result = []
+    result: list[str] = []
     in_code = False
     for line in text.splitlines():
         if line.strip().startswith("```"):
@@ -396,7 +396,7 @@ def compute_inbound_links(
     return inbound, broken, ambiguous
 
 
-def _load_project(project_md: Path) -> Project:
+def load_project(project_md: Path) -> Project:
     text = project_md.read_text(encoding="utf-8")
     fm, body = parse_frontmatter(text)
     return Project(
@@ -413,7 +413,7 @@ def list_projects() -> list[Project]:
         return []
     projects: list[Project] = []
     for project_md in sorted(PROJECTS_DIR.glob("*/project.md")):
-        projects.append(_load_project(project_md))
+        projects.append(load_project(project_md))
     return projects
 
 
@@ -423,7 +423,7 @@ def _render_frontmatter_value(value: str | list[str]) -> str:
     return str(value)
 
 
-def _set_frontmatter_field(text: str, key: str, value: str | list[str]) -> str:
+def set_frontmatter_field(text: str, key: str, value: str | list[str]) -> str:
     """Update or append `key: value` inside the frontmatter block of `text`."""
     split = _split_frontmatter(text)
     if split is None:
@@ -442,6 +442,10 @@ def _set_frontmatter_field(text: str, key: str, value: str | list[str]) -> str:
     if not found:
         new_lines.append(f"{key}: {rendered}")
     return "---\n" + "\n".join(new_lines) + f"\n---\n{body}"
+
+
+# Alias kept so tests/test_wiki.py, which calls the old private name, keeps working.
+_set_frontmatter_field = set_frontmatter_field
 
 
 def generate_source_id(today: dt.date | None = None) -> str:

@@ -14,7 +14,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from wiki import WIKI_DIR, load_page
+from wiki import WIKI_DIR, Page, load_page
 
 INVENTORY_DIR = WIKI_DIR / "inventory"
 
@@ -60,7 +60,7 @@ sources: []
 """
 
 
-def _records() -> list:
+def _records() -> list[Page]:
     if not INVENTORY_DIR.exists():
         return []
     return [
@@ -70,12 +70,12 @@ def _records() -> list:
     ]
 
 
-def _kind_of(page) -> str:
+def _kind_of(page: Page) -> str:
     value = page.frontmatter.get("kind", "")
     return value if isinstance(value, str) else ""
 
 
-def _priority_of(page) -> str:
+def _priority_of(page: Page) -> str:
     value = page.frontmatter.get("priority", "")
     return value if isinstance(value, str) else ""
 

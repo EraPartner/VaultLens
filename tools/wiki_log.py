@@ -85,7 +85,7 @@ def append_log_entry(
     if sources:
         rows.append("- Sources: " + ", ".join(f"`{source}`" for source in sources))
     if pages:
-        rendered_pages = []
+        rendered_pages: list[str] = []
         for page in pages:
             cleaned = page.strip().removesuffix(".md")
             rendered_pages.append(f"[[{cleaned}]]")

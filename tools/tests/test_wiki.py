@@ -82,7 +82,7 @@ def use_wiki(root: Path) -> None:
     wiki_index.WIKI_DIR = root
 
 
-def report_for(root: Path, strict: bool = True) -> dict:
+def report_for(root: Path, strict: bool = True) -> wiki_lint.LintReport:
     use_wiki(root)
     return wiki_lint.build_report(wiki.list_content_pages(), strict=strict)
 
