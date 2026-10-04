@@ -261,10 +261,16 @@ class DispatcherTests(unittest.TestCase):
             mock.patch.object(process_control.subprocess, "Popen") as popen,
         ):
             process_control.launch_supervised(
-                ["public", "literal argument"], run=Path("/public/run"), cwd="/public"
+                ["public", "literal argument"],
+                run=Path("/public/run"),
+                cwd="/public",
+                env={},
             )
             popen.assert_called_once_with(
-                ["public", "literal argument"], start_new_session=True, cwd="/public"
+                ["public", "literal argument"],
+                start_new_session=True,
+                cwd="/public",
+                env={},
             )
 
     def test_macos_uses_audit_owner(self):
@@ -273,10 +279,18 @@ class DispatcherTests(unittest.TestCase):
             mock.patch.object(supervision, "AuditSessionProcess") as child,
         ):
             process_control.launch_supervised(
-                ["public"], run=Path("/public/run"), interactive=True, cwd="/public"
+                ["public"],
+                run=Path("/public/run"),
+                interactive=True,
+                cwd="/public",
+                env={},
             )
             child.assert_called_once_with(
-                ["public"], run=Path("/public/run"), interactive=True, cwd="/public"
+                ["public"],
+                run=Path("/public/run"),
+                interactive=True,
+                cwd="/public",
+                env={},
             )
 
     def test_audit_cleanup_never_falls_back_to_pid_group_signaling(self):

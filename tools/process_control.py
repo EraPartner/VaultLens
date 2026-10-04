@@ -8,7 +8,8 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import IO, Any, Protocol, TypeGuard
+from collections.abc import Mapping
+from typing import IO, Any, Protocol, Required, TypedDict, TypeGuard, Unpack
 
 
 class ProcessCleanupError(RuntimeError):
@@ -50,14 +51,22 @@ class OwnedProcess(SupervisedProcess, Protocol):
     def terminate_owned(self, grace: float = 2.0) -> None: ...
 
 
+class SupervisedOptions(TypedDict, total=False):
+    """Options forwarded verbatim to Popen or AuditSessionProcess."""
+
+    cwd: Required[str | os.PathLike[str]]
+    env: Required[Mapping[str, str]]
+    stdout: int | None
+    stderr: int | None
+    text: bool
+
+
 def launch_supervised(
     command: list[str],
     *,
     run: Path,
     interactive: bool = False,
-    # Any: options (cwd, env, stdout, stderr, text) are forwarded verbatim and each
-    # backend (Popen, AuditSessionProcess) validates them in its own typed signature.
-    **options: Any,  # noqa: ANN401
+    **options: Unpack[SupervisedOptions],
 ) -> SupervisedProcess:
     """Choose a kernel-backed lifetime owner without changing provider argv."""
     if sys.platform == "darwin":
