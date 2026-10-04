@@ -112,7 +112,7 @@ Scale checks to risk. CI runs lint, typing, compile, all suites and a secrets sc
 `CI Complete` gate.
 
 - Isolated edit: the targeted suite, `ruff check tools/` and the basedpyright command above.
-- Cross-module change: compileall, every suite, and `ruff check tools/`.
+- Cross-module change: compileall, every suite, `ruff check tools/` and basedpyright.
 - Agent launcher, access profile, runtime, scheduler, or context budgeting change: the full set
   above, plus `generate-adapters.py --check` and `context_evaluation.py --check`. Say which
   host-only checks (probe, native provider runs) were not run.
