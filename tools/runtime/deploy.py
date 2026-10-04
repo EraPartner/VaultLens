@@ -19,7 +19,14 @@ import stat
 import sys
 import tempfile
 import uuid
+from collections.abc import Generator
 from pathlib import Path
+from typing import Any, cast
+
+# Deployment plans, journals and manifests are JSON documents that round-trip through
+# files and are re-validated field by field (_validate_plan, _operator_apply_locked)
+# before use, so their values are typed Any at this boundary only.
+JsonObject = dict[str, Any]
 
 ROOT = Path(__file__).resolve().parents[2]
 SHELL_FILES = (
@@ -205,7 +212,7 @@ def _existing(path: Path) -> str | None:
     return _digest(path) if path.exists() else None
 
 
-def _entry(source: Path, target: str, destination: Path | None) -> dict:
+def _entry(source: Path, target: str, destination: Path | None) -> JsonObject:
     _no_alias(source, regular=True)
     source_hash = _digest(source)
     old_hash = _existing(_target(destination, target)) if destination else None
@@ -226,16 +233,21 @@ def _entry(source: Path, target: str, destination: Path | None) -> dict:
     }
 
 
-def _retirement_plan(manifest_path: Path, destination: Path) -> list[dict]:
+def _retirement_plan(manifest_path: Path, destination: Path) -> list[JsonObject]:
     manifest_path = _no_alias(manifest_path, regular=True)
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(manifest, dict) or not isinstance(manifest.get("records"), list):
+    loaded: object = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
         raise ValueError("Invalid source retirement manifest")
-    entries = []
-    for record in manifest["records"]:
-        if not isinstance(record, dict):
+    # isinstance narrows to dict[Unknown, Unknown]; JSON object keys are always str.
+    manifest = cast(JsonObject, loaded)
+    if not isinstance(manifest.get("records"), list):
+        raise ValueError("Invalid source retirement manifest")
+    entries: list[JsonObject] = []
+    for raw_record in manifest["records"]:
+        if not isinstance(raw_record, dict):
             raise ValueError("Retirement records must be objects")
-        target = record.get("path", "")
+        record = cast(JsonObject, raw_record)  # keys are str, as above
+        target: str = record.get("path", "")
         if record.get("action") != "retire" or not target.startswith(".devcontainer/"):
             continue
         if target not in RETIRE_FILES or any(
@@ -253,7 +265,7 @@ def _retirement_plan(manifest_path: Path, destination: Path) -> list[dict]:
                 "previous_sha256": _existing(_target(destination, target)),
             }
         )
-    if {entry["target"] for entry in entries} != RETIRE_FILES:
+    if {entry["target"] for entry in entries} != set(RETIRE_FILES):
         raise ValueError(
             "Retirement source manifest must cover the exact known container bundle"
         )
@@ -277,7 +289,7 @@ def plan_deployment(
     instruction_candidates: Path,
     adapter_candidates: Path,
     retirement_manifest: Path | None = None,
-) -> dict:
+) -> JsonObject:
     source, destination = _root(source), _root(destination)
     if (
         source == destination
@@ -321,8 +333,12 @@ def plan_deployment(
     }
 
 
-def _validate_plan(plan: dict) -> None:
-    if not isinstance(plan, dict) or plan.get("version") != 1:
+def _validate_plan(plan: JsonObject) -> None:
+    # The plan is parsed from a file the operator reviewed; re-check its shape at runtime.
+    if (
+        not isinstance(plan, dict)  # pyright: ignore[reportUnnecessaryIsInstance] -- runtime validation
+        or plan.get("version") != 1
+    ):
         raise ValueError("Unsupported deployment plan")
     if not isinstance(plan.get("files"), list) or not isinstance(
         plan.get("protected_candidates"), list
@@ -339,7 +355,7 @@ def _validate_plan(plan: dict) -> None:
         raise ValueError("Deployment files must match the explicit tools allowlist")
     if {
         entry.get("target") for entry in plan["protected_candidates"]
-    } != PROTECTED_TARGETS or len(plan["protected_candidates"]) != len(
+    } != set(PROTECTED_TARGETS) or len(plan["protected_candidates"]) != len(
         PROTECTED_TARGETS
     ):
         raise ValueError(
@@ -432,7 +448,7 @@ def _atomic_copy(source: Path, target: Path, *, expected: str) -> None:
         temporary_path.unlink(missing_ok=True)
 
 
-def _write_json(path: Path, data: dict) -> None:
+def _write_json(path: Path, data: JsonObject) -> None:
     _no_alias(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(
@@ -458,8 +474,10 @@ def _new_id() -> str:
     )
 
 
-def _replace_entries(entries: list[dict], snapshot: Path, journal: dict) -> None:
-    completed = []
+def _replace_entries(
+    entries: list[JsonObject], snapshot: Path, journal: JsonObject
+) -> None:
+    completed: list[JsonObject] = []
     try:
         for entry in entries:
             target = Path(entry["destination"])
@@ -476,7 +494,7 @@ def _replace_entries(entries: list[dict], snapshot: Path, journal: dict) -> None
             journal["applied"].append(entry["target"])
             _write_json(snapshot / "manifest.json", journal)
     except Exception as exc:
-        conflicts = []
+        conflicts: list[str] = []
         for entry in reversed(completed):
             target = Path(entry["destination"])
             current = _existing(target)
@@ -497,7 +515,7 @@ def _replace_entries(entries: list[dict], snapshot: Path, journal: dict) -> None
 
 
 @contextlib.contextmanager
-def _deployment_lock(destination: Path):
+def _deployment_lock(destination: Path) -> Generator[None, None, None]:
     lock_path = _no_alias(
         destination / "tools/runtime-state/deployments/.deployment.lock"
     )
@@ -514,7 +532,7 @@ def _deployment_lock(destination: Path):
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def apply_deployment(plan: dict) -> dict:
+def apply_deployment(plan: JsonObject) -> JsonObject:
     if os.environ.get("VAULTLENS_RUNTIME_MANIFEST"):
         raise ValueError("Deployment is an operator action outside agent runs")
     _validate_plan(plan)
@@ -523,7 +541,7 @@ def apply_deployment(plan: dict) -> dict:
         return _apply_validated(plan)
 
 
-def _apply_validated(plan: dict) -> dict:
+def _apply_validated(plan: JsonObject) -> JsonObject:
     destination = Path(plan["destination"])
     deployment_id = _new_id()
     snapshot = _no_alias(
@@ -532,7 +550,7 @@ def _apply_validated(plan: dict) -> dict:
     migration = _no_alias(destination / "tools/runtime/migration" / deployment_id)
     snapshot.mkdir(parents=True, mode=0o700)
     migration.mkdir(parents=True, mode=0o700)
-    journal = {
+    journal: JsonObject = {
         **plan,
         "deployment_id": deployment_id,
         "status": "applying",
@@ -540,8 +558,8 @@ def _apply_validated(plan: dict) -> dict:
         "migration": str(migration),
     }
     _write_json(snapshot / "manifest.json", journal)
-    staged = []
-    retirement = []
+    staged: list[JsonObject] = []
+    retirement: list[JsonObject] = []
     try:
         for index, entry in enumerate(plan["protected_candidates"]):
             relative = f"candidates/{index:02d}-{Path(entry['target']).name}.candidate"
@@ -616,7 +634,7 @@ def operator_apply(
     *,
     fish_functions: Path | None = None,
     retire_containers: bool = False,
-) -> dict:
+) -> JsonObject:
     """Manually install reviewed candidates; never called by the agent runtime."""
     if os.environ.get("VAULTLENS_RUNTIME_MANIFEST"):
         raise ValueError("Protected migration is an operator action outside agent runs")
@@ -645,11 +663,13 @@ def _operator_apply_locked(
     *,
     fish_functions: Path | None,
     retire_containers: bool,
-) -> dict:
+) -> JsonObject:
     manifest_path = _no_alias(migration / "manifest.json", regular=True)
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(manifest, dict):
+    loaded: object = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
         raise ValueError("A protected migration manifest must be an object")
+    # isinstance narrows to dict[Unknown, Unknown]; JSON object keys are always str.
+    manifest = cast(JsonObject, loaded)
     if (
         manifest.get("version") != 1
         or manifest.get("destination") != str(destination)
@@ -659,12 +679,12 @@ def _operator_apply_locked(
     pending = manifest.get("protected_candidates", [])
     if (
         len(pending) != len(PROTECTED_TARGETS)
-        or {entry.get("target") for entry in pending} != PROTECTED_TARGETS
+        or {entry.get("target") for entry in pending} != set(PROTECTED_TARGETS)
     ):
         raise ValueError(
             "Protected migration must match the exact instruction and adapter allowlist"
         )
-    entries = []
+    entries: list[JsonObject] = []
     for index, entry in enumerate(pending):
         expected_staged = (
             f"candidates/{index:02d}-{Path(entry['target']).name}.candidate"
@@ -750,7 +770,7 @@ def _operator_apply_locked(
         destination / "tools/runtime-state/deployments" / (_new_id() + "-operator")
     )
     snapshot.mkdir(parents=True, mode=0o700)
-    journal = {
+    journal: JsonObject = {
         "version": 1,
         "migration": str(migration),
         "status": "applying",
