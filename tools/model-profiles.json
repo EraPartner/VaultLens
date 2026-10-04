@@ -1,0 +1,10 @@
+{
+  "claude": {
+    "standard": "sonnet",
+    "deep": "opus"
+  },
+  "codex": {
+    "standard": "gpt-6-luna",
+    "deep": "gpt-6.1-sol"
+  }
+}
