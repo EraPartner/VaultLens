@@ -221,11 +221,11 @@ def _gather_cos_context(mode: str, project_filter: str | None) -> str:
     if budget:
         if str(TOOLS_DIR) not in sys.path:
             sys.path.insert(0, str(TOOLS_DIR))
-        from context_budget import gather_context
+        from context_budget import ReviewEntry, gather_context
 
         import json
 
-        review = (
+        review: list[ReviewEntry] = (
             json.loads(Path(os.environ["VAULTLENS_RUNTIME_MANIFEST"]).read_text()).get(
                 "review_queue", []
             )
