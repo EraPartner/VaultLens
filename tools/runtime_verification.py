@@ -19,10 +19,11 @@ import stat
 import subprocess
 import sys
 import uuid
-from collections.abc import Iterable
+from collections.abc import Generator, Iterable, Iterator
 from pathlib import Path
+from typing import cast
 
-from local_access import FORBIDDEN_DIRS, SECRET_NAMES
+from local_access import FORBIDDEN_DIRS, SECRET_NAMES, JsonObject
 from runtime_probe_checks import expected_checks as canonical_probe_checks
 
 RECEIPT_VERSION = 1
@@ -62,6 +63,29 @@ RUNTIME_PATH = os.pathsep.join(
 )
 
 
+def _mapping(value: object) -> JsonObject | None:
+    """Return a parsed JSON object, or None for any other value."""
+    if not isinstance(value, dict):
+        return None
+    # JSON object keys are strings; isinstance only narrows to dict[Unknown, Unknown].
+    return cast(JsonObject, value)
+
+
+def _items(value: object) -> list[object] | None:
+    """Return a parsed JSON array's items, or None for any other value."""
+    if not isinstance(value, list):
+        return None
+    # isinstance narrows to list[Unknown]; callers validate each item.
+    return cast(list[object], value)
+
+
+def _reviewed_version(version: object) -> str:
+    """Runtime guard for callers outside the type checker's reach."""
+    if not isinstance(version, str) or not version:
+        raise ValueError("Verification requires the reviewed runtime version")
+    return version
+
+
 def _root(root: Path) -> Path:
     try:
         root = Path(root).resolve(strict=True)
@@ -73,7 +97,7 @@ def _root(root: Path) -> Path:
 
 
 @contextlib.contextmanager
-def _directory(path: Path):
+def _directory(path: Path) -> Generator[int, None, None]:
     """Open each component without following directory aliases."""
     if not path.is_absolute():
         raise ValueError("Runtime verification paths must be absolute")
@@ -95,7 +119,7 @@ def _directory(path: Path):
 @contextlib.contextmanager
 def _file(
     path: Path, maximum: int, *, private: bool = False, parent_fd: int | None = None
-):
+) -> Generator[int, None, None]:
     parent_context = (
         _directory(path.parent)
         if parent_fd is None
@@ -142,7 +166,7 @@ def _file(
         os.close(descriptor)
 
 
-def _blocks(descriptor: int, maximum: int):
+def _blocks(descriptor: int, maximum: int) -> Iterator[bytes]:
     total = 0
     while block := os.read(descriptor, min(64 * 1024, maximum + 1 - total)):
         total += len(block)
@@ -172,13 +196,13 @@ def _private_name(path: Path) -> bool:
     )
 
 
-def _runtime_tree(root: Path) -> dict:
+def _runtime_tree(root: Path) -> JsonObject:
     tree = root / "tools/runtime-node"
     digest = hashlib.sha256()
     entries = 0
     total = 0
 
-    def visit(directory: Path, depth: int = 0):
+    def visit(directory: Path, depth: int = 0) -> None:
         nonlocal entries, total
         if depth > 64:
             raise ValueError("Runtime artifact tree exceeds its depth limit")
@@ -192,7 +216,7 @@ def _runtime_tree(root: Path) -> dict:
                 if entries > MAX_TREE_ENTRIES:
                     raise ValueError("Runtime artifact tree exceeds its entry limit")
                 info = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-                record = {
+                record: JsonObject = {
                     "path": relative.as_posix(),
                     "mode": stat.S_IMODE(info.st_mode),
                 }
@@ -240,7 +264,7 @@ def _runtime_tree(root: Path) -> dict:
     return {"sha256": digest.hexdigest(), "entries": entries, "bytes": total}
 
 
-def _executable(path: Path, version_args: tuple[str, ...]) -> dict:
+def _executable(path: Path, version_args: tuple[str, ...]) -> JsonObject:
     path = path.resolve(strict=True)
     if _private_name(path) or not os.access(path, os.X_OK):
         raise ValueError("Runtime dependency must be an executable public file")
@@ -266,19 +290,20 @@ def _find(name: str) -> Path:
     return Path(executable)
 
 
-def _fingerprint_runtime(root: Path, version: str) -> dict:
+def _fingerprint_runtime(root: Path, version: str) -> JsonObject:
     """Compute current public evidence; tests mock this hook in isolated roots."""
     package = (
         root
         / "tools/runtime-node/node_modules/@anthropic-ai/sandbox-runtime/package.json"
     )
     try:
-        installed = json.loads(_bytes(package, MAX_SOURCE_BYTES))
+        installed: object = json.loads(_bytes(package, MAX_SOURCE_BYTES))
     except (json.JSONDecodeError, UnicodeError) as exc:
         raise ValueError("Installed runtime package metadata is invalid") from exc
-    if not isinstance(installed, dict) or installed.get("version") != version:
+    package_metadata = _mapping(installed)
+    if package_metadata is None or package_metadata.get("version") != version:
         raise ValueError("Installed runtime version differs from the reviewed version")
-    sources = {
+    sources: dict[str, str | None] = {
         relative: _hash(root / relative, MAX_SOURCE_BYTES)
         for relative in PUBLIC_SOURCES
     }
@@ -287,7 +312,7 @@ def _fingerprint_runtime(root: Path, version: str) -> dict:
         sources["tools/access.local.json"] = _hash(local, MAX_SOURCE_BYTES)
     except FileNotFoundError:
         sources["tools/access.local.json"] = None
-    helpers = {}
+    helpers: dict[str, JsonObject] = {}
     if platform.system() == "Linux":
         for name, arguments in (
             ("bwrap", ("--version",)),
@@ -315,14 +340,15 @@ def _fingerprint_runtime(root: Path, version: str) -> dict:
     }
 
 
-def fingerprint_runtime(root: Path, version: str) -> dict:
+def fingerprint_runtime(root: Path, version: str) -> JsonObject:
     """Capture public evidence before the real probe, without creating a receipt."""
-    if not isinstance(version, str) or not version:
-        raise ValueError("Verification requires the reviewed runtime version")
+    _reviewed_version(version)
     root = _root(root)
     try:
-        fingerprint = _fingerprint_runtime(root, version)
-        if not isinstance(fingerprint, dict) or not fingerprint:
+        # Tests mock the hook, so keep the runtime shape check below.
+        captured: object = _fingerprint_runtime(root, version)
+        fingerprint = _mapping(captured)
+        if not fingerprint:
             raise ValueError("Runtime verification fingerprint is empty")
         return fingerprint
     except (
@@ -335,8 +361,8 @@ def fingerprint_runtime(root: Path, version: str) -> dict:
         raise ValueError("Runtime verification fingerprint is unavailable") from exc
 
 
-def _duplicate_free(pairs):
-    result = {}
+def _duplicate_free(pairs: list[tuple[str, object]]) -> JsonObject:
+    result: JsonObject = {}
     for key, value in pairs:
         if key in result:
             raise ValueError("Verification receipt contains duplicate fields")
@@ -344,23 +370,22 @@ def _duplicate_free(pairs):
     return result
 
 
-def _checks(report: dict, expected_checks: Iterable[str]) -> list[str]:
+def _checks(report: object, expected_checks: Iterable[str]) -> list[str]:
     if isinstance(expected_checks, (str, bytes)):
         raise ValueError(
             "Verification requires an explicit collection of expected checks"
         )
     try:
-        expected = list(expected_checks)
+        requested: list[object] = list(expected_checks)
     except TypeError as exc:
         raise ValueError(
             "Verification requires an explicit collection of expected checks"
         ) from exc
+    expected = [name for name in requested if isinstance(name, str)]
     if (
-        not expected
-        or any(
-            not isinstance(name, str) or not name or len(name) > 256
-            for name in expected
-        )
+        not requested
+        or len(expected) != len(requested)
+        or any(not name or len(name) > 256 for name in expected)
         or len(set(expected)) != len(expected)
     ):
         raise ValueError("Verification requires nonempty unique expected check names")
@@ -368,22 +393,24 @@ def _checks(report: dict, expected_checks: Iterable[str]) -> list[str]:
         raise ValueError(
             "Verification requires the complete current canonical probe check set"
         )
-    if not isinstance(report, dict) or report.get("os_isolation_verified") is not True:
+    probe_report = _mapping(report)
+    if (
+        probe_report is None
+        or probe_report.get("os_isolation_verified") is not True
+    ):
         raise ValueError(
             "Only a complete verified operating system probe may record a receipt"
         )
-    items = report.get("checks")
-    if not isinstance(items, list) or not items:
+    items = _items(probe_report.get("checks"))
+    if not items:
         raise ValueError("Verification report has no checks")
-    delivered = []
+    delivered: list[str] = []
     for item in items:
-        if (
-            not isinstance(item, dict)
-            or item.get("status") != "passed"
-            or not isinstance(item.get("check"), str)
-        ):
+        entry = _mapping(item)
+        check = entry.get("check") if entry is not None else None
+        if entry is None or entry.get("status") != "passed" or not isinstance(check, str):
             raise ValueError("Every required operating system probe check must pass")
-        delivered.append(item["check"])
+        delivered.append(check)
     if len(delivered) != len(set(delivered)) or set(delivered) != set(expected):
         raise ValueError(
             "Verification report does not contain exactly the expected unique checks"
@@ -392,7 +419,7 @@ def _checks(report: dict, expected_checks: Iterable[str]) -> list[str]:
 
 
 @contextlib.contextmanager
-def _state(root: Path, *, create: bool = False):
+def _state(root: Path, *, create: bool = False) -> Generator[int, None, None]:
     with _directory(root / "tools") as tools:
         if create:
             try:
@@ -429,7 +456,7 @@ def _state(root: Path, *, create: bool = False):
         os.close(descriptor)
 
 
-def _receipt_info(descriptor: int):
+def _receipt_info(descriptor: int) -> tuple[int, int, int, int] | None:
     try:
         info = os.stat("verification.json", dir_fd=descriptor, follow_symlinks=False)
     except FileNotFoundError:
@@ -473,14 +500,13 @@ def _write_receipt(descriptor: int, payload: bytes) -> None:
 
 
 def record_verified_probe(
-    root: Path, version: str, report: dict, expected_checks: Iterable[str]
+    root: Path, version: str, report: JsonObject, expected_checks: Iterable[str]
 ) -> Path:
     """Record only complete real-probe evidence; no bootstrap or bypass exists."""
     checks = _checks(report, expected_checks)
-    if not isinstance(version, str) or not version:
-        raise ValueError("Verification requires the reviewed runtime version")
-    before = report.get("runtime_fingerprint")
-    if not isinstance(before, dict) or not before:
+    _reviewed_version(version)
+    before = _mapping(report.get("runtime_fingerprint"))
+    if not before:
         raise ValueError(
             "Verification requires the runtime fingerprint captured before the probe"
         )
@@ -572,12 +598,11 @@ def invalidate_verified_runtime(root: Path) -> None:
 
 def require_verified_runtime(root: Path, version: str) -> None:
     """Refuse missing, stale, malformed or quarantined evidence before launch."""
-    if not isinstance(version, str) or not version:
-        raise ValueError("Verification requires the reviewed runtime version")
+    _reviewed_version(version)
     root = _root(root)
     try:
         with _state(root) as descriptor:
-            data = json.loads(
+            parsed: object = json.loads(
                 _bytes(
                     root / "tools/runtime-state/verification.json",
                     MAX_RECEIPT_BYTES,
@@ -586,8 +611,9 @@ def require_verified_runtime(root: Path, version: str) -> None:
                 ),
                 object_pairs_hook=_duplicate_free,
             )
+            data = _mapping(parsed)
             if (
-                not isinstance(data, dict)
+                data is None
                 or set(data)
                 != {
                     "version",
