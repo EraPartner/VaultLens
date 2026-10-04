@@ -25,7 +25,10 @@ import threading
 import time
 import tty
 import uuid
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from types import FrameType
+from typing import IO, Any, TextIO, TypeGuard
 
 # Isolated Python guardian execution still imports only its trusted neighbour.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -33,6 +36,20 @@ from process_control import ProcessCleanupError  # noqa: E402
 
 MAX_PROCESSES = 16384
 MAX_DOCUMENT = 2 * 1024 * 1024
+
+# One kernel audit token: eight unsigned 32-bit words (pid at [5], audit session at [6]).
+Token = tuple[int, ...]
+# Parsed JSON state file. Any is the honest type of json.loads output; every field is
+# validated where it is used (_token, isinstance checks, ProcessCleanupError).
+Document = dict[str, Any]
+
+
+def _is_document(value: object) -> TypeGuard[Document]:
+    return isinstance(value, dict)
+
+
+def _is_sequence(value: object) -> TypeGuard[list[object] | tuple[object, ...]]:
+    return isinstance(value, (list, tuple))
 
 
 class AuditIdentityUnavailable(ProcessCleanupError):
@@ -50,7 +67,7 @@ def _private_directory(path: Path) -> None:
     path.chmod(0o700)
 
 
-def _read_document(path: Path) -> dict:
+def _read_document(path: Path) -> Document:
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(descriptor, "rb") as stream:
         metadata = os.fstat(stream.fileno())
@@ -63,12 +80,14 @@ def _read_document(path: Path) -> dict:
         ):
             raise ValueError("Process state must be a bounded private regular file")
         data = json.loads(stream.read(MAX_DOCUMENT + 1))
-    if not isinstance(data, dict) or data.get("version") != 1:
+    if not _is_document(data) or data.get("version") != 1:
         raise ValueError("Unrecognized process state schema")
     return data
 
 
-def _write_document(path: Path, data: dict, *, replace=False) -> None:
+def _write_document(
+    path: Path, data: Mapping[str, object], *, replace: bool = False
+) -> None:
     payload = json.dumps(data).encode()
     if len(payload) > MAX_DOCUMENT:
         raise ValueError("Process state exceeds the size limit")
@@ -104,22 +123,23 @@ def _write_document(path: Path, data: dict, *, replace=False) -> None:
             temporary.unlink()
 
 
-def _token(value) -> tuple[int, ...]:
-    if (
-        not isinstance(value, (list, tuple))
-        or len(value) != 8
-        or any(type(item) is not int or item < 0 or item > 0xFFFFFFFF for item in value)
-        or value[5] <= 1
-        or value[6] <= 0
-    ):
+def _token(value: object) -> Token:
+    if not _is_sequence(value):
         raise ValueError("Invalid process audit token")
-    return tuple(value)
+    words: list[int] = []
+    for item in value:
+        if type(item) is not int or item < 0 or item > 0xFFFFFFFF:
+            raise ValueError("Invalid process audit token")
+        words.append(item)
+    if len(words) != 8 or words[5] <= 1 or words[6] <= 0:
+        raise ValueError("Invalid process audit token")
+    return tuple(words)
 
 
 class AuditKernel:
     """All private macOS calls are bounded and fail closed when unavailable."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         if sys.platform != "darwin":
             raise ValueError("macOS audit supervision is unavailable on this platform")
         self.system = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
@@ -162,9 +182,9 @@ class AuditKernel:
             ) from exc
         self.signal_call.argtypes = [ctypes.c_void_p, ctypes.c_int]
         self.signal_call.restype = ctypes.c_int
-        self.foreign_lifetimes = {}
+        self.foreign_lifetimes: dict[int, int] = {}
 
-    def token(self, pid: int) -> tuple[int, ...] | None:
+    def token(self, pid: int) -> Token | None:
         port = ctypes.c_uint()
         result = self.system.task_name_for_pid(self.self_port, pid, ctypes.byref(port))
         if result in (3, 5):
@@ -248,7 +268,7 @@ class AuditKernel:
         audit-session replacement and job creation. A reused PID or a new task
         that refuses inspection is never excluded.
         """
-        values = {}
+        values: dict[int, int] = {}
         for pid in self.user_pids():
             identity = self.lifetime(pid)
             if identity is not None:
@@ -256,27 +276,28 @@ class AuditKernel:
         self.foreign_lifetimes = values
         return [[pid, identity] for pid, identity in values.items()]
 
-    def use_foreign_lifetimes(self, values) -> None:
-        if not isinstance(values, list) or len(values) > MAX_PROCESSES:
+    def use_foreign_lifetimes(self, values: object) -> None:
+        if not _is_sequence(values) or isinstance(values, tuple) or len(values) > MAX_PROCESSES:
             raise ValueError("Invalid pre-session process identities")
-        accepted = {}
+        accepted: dict[int, int] = {}
         for value in values:
+            if not _is_sequence(value) or isinstance(value, tuple) or len(value) != 2:
+                raise ValueError("Invalid pre-session process identity")
+            pid, identity = value
             if (
-                not isinstance(value, list)
-                or len(value) != 2
-                or type(value[0]) is not int
-                or value[0] <= 1
-                or type(value[1]) is not int
-                or value[1] <= 0
-                or value[1] > 0xFFFFFFFFFFFFFFFF
-                or value[0] in accepted
+                type(pid) is not int
+                or pid <= 1
+                or type(identity) is not int
+                or identity <= 0
+                or identity > 0xFFFFFFFFFFFFFFFF
+                or pid in accepted
             ):
                 raise ValueError("Invalid pre-session process identity")
-            accepted[value[0]] = value[1]
+            accepted[pid] = identity
         self.foreign_lifetimes = accepted
 
-    def members(self, session: int) -> list[tuple[int, ...]]:
-        members = []
+    def members(self, session: int) -> list[Token]:
+        members: list[Token] = []
         for pid in self.user_pids():
             try:
                 token = self.token(pid)
@@ -291,7 +312,7 @@ class AuditKernel:
                 members.append(token)
         return members
 
-    def signal(self, token, signum: int) -> bool:
+    def signal(self, token: object, signum: int) -> bool:
         actual = _token(token)
         value = (ctypes.c_uint * 8)(*actual)
         result = self.signal_call(ctypes.byref(value), signum)
@@ -306,7 +327,7 @@ class AuditKernel:
 
 def verify_process_records(directory: Path) -> None:
     _private_directory(directory)
-    kernel = None
+    kernel: AuditKernel | None = None
     for entry in directory.iterdir():
         if entry.name.startswith(".pending-"):
             raise ValueError(
@@ -322,7 +343,14 @@ def verify_process_records(directory: Path) -> None:
             )
 
 
-def _stop_members(kernel, session, guardian, *, grace=0.0, exclude_self=False):
+def _stop_members(
+    kernel: AuditKernel,
+    session: int,
+    guardian: Token,
+    *,
+    grace: float = 0.0,
+    exclude_self: bool = False,
+) -> None:
     """Freeze all remaining session members before a final identity-safe kill."""
     self_pid = os.getpid() if exclude_self else None
     if grace > 0:
@@ -379,7 +407,7 @@ def _stop_members(kernel, session, guardian, *, grace=0.0, exclude_self=False):
     )
 
 
-def _launchctl(arguments):
+def _launchctl(arguments: Sequence[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["/bin/launchctl", *arguments], capture_output=True, text=True, timeout=8
     )
@@ -390,51 +418,53 @@ class AuditSessionProcess:
 
     audit_session_owner = True
     handles_terminal = True
+    # Class-level default: terminate_owned also runs on instances built without __init__.
+    _cleanup_error: ProcessCleanupError | None = None
 
     def __init__(
         self,
-        command,
+        command: Sequence[str],
         *,
-        run,
-        cwd,
-        env,
-        stdout=None,
-        stderr=None,
-        text=False,
-        interactive=False,
-    ):
+        run: str | os.PathLike[str],
+        cwd: str | os.PathLike[str],
+        env: Mapping[str, str],
+        stdout: int | None = None,
+        stderr: int | None = None,
+        text: bool = False,
+        interactive: bool = False,
+    ) -> None:
         if (
             not isinstance(command, (list, tuple))
             or not command
-            or any(not isinstance(value, str) or "\0" in value for value in command)
+            or any(type(value) is not str or "\0" in value for value in command)
         ):
             raise ValueError("Supervised command must be an argument sequence")
         self.kernel = AuditKernel()
-        self.owner = self.kernel.token(os.getpid())
-        if self.owner is None:
+        owner = self.kernel.token(os.getpid())
+        if owner is None:
             raise ValueError("Cannot establish the trusted supervisor identity")
+        self.owner: Token = owner
         foreign_lifetimes = self.kernel.capture_foreign_lifetimes()
-        self.returncode = None
+        self.returncode: int | None = None
         self.pid = 0
-        self.guardian = None
-        self.session = None
+        self.guardian: Token | None = None
+        self.session: int | None = None
         self.started = False
         self.closed = False
-        self._cleanup_error = None
         self.interactive = interactive
         self.text = text
         self.run = Path(run)
         self.control = self.run / "supervision" / uuid.uuid4().hex
         _private_directory(self.control)
         self.service = f"gui/{os.getuid()}/com.vaultlens.runtime.{self.control.name}"
-        self._dummy = []
-        self._streams = []
-        self._forwarders = []
-        self._master = None
-        self._slave = None
-        self.stdin = None
-        self.stdout = None
-        self.stderr = None
+        self._dummy: list[int] = []
+        self._streams: list[IO[Any]] = []
+        self._forwarders: list[threading.Thread] = []
+        self._master: int | None = None
+        self._slave: int | None = None
+        self.stdin: IO[Any] | None = None
+        self.stdout: IO[Any] | None = None
+        self.stderr: IO[Any] | None = None
         manifest = json.loads((self.run / "scope.json").read_text())
         root = Path(manifest["root"])
         self.records = root / "tools/runtime-state/processes"
@@ -469,23 +499,25 @@ class AuditSessionProcess:
         }
         _write_document(self.record, self._record_data)
         try:
+            stdio: dict[str, object]
             if interactive:
                 self._master, self._slave = pty.openpty()
                 self._resize_terminal()
-                stdio = {"pty": os.ttyname(self._slave)}
-                stdio["pty_identity"] = _terminal_identity(self._slave)
-                metadata = Path(stdio["pty"]).lstat()
+                terminal_path = os.ttyname(self._slave)
+                terminal_identity = _terminal_identity(self._slave)
+                stdio = {"pty": terminal_path, "pty_identity": terminal_identity}
+                metadata = Path(terminal_path).lstat()
                 if (
                     not stat.S_ISCHR(metadata.st_mode)
                     or [metadata.st_dev, metadata.st_ino, metadata.st_rdev]
-                    != stdio["pty_identity"]
+                    != terminal_identity
                 ):
                     raise ValueError(
                         "Private terminal pathname does not match its descriptor"
                     )
                 # Keep this descriptor open through confirmed cleanup. The
                 # guard grants only our private terminal, never all host PTYs.
-                guarded_environment["VAULTLENS_PROCESS_GUARD_PTY"] = stdio["pty"]
+                guarded_environment["VAULTLENS_PROCESS_GUARD_PTY"] = terminal_path
             else:
                 output = self._pipe("stdout")
                 error = output if stderr == subprocess.STDOUT else self._pipe("stderr")
@@ -504,7 +536,7 @@ class AuditSessionProcess:
                     self.stderr = error
                 elif error is not output:
                     self._forward(error, sys.stderr)
-            request = {
+            request: dict[str, object] = {
                 "version": 1,
                 "owner": self.owner,
                 "foreign_lifetimes": foreign_lifetimes,
@@ -518,7 +550,7 @@ class AuditSessionProcess:
                 ),
             }
             _write_document(self.control / "request.json", request)
-            job = {
+            job: dict[str, object] = {
                 "Label": self.service.rsplit("/", 1)[-1],
                 "ProgramArguments": [
                     str(Path(sys.executable).resolve()),
@@ -586,18 +618,20 @@ class AuditSessionProcess:
                 self._close_io()
             raise
 
-    def _pipe(self, name):
+    def _pipe(self, name: str) -> IO[Any]:
         path = self.control / name
         os.mkfifo(path, 0o600)
         reader = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
         self._dummy.append(os.open(path, os.O_WRONLY | os.O_NONBLOCK | os.O_NOFOLLOW))
         os.set_blocking(reader, True)
-        stream = os.fdopen(reader, "r" if self.text else "rb")
+        stream: IO[Any] = (
+            os.fdopen(reader, "r") if self.text else os.fdopen(reader, "rb")
+        )
         self._streams.append(stream)
         return stream
 
-    def _forward(self, stream, destination):
-        def pump():
+    def _forward(self, stream: IO[Any], destination: TextIO) -> None:
+        def pump() -> None:
             try:
                 while value := stream.read(4096):
                     target = (
@@ -614,7 +648,7 @@ class AuditSessionProcess:
         thread.start()
         self._forwarders.append(thread)
 
-    def poll(self):
+    def poll(self) -> int | None:
         if self.returncode is None:
             try:
                 status = _read_document(self.control / "status.json")
@@ -644,7 +678,7 @@ class AuditSessionProcess:
             self.returncode = status["returncode"]
         return self.returncode
 
-    def wait(self, timeout=None):
+    def wait(self, timeout: float | None = None) -> int:
         deadline = time.monotonic() + timeout if timeout is not None else None
         saved = None
         resize_handler = None
@@ -654,28 +688,34 @@ class AuditSessionProcess:
                 tty.setraw(sys.stdin.fileno())
                 self._resize_terminal()
                 resize_handler = signal.signal(signal.SIGWINCH, self._resize_terminal)
-            while self.poll() is None:
-                if deadline is not None and time.monotonic() >= deadline:
+            while (code := self.poll()) is None:
+                if (
+                    timeout is not None
+                    and deadline is not None
+                    and time.monotonic() >= deadline
+                ):
                     raise subprocess.TimeoutExpired("supervised SRT", timeout)
                 if self.interactive:
                     self._terminal_tick()
                 else:
                     time.sleep(0.02)
-            return self.returncode
+            return code
         finally:
             if resize_handler is not None:
                 signal.signal(signal.SIGWINCH, resize_handler)
             if saved is not None:
                 termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, saved)
 
-    def _resize_terminal(self, _signum=None, _frame=None):
+    def _resize_terminal(
+        self, _signum: int | None = None, _frame: FrameType | None = None
+    ) -> None:
         if self._master is None or not sys.stdin.isatty():
             return
         size = fcntl.ioctl(sys.stdin.fileno(), termios.TIOCGWINSZ, b"\0" * 8)
         # TIOCSWINSZ notifies the private terminal's foreground process group.
         fcntl.ioctl(self._master, termios.TIOCSWINSZ, size)
 
-    def _terminal_output(self, data):
+    def _terminal_output(self, data: bytes) -> None:
         remaining = memoryview(data)
         while remaining:
             try:
@@ -686,7 +726,7 @@ class AuditSessionProcess:
                 raise OSError("Supervised terminal output closed")
             remaining = remaining[amount:]
 
-    def _drain_terminal(self):
+    def _drain_terminal(self) -> None:
         """Drain the finite final buffer after every sandbox writer is gone."""
         if self._master is None:
             return
@@ -710,8 +750,11 @@ class AuditSessionProcess:
             remaining -= len(data)
         raise OSError("Supervised terminal final output exceeded its drain limit")
 
-    def _terminal_tick(self):
-        descriptors = [self._master]
+    def _terminal_tick(self) -> None:
+        master = self._master
+        if master is None:
+            raise ValueError("Supervised terminal is closed")
+        descriptors = [master]
         if sys.stdin.isatty():
             descriptors.append(sys.stdin.fileno())
         readable, _, _ = select.select(descriptors, [], [], 0.02)
@@ -719,28 +762,32 @@ class AuditSessionProcess:
             try:
                 data = os.read(descriptor, 4096)
             except OSError as exc:
-                if descriptor == self._master and exc.errno == errno.EIO:
+                if descriptor == master and exc.errno == errno.EIO:
                     return
                 raise
             if not data:
                 continue
-            if descriptor == self._master:
+            if descriptor == master:
                 self._terminal_output(data)
             else:
-                os.write(self._master, data)
+                os.write(master, data)
 
-    def communicate(self, input=None, timeout=None):
+    def communicate(
+        self, input: object = None, timeout: float | None = None
+    ) -> tuple[Any, Any]:
         if input is not None:
             raise ValueError("Unattended sandbox input must be explicit argv")
-        collected = [None, None]
-        readers = []
+        # Any: pipe contents are str or bytes depending on the text flag, like Popen.
+        collected: list[Any] = [None, None]
+
+        def collect(index: int, stream: IO[Any]) -> None:
+            collected[index] = stream.read()
+
+        readers: list[threading.Thread] = []
         for index, stream in enumerate((self.stdout, self.stderr)):
             if stream is not None:
                 thread = threading.Thread(
-                    target=lambda i=index, value=stream: collected.__setitem__(
-                        i, value.read()
-                    ),
-                    daemon=True,
+                    target=collect, args=(index, stream), daemon=True
                 )
                 thread.start()
                 readers.append(thread)
@@ -752,9 +799,9 @@ class AuditSessionProcess:
                 raise ProcessCleanupError(
                     "Supervised output pipe did not close", group_id=self.pid
                 )
-        return tuple(collected)
+        return (collected[0], collected[1])
 
-    def _remove_record(self):
+    def _remove_record(self) -> None:
         try:
             data = _read_document(self.record)
         except FileNotFoundError:
@@ -765,7 +812,7 @@ class AuditSessionProcess:
             )
         self.record.unlink()
 
-    def _close_io(self):
+    def _close_io(self) -> None:
         for descriptor in self._dummy:
             with contextlib.suppress(OSError):
                 os.close(descriptor)
@@ -781,32 +828,33 @@ class AuditSessionProcess:
         for thread in self._forwarders:
             thread.join(timeout=2)
 
-    def terminate_owned(self, grace=2.0):
+    def terminate_owned(self, grace: float = 2.0) -> None:
         if self.closed:
             return
-        if getattr(self, "_cleanup_error", None) is not None:
+        if self._cleanup_error is not None:
             raise self._cleanup_error
-        if self.guardian is None:
+        guardian, session = self.guardian, self.session
+        if guardian is None or session is None:
             raise ProcessCleanupError("Audit-session ownership is missing")
         try:
-            if self.kernel.token(self.pid) != self.guardian:
+            if self.kernel.token(self.pid) != guardian:
                 raise ProcessCleanupError(
                     "Audit-session guardian identity was lost", group_id=self.pid
                 )
             _stop_members(
                 self.kernel,
-                self.session,
-                self.guardian,
+                session,
+                guardian,
                 grace=grace if self.returncode is None else 0,
             )
             # The live guardian anchors the session until every workload task is
             # gone. It cannot be recycled while the final membership check runs.
-            remaining = self.kernel.members(self.session)
-            if remaining != [self.guardian]:
+            remaining = self.kernel.members(session)
+            if remaining != [guardian]:
                 raise ProcessCleanupError(
                     "Process session retained an unknown member", group_id=self.pid
                 )
-            self.kernel.signal(self.guardian, signal.SIGKILL)
+            self.kernel.signal(guardian, signal.SIGKILL)
             result = _launchctl(["bootout", self.service])
             absent = _launchctl(["print", self.service])
             deadline = time.monotonic() + 2.0
@@ -834,7 +882,7 @@ class AuditSessionProcess:
             self._close_io()
 
 
-def _open_output(path: str):
+def _open_output(path: str) -> int:
     descriptor = os.open(path, os.O_WRONLY | os.O_NOFOLLOW)
     metadata = os.fstat(descriptor)
     if not stat.S_ISFIFO(metadata.st_mode) or metadata.st_uid != os.getuid():
@@ -875,27 +923,24 @@ def _guardian(request_path: Path) -> int:
         time.sleep(0.02)
     if _read_document(control / "start.json").get("start") is not True:
         raise ValueError("Supervisor did not approve its guardian identity")
-    descriptors = []
+    descriptors: list[int] = []
     stdio = request["stdio"]
+    terminal: int | None = None
+    output = error = -1
+
+    def terminal_child() -> None:
+        import fcntl
+
+        os.setsid()
+        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
     if "pty" in stdio:
-
-        def terminal_child():
-            import fcntl
-
-            os.setsid()
-            fcntl.ioctl(0, termios.TIOCSCTTY, 0)
-
         descriptor = os.open(stdio["pty"], os.O_RDWR | os.O_NOFOLLOW)
         if _terminal_identity(descriptor) != stdio.get("pty_identity"):
             os.close(descriptor)
             raise ValueError("Guardian terminal identity differs from the supervisor")
         descriptors.append(descriptor)
-        options = {
-            "stdin": descriptor,
-            "stdout": descriptor,
-            "stderr": descriptor,
-            "preexec_fn": terminal_child,
-        }
+        terminal = descriptor
     else:
         output = _open_output(stdio["stdout"])
         error = (
@@ -904,25 +949,36 @@ def _guardian(request_path: Path) -> int:
             else _open_output(stdio["stderr"])
         )
         descriptors.extend(set((output, error)))
-        options = {
-            "stdin": subprocess.DEVNULL,
-            "stdout": output,
-            "stderr": error,
-            "start_new_session": True,
-        }
-    child = None
+    child: subprocess.Popen[bytes] | None = None
     cancelled = False
 
-    def stopping(_signum, _frame):
+    def stopping(_signum: int, _frame: FrameType | None) -> None:
         nonlocal cancelled
         cancelled = True
 
     signal.signal(signal.SIGTERM, stopping)
     signal.signal(signal.SIGINT, stopping)
     try:
-        child = subprocess.Popen(
-            request["argv"], cwd=request["cwd"], env=request["env"], **options
-        )
+        if terminal is not None:
+            child = subprocess.Popen(
+                request["argv"],
+                cwd=request["cwd"],
+                env=request["env"],
+                stdin=terminal,
+                stdout=terminal,
+                stderr=terminal,
+                preexec_fn=terminal_child,
+            )
+        else:
+            child = subprocess.Popen(
+                request["argv"],
+                cwd=request["cwd"],
+                env=request["env"],
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=error,
+                start_new_session=True,
+            )
         while child.poll() is None:
             if kernel.token(owner[5]) != owner:
                 quarantine = Path(request["quarantine"])
