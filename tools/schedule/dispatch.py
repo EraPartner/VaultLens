@@ -238,7 +238,7 @@ def in_window(now: datetime, window: tuple[int, int]) -> bool:
 # Any: the ledger is persisted JSON whose shape load_ledger validates, and tests and
 # recovery code build and pass plain dicts. A TypedDict is deferred until those callers
 # are typed (D6).
-Ledger = dict[str, Any]
+Ledger = dict[str, Any]  # pyright: ignore[reportExplicitAny] - persisted JSON validated by load_ledger
 
 
 def load_ledger() -> Ledger:
@@ -828,8 +828,8 @@ def build_steps() -> list[Step]:
 
 class Gates:
     def __init__(self, log: Callable[[str], None], *, read_only: bool = False) -> None:
-        self.log = log
-        self.read_only = read_only
+        self.log: Callable[[str], None] = log
+        self.read_only: bool = read_only
         self._cache: dict[str, bool] = {}
 
     def get(self, name: str) -> bool:
@@ -939,7 +939,7 @@ def run_qmd(args: list[str], timeout: int) -> tuple[int, str]:
 
 
 def exec_brain_wiki(
-    args: list[str], acct: str, effort: str, timeout: int
+    args: list[str], _acct: str, effort: str, timeout: int
 ) -> tuple[int, str]:
     command = build_brain_wiki_args(args, effort)
     env = dict(os.environ)
@@ -1343,8 +1343,8 @@ _STALE_DAYS = {"daily": 2, "weekly": 9}
 
 
 def format_schedule_status(
-    jobs: dict[str, dict[str, Any]],
-    accounts: dict[str, dict[str, Any]],
+    jobs: dict[str, Ledger],
+    accounts: dict[str, Ledger],
     step_meta: list[tuple[str, str]], now: datetime
 ) -> str:
     """Render a compact scheduler-health summary as markdown. Pure / no I/O.
@@ -1823,7 +1823,7 @@ def keepawake_on(log: Callable[[str], None]) -> bool:
     return ok
 
 
-def keepawake_off(log: Callable[[str], None]) -> None:
+def keepawake_off(_log: Callable[[str], None]) -> None:
     _sudo_pmset(["-a", "disablesleep", "0"])
 
 

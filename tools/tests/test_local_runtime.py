@@ -5,6 +5,7 @@ import contextlib
 import dataclasses
 import json
 import os
+import pwd
 import shlex
 import signal
 import shutil
@@ -12,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import IO, Unpack
@@ -40,6 +42,12 @@ _verify_preflight = runtime._verify_preflight  # pyright: ignore[reportPrivateUs
 
 
 class RuntimeTests(unittest.TestCase):
+    root: Path
+    auth_home: Path
+    run_dir: Path
+    scope: access.RunScope
+    env: dict[str, str]
+
     def setUp(self) -> None:
         # These unit fixtures exercise preparation, not operating-system evidence.
         verification = mock.patch.object(runtime, "require_verified_runtime")
@@ -53,12 +61,13 @@ class RuntimeTests(unittest.TestCase):
             interactive: bool = False,
             **options: Unpack[SupervisedOptions],
         ) -> SupervisedProcess:
+            del run  # signature mirrors launch_supervised; the fixture never reads it
             # A public unit fixture must never bootstrap a real launchd job.
             if interactive:
-                return runtime.subprocess.Popen(
+                return subprocess.Popen(
                     command, start_new_session=False, process_group=0, **options
                 )
-            return runtime.subprocess.Popen(command, start_new_session=True, **options)
+            return subprocess.Popen(command, start_new_session=True, **options)
 
         supervisor = mock.patch.object(
             runtime, "launch_supervised", side_effect=synthetic_launch
@@ -72,7 +81,7 @@ class RuntimeTests(unittest.TestCase):
         self.addCleanup(auth_home.cleanup)
         self.auth_home = Path(auth_home.name).resolve()
         account = mock.patch.object(
-            runtime.pwd,
+            pwd,
             "getpwuid",
             return_value=mock.Mock(pw_dir=str(self.auth_home)),
         )
@@ -234,7 +243,7 @@ class RuntimeTests(unittest.TestCase):
             "/private/etc/codex/requirements.toml",
         )
         with (
-            mock.patch.object(runtime.sys, "platform", "darwin"),
+            mock.patch.object(sys, "platform", "darwin"),
             mock.patch.object(
                 runtime, "_absent_provider_config_reads", return_value=missing
             ),
@@ -249,7 +258,7 @@ class RuntimeTests(unittest.TestCase):
         self,
     ) -> None:
         with (
-            mock.patch.object(runtime.sys, "platform", "darwin"),
+            mock.patch.object(sys, "platform", "darwin"),
             mock.patch.dict(
                 os.environ,
                 {
@@ -276,7 +285,7 @@ class RuntimeTests(unittest.TestCase):
             mock.patch.object(runtime, "clean_environment") as environment,
             mock.patch.object(runtime, "_snapshot") as snapshot,
             mock.patch.object(access.RunScope, "document_paths") as documents,
-            mock.patch.object(runtime.subprocess, "Popen") as child,
+            mock.patch.object(subprocess, "Popen") as child,
         ):
             with self.assertRaisesRegex(ValueError, "runtime missing"):
                 _run(["public-workload"], scope=self.scope, cli=None)
@@ -300,7 +309,7 @@ class RuntimeTests(unittest.TestCase):
             mock.patch.object(runtime, "clean_environment") as environment,
             mock.patch.object(runtime, "_snapshot") as snapshot,
             mock.patch.object(runtime, "_transfer_auth") as authentication,
-            mock.patch.object(runtime.subprocess, "Popen") as execute,
+            mock.patch.object(subprocess, "Popen") as execute,
         ):
             with self.assertRaisesRegex(ValueError, "receipt missing"):
                 _run(["public-workload"], scope=self.scope, cli="codex")
@@ -436,8 +445,8 @@ class RuntimeTests(unittest.TestCase):
         link.parent.mkdir(parents=True)
         link.symlink_to(native)
         with (
-            mock.patch.object(runtime.shutil, "which", return_value=None),
-            mock.patch.object(runtime.Path, "home", return_value=home),
+            mock.patch.object(shutil, "which", return_value=None),
+            mock.patch.object(Path, "home", return_value=home),
         ):
             self.assertEqual(runtime.native_executable("claude"), native)
 
@@ -446,7 +455,7 @@ class RuntimeTests(unittest.TestCase):
         legacy.parent.mkdir(parents=True)
         legacy.write_text("PUBLIC_RETIRED_LAUNCHER_FIXTURE")
         legacy.chmod(0o700)
-        with mock.patch.object(runtime.shutil, "which", return_value=str(legacy)):
+        with mock.patch.object(shutil, "which", return_value=str(legacy)):
             with self.assertRaisesRegex(ValueError, "retired container launcher"):
                 runtime.native_executable("claude")
 
@@ -461,7 +470,7 @@ class RuntimeTests(unittest.TestCase):
         echo = io.StringIO()
         with (
             mock.patch.object(
-                runtime.subprocess, "Popen", return_value=child
+                subprocess, "Popen", return_value=child
             ) as execute,
             mock.patch.object(runtime, "terminate_group") as cleanup,
             contextlib.redirect_stdout(echo),
@@ -492,10 +501,10 @@ class RuntimeTests(unittest.TestCase):
             "Public stdout EOF unconfirmed", cleanup_unconfirmed=True
         )
         with (
-            mock.patch.object(runtime.subprocess, "Popen", return_value=child),
+            mock.patch.object(subprocess, "Popen", return_value=child),
             mock.patch.object(runtime, "terminate_group"),
         ):
-            with self.assertRaisesRegex(runtime.ProcessCleanupError, "EOF unconfirmed"):
+            with self.assertRaisesRegex(process_control.ProcessCleanupError, "EOF unconfirmed"):
                 _execute_prepared(
                     ["public-workload"],
                     Path("/public-runtime/srt"),
@@ -571,7 +580,7 @@ class RuntimeTests(unittest.TestCase):
             ):
                 with (
                     self.subTest(platform=platform),
-                    mock.patch.object(runtime.sys, "platform", platform),
+                    mock.patch.object(sys, "platform", platform),
                 ):
                     store = runtime.auth_store_path(vault, "codex")
                     self.assertTrue(store.is_relative_to(self.auth_home / relative))
@@ -604,7 +613,7 @@ class RuntimeTests(unittest.TestCase):
         support.mkdir(parents=True)
         library.chmod(0o755)
         support.chmod(0o755)
-        with mock.patch.object(runtime.sys, "platform", "darwin"):
+        with mock.patch.object(sys, "platform", "darwin"):
             store = _prepare_auth_store(self.root, "codex")
         self.assertEqual(stat.S_IMODE(library.stat().st_mode), 0o755)
         self.assertEqual(stat.S_IMODE(support.stat().st_mode), 0o755)
@@ -626,7 +635,7 @@ class RuntimeTests(unittest.TestCase):
                 outside.mkdir(mode=0o700)
                 with (
                     mock.patch.object(runtime, "_operator_home", return_value=home),
-                    mock.patch.object(runtime.sys, "platform", "darwin"),
+                    mock.patch.object(sys, "platform", "darwin"),
                 ):
                     store = runtime.auth_store_path(self.root, "codex")
                     selected = {
@@ -645,14 +654,14 @@ class RuntimeTests(unittest.TestCase):
         parent = self.auth_home / "Library"
         parent.mkdir(mode=0o700)
         parent.chmod(0o777)
-        with mock.patch.object(runtime.sys, "platform", "darwin"):
+        with mock.patch.object(sys, "platform", "darwin"):
             with self.assertRaisesRegex(ValueError, "writable by other accounts"):
                 _prepare_auth_store(self.root, "codex")
         self.assertEqual(stat.S_IMODE(parent.stat().st_mode), 0o777)
         parent.chmod(0o700)
         self.auth_home.chmod(0o777)
         try:
-            with mock.patch.object(runtime.sys, "platform", "darwin"):
+            with mock.patch.object(sys, "platform", "darwin"):
                 with self.assertRaisesRegex(ValueError, "Operator home.*writable"):
                     _prepare_auth_store(self.root, "codex")
         finally:
@@ -799,7 +808,7 @@ class RuntimeTests(unittest.TestCase):
             mock.patch.object(
                 runtime, "runtime_executable", return_value=Path("/public-runtime/srt")
             ),
-            mock.patch.object(runtime.shutil, "which", return_value=sys.executable),
+            mock.patch.object(shutil, "which", return_value=sys.executable),
         ):
             with runtime.prepared_run(self.scope, "codex", snapshot=False) as (
                 executable,
@@ -846,7 +855,7 @@ class RuntimeTests(unittest.TestCase):
             mock.patch.object(
                 runtime, "runtime_executable", return_value=Path("/public-runtime/srt")
             ),
-            mock.patch.object(runtime.shutil, "which", return_value=sys.executable),
+            mock.patch.object(shutil, "which", return_value=sys.executable),
         ):
             run = Path("/nonexistent-public-run")
             with self.assertRaisesRegex(RuntimeError, "public cancellation"):
@@ -987,7 +996,7 @@ class RuntimeTests(unittest.TestCase):
         child.communicate.return_value = ("", "")
         with (
             mock.patch.object(
-                runtime.subprocess, "Popen", return_value=child
+                subprocess, "Popen", return_value=child
             ) as execute,
             mock.patch.object(runtime, "terminate_group") as cleanup,
         ):
@@ -1019,7 +1028,7 @@ class RuntimeTests(unittest.TestCase):
         child.returncode = 1
         child.communicate.return_value = ("", "public confinement failure")
         with (
-            mock.patch.object(runtime.subprocess, "Popen", return_value=child),
+            mock.patch.object(subprocess, "Popen", return_value=child),
             mock.patch.object(runtime, "terminate_group"),
         ):
             with self.assertRaisesRegex(
@@ -1040,7 +1049,7 @@ class RuntimeTests(unittest.TestCase):
             sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)
         }
         with (
-            mock.patch.object(runtime.subprocess, "Popen", return_value=child),
+            mock.patch.object(subprocess, "Popen", return_value=child),
             mock.patch.object(runtime, "terminate_group") as cleanup,
         ):
             with self.assertRaisesRegex(ValueError, "preflight.*timed out"):
@@ -1073,9 +1082,9 @@ class RuntimeTests(unittest.TestCase):
                 side_effect=record_preflight,
             ),
             mock.patch.object(
-                runtime.subprocess, "Popen", side_effect=start
+                subprocess, "Popen", side_effect=start
             ) as execute,
-            mock.patch.object(runtime.signal, "signal"),
+            mock.patch.object(signal, "signal"),
             mock.patch.object(runtime, "terminate_group") as cleanup,
         ):
             self.assertEqual(
@@ -1107,7 +1116,7 @@ class RuntimeTests(unittest.TestCase):
                 "_verify_preflight",
                 side_effect=ValueError("public rejected preflight"),
             ),
-            mock.patch.object(runtime.subprocess, "Popen") as execute,
+            mock.patch.object(subprocess, "Popen") as execute,
         ):
             with self.assertRaisesRegex(ValueError, "public rejected preflight"):
                 _run(["public-workload"], scope=self.scope, cli=None)
@@ -1132,12 +1141,12 @@ class RuntimeTests(unittest.TestCase):
         with (
             mock.patch.object(runtime, "prepared_run", side_effect=self.prepared_any),
             mock.patch.object(runtime, "_verify_preflight"),
-            mock.patch.object(runtime.subprocess, "Popen", return_value=child),
-            mock.patch.object(runtime.signal, "signal", side_effect=install),
+            mock.patch.object(subprocess, "Popen", return_value=child),
+            mock.patch.object(signal, "signal", side_effect=install),
             mock.patch.object(runtime, "terminate_group") as cleanup,
         ):
             with self.assertRaisesRegex(
-                runtime.ProcessCleanupError, "Outer runtime interrupted"
+                process_control.ProcessCleanupError, "Outer runtime interrupted"
             ):
                 _run(["public-workload"], scope=self.scope, cli=None)
         cleanup.assert_called_once_with(child, grace=6.0)
@@ -1147,8 +1156,8 @@ class RuntimeTests(unittest.TestCase):
         child = mock.Mock(pid=12345)
         child.poll.return_value = 0
         with (
-            mock.patch.object(process_control.os, "killpg") as terminate,
-            mock.patch.object(process_control.time, "sleep") as pause,
+            mock.patch.object(os, "killpg") as terminate,
+            mock.patch.object(time, "sleep") as pause,
         ):
             process_control.terminate_group(child, grace=0.01)
         self.assertEqual(
@@ -1162,29 +1171,29 @@ class RuntimeTests(unittest.TestCase):
         child = mock.Mock(pid=12345)
         with (
             mock.patch.object(
-                process_control.os,
+                os,
                 "killpg",
                 side_effect=PermissionError("public denied signal"),
             ),
             mock.patch.object(
-                process_control.subprocess,
+                subprocess,
                 "run",
                 return_value=subprocess.CompletedProcess([], 0, "12345 S\n", ""),
             ),
         ):
-            with self.assertRaises(runtime.ProcessCleanupError):
+            with self.assertRaises(process_control.ProcessCleanupError):
                 process_control.signal_group(child, signal.SIGTERM)
         run = Path("/nonexistent-public-run")
         with mock.patch.object(
             runtime, "runtime_executable", return_value=Path("/public-runtime/srt")
         ):
-            with self.assertRaises(runtime.ProcessCleanupError):
+            with self.assertRaises(process_control.ProcessCleanupError):
                 with runtime.prepared_run(self.scope, None, snapshot=False) as (
                     _executable,
                     run,
                     _env,
                 ):
-                    raise runtime.ProcessCleanupError(
+                    raise process_control.ProcessCleanupError(
                         "public cancellation incomplete", group_id=12345
                     )
             self.assertTrue(run.exists())
@@ -1206,11 +1215,11 @@ class RuntimeTests(unittest.TestCase):
         child = mock.Mock(pid=23456)
         child.wait.return_value = 125
         with (
-            mock.patch.object(runtime.subprocess, "Popen", return_value=child),
-            mock.patch.object(runtime.signal, "signal"),
+            mock.patch.object(subprocess, "Popen", return_value=child),
+            mock.patch.object(signal, "signal"),
             mock.patch.object(runtime, "terminate_group") as cleanup,
         ):
-            with self.assertRaises(runtime.ProcessCleanupError) as failure:
+            with self.assertRaises(process_control.ProcessCleanupError) as failure:
                 _execute_prepared(
                     ["public-workload"],
                     Path("/public-runtime/srt"),
@@ -1246,10 +1255,10 @@ class RuntimeTests(unittest.TestCase):
                         wraps=provider_commands.build_provider_command,
                     ) as build,
                     mock.patch.object(
-                        runtime.subprocess, "Popen", return_value=child
+                        subprocess, "Popen", return_value=child
                     ) as execute,
-                    mock.patch.object(runtime.signal, "signal"),
-                    mock.patch.object(runtime.sys.stdin, "isatty", return_value=False),
+                    mock.patch.object(signal, "signal"),
+                    mock.patch.object(sys.stdin, "isatty", return_value=False),
                     mock.patch.object(runtime, "terminate_group") as cleanup,
                 ):
                     result = runtime.launch_interactive(
@@ -1305,10 +1314,10 @@ class RuntimeTests(unittest.TestCase):
             with self.subTest(flag=flag):
                 with (
                     mock.patch.object(
-                        runtime.shutil, "which", return_value="/public-native/agent"
+                        shutil, "which", return_value="/public-native/agent"
                     ),
                     mock.patch.object(runtime, "prepared_run") as prepare,
-                    mock.patch.object(runtime.subprocess, "Popen") as execute,
+                    mock.patch.object(subprocess, "Popen") as execute,
                 ):
                     with self.assertRaises(ValueError):
                         runtime.launch_interactive(self.root, "codex", [flag])

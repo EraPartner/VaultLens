@@ -22,12 +22,17 @@ from agent_capabilities import (  # noqa: E402
     profile_capabilities,
 )
 from agent_profiles import AGENT_FILES, load_role  # noqa: E402
-from _loader import load_module  # noqa: E402
+from _loader import LoadedModule, load_module  # noqa: E402
 
 IngestProvider = Callable[..., int]
 
 
 class ProviderRegressionTests(unittest.TestCase):
+    root: Path
+    roles: Path
+    agent: LoadedModule
+    generator: LoadedModule
+
     def setUp(self) -> None:
         fixture = tempfile.TemporaryDirectory(prefix="vaultlens-provider-")
         self.addCleanup(fixture.cleanup)
@@ -191,7 +196,7 @@ class ProviderRegressionTests(unittest.TestCase):
                 else:
                     page.unlink(missing_ok=True)
 
-                def provider(*args: object, **kwargs: object) -> int:
+                def provider(*_args: object, **_kwargs: object) -> int:
                     page.write_text(self.source_page())
                     return 0
 
@@ -222,7 +227,7 @@ class ProviderRegressionTests(unittest.TestCase):
                 if name == "unchanged":
                     page.write_text(output or "")
 
-                def provider(*args: object, **kwargs: object) -> int:
+                def provider(*_args: object, **_kwargs: object) -> int:
                     if output is not None:
                         page.write_text(output)
                     return 0
@@ -240,7 +245,7 @@ class ProviderRegressionTests(unittest.TestCase):
         sources.mkdir()
         page = sources / "src-2026-10-03-001.md"
 
-        def provider(*args: object, **kwargs: object) -> int:
+        def provider(*_args: object, **_kwargs: object) -> int:
             page.write_text(
                 self.source_page().replace(
                     "[[raw/inbox/example.pdf]]",

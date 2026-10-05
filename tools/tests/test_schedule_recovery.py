@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import fcntl
 import subprocess
 import json
 import os
@@ -19,6 +20,7 @@ from _loader import load_module
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "schedule"))
 import dispatch  # noqa: E402
+import agenda  # noqa: E402
 from restore_project import restore_project  # noqa: E402
 
 # One alias per private name the suite exercises (tests legitimately touch internals).
@@ -35,6 +37,8 @@ def _noop_log(_: str) -> None:
 
 
 class SchedulerRecoveryTests(unittest.TestCase):
+    now: datetime
+
     def setUp(self) -> None:
         self.now = datetime(2026, 10, 3, 3, tzinfo=timezone.utc)
 
@@ -206,7 +210,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 patch.object(
                     dispatch, "runtime_available", return_value=False
                 ) as probe,
-                patch.object(dispatch.subprocess, "run") as run,
+                patch.object(subprocess, "run") as run,
             ):
                 gates = dispatch.Gates(_noop_log, read_only=True)
                 self.assertFalse(gates.get("runtime"))
@@ -221,7 +225,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 patch.object(
                     dispatch, "runtime_available", return_value=available
                 ) as probe,
-                patch.object(dispatch.subprocess, "run") as start,
+                patch.object(subprocess, "run") as start,
             ):
                 gates = dispatch.Gates(_noop_log)
                 self.assertEqual(gates.get("runtime"), available)
@@ -393,7 +397,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 patch.object(dispatch, "ROOT", root),
                 patch.object(dispatch, "now_local", return_value=self.now),
                 patch.object(
-                    dispatch.agenda, "is_paused_for_review", return_value=False
+                    agenda, "is_paused_for_review", return_value=False
                 ),
                 patch.object(Path, "read_text", allowed_read),
             ):
@@ -505,7 +509,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 "accounts": {
                     sentinel: {
                         "limited_until": dispatch.iso(
-                            self.now + dispatch.timedelta(hours=1)
+                            self.now + timedelta(hours=1)
                         ),
                         "last_error": sentinel,
                     }
@@ -599,7 +603,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
                         scheduled.symlink_to(outside, target_is_directory=True)
                     return original_open(path, flags, mode, dir_fd=dir_fd)
 
-                with patch.object(dispatch.os, "open", side_effect=swapped_open):
+                with patch.object(os, "open", side_effect=swapped_open):
                     with self.assertRaisesRegex(ValueError, "Report destination"):
                         dispatch.write_report("cos-brief", "Public fixture", self.now)
                 self.assertEqual(list(renamed.iterdir()), [])
@@ -687,7 +691,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
     def test_missing_maintenance_executable_is_recordable_failure(self) -> None:
         for runner in (dispatch.run_host, dispatch.run_qmd):
             with patch.object(
-                dispatch.subprocess, "run", side_effect=FileNotFoundError("absent")
+                subprocess, "run", side_effect=FileNotFoundError("absent")
             ):
                 self.assertEqual(runner(["update"], 1), (127, "absent"))
 
@@ -696,7 +700,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
         # likewise conveys no ownership. Neither warrants any global listing.
         with (
             patch.object(dispatch, "acquire_lock", return_value=Mock()),
-            patch.object(dispatch.fcntl, "flock"),
+            patch.object(fcntl, "flock"),
             patch.object(
                 dispatch, "load_ledger", return_value={"jobs": {}, "accounts": {}}
             ),
@@ -711,7 +715,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
             patch.object(dispatch, "prune_reports", return_value=[]),
             patch.object(dispatch, "_prune_snapshots", return_value=0),
             patch.object(
-                dispatch.subprocess,
+                subprocess,
                 "run",
                 side_effect=AssertionError("unexpected runtime operation"),
             ) as run,
@@ -721,7 +725,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
 
     def test_native_launch_discards_legacy_session_reuse_setting(self) -> None:
         with (
-            patch.dict(dispatch.os.environ, {"BRAIN_KEEP_WARM": "1"}),
+            patch.dict(os.environ, {"BRAIN_KEEP_WARM": "1"}),
             patch.object(
                 dispatch, "_run_agent_process", return_value=(0, "done")
             ) as run,
@@ -782,7 +786,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
                     dispatch, "default_access_profile", return_value="cos-read"
                 ),
                 patch.object(
-                    dispatch.subprocess, "Popen", wraps=subprocess.Popen
+                    subprocess, "Popen", wraps=subprocess.Popen
                 ) as popen,
             ):
                 rc, output = dispatch.exec_brain_wiki(["cos"], "claude", "low", 5)
@@ -837,7 +841,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
             project.mkdir(parents=True)
             snapshots = root / "snapshots"
 
-            def failed_copy(command: list[str], **kwargs: object) -> NoReturn:
+            def failed_copy(command: list[str], **_kwargs: object) -> NoReturn:
                 destination = Path(command[-1])
                 destination.mkdir()
                 (destination / "partial").write_text("incomplete")
@@ -847,7 +851,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 patch.object(dispatch, "ROOT", root),
                 patch.object(dispatch, "SNAPSHOT_DIR", snapshots),
                 patch.object(
-                    dispatch.subprocess, "run", side_effect=failed_copy
+                    subprocess, "run", side_effect=failed_copy
                 ) as copy,
             ):
                 self.assertIsNone(
@@ -891,7 +895,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
             with (
                 patch.object(dispatch, "ROOT", root),
                 patch.object(dispatch, "SNAPSHOT_DIR", root / "snapshots"),
-                patch.object(dispatch.subprocess, "run") as copy,
+                patch.object(subprocess, "run") as copy,
             ):
                 self.assertIsNone(
                     _snapshot_project("demo", self.now, logs.append)
@@ -929,7 +933,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
             with (
                 patch.object(dispatch, "ROOT", root),
                 patch.object(dispatch, "SNAPSHOT_DIR", root / "snapshots"),
-                patch.object(dispatch.subprocess, "run") as copy,
+                patch.object(subprocess, "run") as copy,
             ):
                 self.assertIsNone(
                     _snapshot_project("demo", self.now, _noop_log)
