@@ -650,9 +650,10 @@ def build_prompt(
         return cos_prompts.get(mode, cos_prompts["brief"])
 
     prompts = {
-        "quality": f"Analyze the wiki page at: {page}",
-        "verify": f"Verify claims in the wiki source page: {source}",
-        "ingest": f"Process new source material: {source}",
+        # Paths can come from inbox file names; quote them so a crafted name stays data.
+        "quality": f"Analyze the wiki page at: {json.dumps(page)}",
+        "verify": f"Verify claims in the wiki source page: {json.dumps(source)}",
+        "ingest": f"Process new source material: {json.dumps(source)}",
         "contradict": "Find potential contradictions across wiki pages",
         "search": f"Search the wiki for: {source if source else page}",
         "enhance": (
