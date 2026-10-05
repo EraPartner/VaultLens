@@ -598,7 +598,7 @@ console.log('public parser contracts passed');
             [node, "--input-type=module", "-e", script, module.as_uri()],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=60,  # hang guard only; node startup alone exceeded 5s on a loaded CI runner
             env={"PATH": "/usr/bin:/bin"},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
