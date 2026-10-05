@@ -29,7 +29,7 @@ wa = load_module(
 )
 
 # Parsed TOML documents are dynamically typed; callers index them with string keys.
-TomlDocument = dict[str, Any]
+TomlDocument = dict[str, Any]  # pyright: ignore[reportExplicitAny] -- see comment above
 
 passed = 0
 failed = 0

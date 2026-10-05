@@ -8,13 +8,15 @@ import json
 import os
 import sys
 import tempfile
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Mapping, cast
+from typing import Any, cast
 
 
 if sys.version_info < (3, 11):
-    sys.stderr.write(
+    # Intentional guard for interpreters older than the 3.11 typing target.
+    sys.stderr.write(  # pyright: ignore[reportUnreachable]
         "VaultLens requires Python 3.11 or newer. Use Homebrew Python or set BRAIN_PYTHON for host wrappers.\n"
     )
     raise SystemExit(2)
@@ -37,7 +39,7 @@ RoleModels = dict[str, dict[str, str]]
 # Validated JSON document (cli, models, profiles). Any: untyped callers (schedule/dispatch.py
 # and tests) pass it around as bare dict and index it directly; tighten to a TypedDict once
 # they are typed.
-LlmConfig = dict[str, Any]
+LlmConfig = dict[str, Any]  # pyright: ignore[reportExplicitAny] -- see comment above
 
 
 @dataclass(frozen=True)

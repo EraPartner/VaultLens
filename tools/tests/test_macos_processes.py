@@ -15,6 +15,9 @@ import struct
 import sys
 import tempfile
 import termios
+import threading
+import time
+import tty
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -41,7 +44,14 @@ class SyntheticOwner(supervision.AuditSessionProcess):
     A subclass may use the protected terminal state, so tests read it through these accessors.
     """
 
-    def __init__(self) -> None:  # deliberately skips the native bootstrap
+    _master: int | None
+    _slave: int | None
+    _dummy: list[int]
+    _streams: list[supervision.Stream]
+    _forwarders: list[threading.Thread]
+
+    # Deliberately skips the native bootstrap (no launchd job), so no super().__init__().
+    def __init__(self) -> None:  # pyright: ignore[reportMissingSuperCall]
         self._master, self._slave = pty.openpty()
         self._dummy = []
         self._streams = []
@@ -64,6 +74,10 @@ class SyntheticOwner(supervision.AuditSessionProcess):
 
 
 class AuditKernelTests(unittest.TestCase):
+    def __init__(self, methodName: str = "runTest") -> None:
+        super().__init__(methodName)
+        self.kernel: supervision.AuditKernel
+
     def setUp(self) -> None:
         # Deliberately bypass ctypes initialization: these are fake public IDs.
         self.kernel = object.__new__(supervision.AuditKernel)
@@ -205,7 +219,7 @@ class FreezeTests(unittest.TestCase):
             [guardian],
         ]
         kernel.state.return_value = 4
-        with mock.patch.object(supervision.time, "sleep"):
+        with mock.patch.object(time, "sleep"):
             _stop_members(kernel, 900, guardian)
         self.assertEqual(
             kernel.method_calls[0], mock.call.signal(guardian, signal.SIGSTOP)
@@ -225,6 +239,11 @@ class FreezeTests(unittest.TestCase):
 
 
 class PrivateStateTests(unittest.TestCase):
+    def __init__(self, methodName: str = "runTest") -> None:
+        super().__init__(methodName)
+        self.directory: Path
+        self.path: Path
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="vaultlens-public-audit-unit-")
         self.addCleanup(temporary.cleanup)
@@ -300,8 +319,8 @@ class PrivateStateTests(unittest.TestCase):
 class DispatcherTests(unittest.TestCase):
     def test_linux_retains_process_group_policy_and_exact_argv(self) -> None:
         with (
-            mock.patch.object(process_control.sys, "platform", "linux"),
-            mock.patch.object(process_control.subprocess, "Popen") as popen,
+            mock.patch.object(sys, "platform", "linux"),
+            mock.patch.object(subprocess, "Popen") as popen,
         ):
             process_control.launch_supervised(
                 ["public", "literal argument"],
@@ -318,7 +337,7 @@ class DispatcherTests(unittest.TestCase):
 
     def test_macos_uses_audit_owner(self) -> None:
         with (
-            mock.patch.object(process_control.sys, "platform", "darwin"),
+            mock.patch.object(sys, "platform", "darwin"),
             mock.patch.object(supervision, "AuditSessionProcess") as child,
         ):
             process_control.launch_supervised(
@@ -392,7 +411,7 @@ class TerminalTests(unittest.TestCase):
         self.enterContext(mock.patch.object(owner, "_drain_terminal"))
         with (
             mock.patch.object(supervision, "_stop_members"),
-            mock.patch.object(supervision.time, "sleep"),
+            mock.patch.object(time, "sleep"),
             mock.patch.object(
                 supervision,
                 "_launchctl",
@@ -416,7 +435,7 @@ class TerminalTests(unittest.TestCase):
         self.enterContext(mock.patch.object(owner, "_drain_terminal"))
         with (
             mock.patch.object(supervision, "_stop_members"),
-            mock.patch.object(supervision.time, "monotonic", side_effect=[0, 3]),
+            mock.patch.object(time, "monotonic", side_effect=[0, 3]),
             mock.patch.object(
                 supervision, "_launchctl", return_value=mock.Mock(returncode=0)
             ),
@@ -440,7 +459,7 @@ class TerminalTests(unittest.TestCase):
         stdin = mock.Mock()
         stdin.isatty.return_value = True
         stdin.fileno.return_value = host_slave
-        with mock.patch.object(supervision.sys, "stdin", stdin):
+        with mock.patch.object(sys, "stdin", stdin):
             for rows, columns in ((24, 100), (36, 140)):
                 size = struct.pack("HHHH", rows, columns, 0, 0)
                 fcntl.ioctl(host_slave, termios.TIOCSWINSZ, size)
@@ -462,14 +481,14 @@ class TerminalTests(unittest.TestCase):
         stdin.isatty.return_value = True
         stdin.fileno.return_value = 102
         with (
-            mock.patch.object(supervision.sys, "stdin", stdin),
+            mock.patch.object(sys, "stdin", stdin),
             mock.patch.object(
-                supervision.termios, "tcgetattr", return_value=["public attributes"]
+                termios, "tcgetattr", return_value=["public attributes"]
             ),
-            mock.patch.object(supervision.termios, "tcsetattr") as restore,
-            mock.patch.object(supervision.tty, "setraw"),
+            mock.patch.object(termios, "tcsetattr") as restore,
+            mock.patch.object(tty, "setraw"),
             mock.patch.object(
-                supervision.signal, "signal", return_value=signal.SIG_DFL
+                signal, "signal", return_value=signal.SIG_DFL
             ) as handlers,
         ):
             self.assertEqual(owner.wait(timeout=1), 0)
@@ -496,12 +515,12 @@ class TerminalTests(unittest.TestCase):
         stdin.isatty.return_value = True
         stdin.fileno.return_value = 102
         with (
-            mock.patch.object(supervision.sys, "stdin", stdin),
+            mock.patch.object(sys, "stdin", stdin),
             mock.patch.object(
-                supervision.termios, "tcgetattr", return_value=["public attributes"]
+                termios, "tcgetattr", return_value=["public attributes"]
             ),
-            mock.patch.object(supervision.termios, "tcsetattr") as restore,
-            mock.patch.object(supervision.tty, "setraw"),
+            mock.patch.object(termios, "tcsetattr") as restore,
+            mock.patch.object(tty, "setraw"),
         ):
             with self.assertRaisesRegex(OSError, "resize failure"):
                 owner.wait(timeout=1)

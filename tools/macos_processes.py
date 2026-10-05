@@ -28,7 +28,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import FrameType
-from typing import IO, Any, TextIO, TypeGuard
+from typing import IO, Any, ClassVar, TextIO, TypeGuard, cast, final
 
 # Isolated Python guardian execution still imports only its trusted neighbour.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -41,7 +41,9 @@ MAX_DOCUMENT = 2 * 1024 * 1024
 Token = tuple[int, ...]
 # Parsed JSON state file. Any is the honest type of json.loads output; every field is
 # validated where it is used (_token, isinstance checks, ProcessCleanupError).
-Document = dict[str, Any]
+Document = dict[str, Any]  # pyright: ignore[reportExplicitAny] -- see comment above
+# Pipe streams are text or bytes depending on the text flag, like Popen's.
+Stream = IO[str] | IO[bytes]
 
 
 def _is_document(value: object) -> TypeGuard[Document]:
@@ -136,15 +138,16 @@ def _token(value: object) -> Token:
     return tuple(words)
 
 
+@final
 class AuditKernel:
     """All private macOS calls are bounded and fail closed when unavailable."""
 
     def __init__(self) -> None:
         if sys.platform != "darwin":
             raise ValueError("macOS audit supervision is unavailable on this platform")
-        self.system = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
-        self.proc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
-        self.self_port = ctypes.c_uint.in_dll(self.system, "mach_task_self_").value
+        self.system: ctypes.CDLL = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+        self.proc: ctypes.CDLL = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        self.self_port: int = ctypes.c_uint.in_dll(self.system, "mach_task_self_").value
         self.system.task_name_for_pid.argtypes = [
             ctypes.c_uint,
             ctypes.c_int,
@@ -416,8 +419,8 @@ def _launchctl(arguments: Sequence[str]) -> subprocess.CompletedProcess[str]:
 class AuditSessionProcess:
     """Popen-compatible owner for one temporary launchd audit session."""
 
-    audit_session_owner = True
-    handles_terminal = True
+    audit_session_owner: ClassVar[bool] = True
+    handles_terminal: ClassVar[bool] = True
     # Class-level default: terminate_owned also runs on instances built without __init__.
     _cleanup_error: ProcessCleanupError | None = None
 
@@ -439,37 +442,37 @@ class AuditSessionProcess:
             or any(type(value) is not str or "\0" in value for value in command)
         ):
             raise ValueError("Supervised command must be an argument sequence")
-        self.kernel = AuditKernel()
+        self.kernel: AuditKernel = AuditKernel()
         owner = self.kernel.token(os.getpid())
         if owner is None:
             raise ValueError("Cannot establish the trusted supervisor identity")
         self.owner: Token = owner
         foreign_lifetimes = self.kernel.capture_foreign_lifetimes()
         self.returncode: int | None = None
-        self.pid = 0
+        self.pid: int = 0
         self.guardian: Token | None = None
         self.session: int | None = None
-        self.started = False
-        self.closed = False
-        self.interactive = interactive
-        self.text = text
-        self.run = Path(run)
-        self.control = self.run / "supervision" / uuid.uuid4().hex
+        self.started: bool = False
+        self.closed: bool = False
+        self.interactive: bool = interactive
+        self.text: bool = text
+        self.run: Path = Path(run)
+        self.control: Path = self.run / "supervision" / uuid.uuid4().hex
         _private_directory(self.control)
-        self.service = f"gui/{os.getuid()}/com.vaultlens.runtime.{self.control.name}"
+        self.service: str = f"gui/{os.getuid()}/com.vaultlens.runtime.{self.control.name}"
         self._dummy: list[int] = []
-        self._streams: list[IO[Any]] = []
+        self._streams: list[Stream] = []
         self._forwarders: list[threading.Thread] = []
         self._master: int | None = None
         self._slave: int | None = None
-        self.stdin: IO[Any] | None = None
-        self.stdout: IO[Any] | None = None
-        self.stderr: IO[Any] | None = None
+        self.stdin: Stream | None = None
+        self.stdout: Stream | None = None
+        self.stderr: Stream | None = None
         manifest = json.loads((self.run / "scope.json").read_text())
         root = Path(manifest["root"])
-        self.records = root / "tools/runtime-state/processes"
+        self.records: Path = root / "tools/runtime-state/processes"
         _private_directory(self.records)
-        self.record = self.records / (self.control.name + ".json")
+        self.record: Path = self.records / (self.control.name + ".json")
         guardian_source = root / "tools/macos_processes.py"
         guard_source = root / "tools/runtime/macos-process-guard.mjs"
         for source in (guardian_source, guard_source):
@@ -492,7 +495,7 @@ class AuditSessionProcess:
                 ),
             }
         )
-        self._record_data = {
+        self._record_data: Document = {
             "version": 1,
             "owner": list(self.owner),
             "service": self.service,
@@ -567,7 +570,7 @@ class AuditSessionProcess:
                 "StandardOutPath": str(self.control / "guardian.log"),
                 "StandardErrorPath": str(self.control / "guardian.log"),
             }
-            self.plist = self.control / "job.plist"
+            self.plist: Path = self.control / "job.plist"
             descriptor = os.open(
                 self.plist, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
             )
@@ -618,27 +621,29 @@ class AuditSessionProcess:
                 self._close_io()
             raise
 
-    def _pipe(self, name: str) -> IO[Any]:
+    def _pipe(self, name: str) -> Stream:
         path = self.control / name
         os.mkfifo(path, 0o600)
         reader = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
         self._dummy.append(os.open(path, os.O_WRONLY | os.O_NONBLOCK | os.O_NOFOLLOW))
         os.set_blocking(reader, True)
-        stream: IO[Any] = (
+        stream: Stream = (
             os.fdopen(reader, "r") if self.text else os.fdopen(reader, "rb")
         )
         self._streams.append(stream)
         return stream
 
-    def _forward(self, stream: IO[Any], destination: TextIO) -> None:
+    def _forward(self, stream: Stream, destination: TextIO) -> None:
         def pump() -> None:
             try:
                 while value := stream.read(4096):
-                    target = (
-                        destination
-                        if isinstance(value, str)
-                        else getattr(destination, "buffer", destination)
-                    )
+                    if isinstance(value, str):
+                        destination.write(value)
+                        destination.flush()
+                        continue
+                    # cast: bytes go to the underlying binary stream, or to destination
+                    # itself when it has no buffer (getattr returns Any | TextIO).
+                    target = cast(IO[bytes], getattr(destination, "buffer", destination))
                     target.write(value)
                     target.flush()
             except (OSError, ValueError):
@@ -774,13 +779,12 @@ class AuditSessionProcess:
 
     def communicate(
         self, input: object = None, timeout: float | None = None
-    ) -> tuple[Any, Any]:
+    ) -> tuple[str | bytes | None, str | bytes | None]:
         if input is not None:
             raise ValueError("Unattended sandbox input must be explicit argv")
-        # Any: pipe contents are str or bytes depending on the text flag, like Popen.
-        collected: list[Any] = [None, None]
+        collected: list[str | bytes | None] = [None, None]
 
-        def collect(index: int, stream: IO[Any]) -> None:
+        def collect(index: int, stream: Stream) -> None:
             collected[index] = stream.read()
 
         readers: list[threading.Thread] = []

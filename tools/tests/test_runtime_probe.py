@@ -14,10 +14,13 @@ import tempfile
 import unittest
 import urllib.error
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 from unittest import mock
 
 from _loader import load_module
+
+if TYPE_CHECKING:  # the tools directory is on sys.path only after load_module runs
+    from local_access import JsonObject
 
 SCRIPT = Path(__file__).resolve().parents[1] / "runtime/probe.py"
 probe = load_module("runtime_probe", SCRIPT)
@@ -25,6 +28,14 @@ probe = load_module("runtime_probe", SCRIPT)
 
 class ProbeHarnessTests(unittest.TestCase):
     """Mocks validate control flow, never the sandbox's OS behavior."""
+
+    def __init__(self, methodName: str = "runTest") -> None:
+        super().__init__(methodName)
+        self.directory: tempfile.TemporaryDirectory[str]
+        self.base: Path
+        self.source: Path
+        self.unrelated: Path
+        self.fixture_base: Path
 
     def setUp(self) -> None:
         for name, value in (
@@ -62,7 +73,7 @@ class ProbeHarnessTests(unittest.TestCase):
         self.fixture_base = self.base / "synthetic"
         self.fixture_base.mkdir()
 
-    def fixture(self) -> tuple[Path, dict[str, Any]]:
+    def fixture(self) -> tuple[Path, JsonObject]:
         return probe.make_fixture(
             self.source,
             self.fixture_base,
