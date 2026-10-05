@@ -89,7 +89,8 @@ without touching deployed adapters, use `--provider claude --output-dir <directo
 `tools/agent_capabilities.py` maps canonical permission profiles for both native
 adapters and headless tool grants. Access profiles independently constrain files and networking.
 Agent search uses a qmd-compatible lexical service built only from approved files; a shared full
-vault index is never passed into a restricted run.
+vault index is never passed into a restricted run. `qmd query` can rank with the operator's qmd
+index through a launcher-side bridge that returns only paths the run may read.
 
 `--debug` previews the selected command without invoking the model, extracting
 PDF text, or promoting an inbox PDF. Scheduler `--dry-run` also leaves its

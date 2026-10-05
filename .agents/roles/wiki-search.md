@@ -21,12 +21,12 @@ Read-only helper set only: `ls`/`grep`/`cat`/`head`/`tail`/`wc`/`sort`/`uniq`/`c
 
 ## Search capabilities
 
-Use the run's scoped qmd-compatible tools. `qmd search "<keywords>"` and the
-qmd Model Context Protocol tools search only the selected notes. `qmd query`
-is a lexical compatibility command in this runtime; it does not use embeddings,
-model reranking, a shared index, or model downloads. Follow the selected access
-profile and treat excluded material as unknown. Broader or semantic retrieval
-requires a separate operator-approved workflow.
+Use the run's scoped qmd-compatible tools; they return only the selected notes.
+`qmd search "<keywords>"` is lexical (word matching). `qmd query` ranks with the
+operator's qmd index (meaning-based, catches synonyms) when the launcher enables
+it, and otherwise falls back to the same lexical search. Its JSON says which:
+`mode` is `qmd` or `lexical`, and `fallback` gives the reason. Follow the
+selected access profile and treat excluded material as unknown.
 
 ## Scope
 
@@ -44,8 +44,8 @@ requires a separate operator-approved workflow.
 
 1. **Understand the query** - What exactly is being asked?
 2. **Use the right search tool**:
-   - **`qmd query "<key terms>" --format json`** — lexical in scoped runs (word matching, no embeddings): pass the question's distinctive terms rather than a full sentence, and retry with synonyms. Returns ranked snippets with file paths. Prefer the `mcp__qmd__*` tools when available.
-   - **`qmd search "<keywords>"`** — the same lexical search. Use for exact-term lookups (function names, proper nouns).
+   - **`qmd query "<key terms>" --format json`** — meaning-based when qmd is enabled. If `mode` is `lexical`, pass the question's distinctive terms rather than a full sentence and retry with synonyms. Returns ranked snippets with file paths. Prefer the `mcp__qmd__*` tools when available.
+   - **`qmd search "<keywords>"`** — lexical (word matching). Use for exact-term lookups (function names, proper nouns).
    - **`python3 tools/wiki.py search "<query>"`** — substring match over wiki bodies. Fallback when qmd is unavailable or the query is a literal string.
    - **`python3 tools/wiki.py tags <tag> [<tag>...]`** — frontmatter tag filter (AND across tags). Use to enumerate every page in a topic area.
 3. **Read content** — open the actual files; don't trust titles or snippets alone.

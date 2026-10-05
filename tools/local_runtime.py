@@ -47,6 +47,7 @@ from local_access import (
     load_policy,
     resolve_scope,
 )
+from scoped_search import BRIDGE_DIRECTORY, QmdBridge
 
 if TYPE_CHECKING:
     from run_reports import Recorder
@@ -538,7 +539,12 @@ def _transfer_auth(
 
 
 def compile_settings(
-    scope: RunScope, run: Path, cli: str | None, *, executables: tuple[Path, ...] = ()
+    scope: RunScope,
+    run: Path,
+    cli: str | None,
+    *,
+    executables: tuple[Path, ...] = (),
+    qmd_bridge: bool = False,
 ) -> RuntimeSettings:
     """Compile a neutral scope into the reviewed SRT configuration schema."""
     trusted = [
@@ -672,6 +678,10 @@ def compile_settings(
     ]
     if cli:
         write.append(str(run / "provider"))
+    if qmd_bridge:
+        # The sandbox may post requests; only the host may write answers.
+        write.append(str(run / BRIDGE_DIRECTORY / "requests"))
+        protected.append(str(run / BRIDGE_DIRECTORY / "responses"))
     return {
         "filesystem": {
             "denyRead": list(dict.fromkeys(denied)),
@@ -740,6 +750,24 @@ def active_working_directory() -> Path:
     if not value or not Path(value).is_absolute():
         raise ValueError("A native working directory requires an active run")
     return Path(value).parent / "workspace"
+
+
+def qmd_executable(scope: RunScope, run: Path) -> Path | None:
+    """The operator's qmd for the host-side bridge, or None to keep search lexical.
+
+    The bridge is on when `qmd` is on the launcher's PATH and resolves outside
+    the vault and the run. VAULTLENS_QMD_BRIDGE=off turns it off.
+    """
+    if os.environ.get("VAULTLENS_QMD_BRIDGE", "").casefold() in {"off", "0", "false", "no"}:
+        return None
+    found = shutil.which("qmd")
+    if found is None:
+        return None
+    command = Path(found).absolute()
+    resolved = command.resolve()
+    if resolved.is_relative_to(scope.root) or resolved.is_relative_to(run.resolve()):
+        return None
+    return command
 
 
 def _prepare_workspace(scope: RunScope, run: Path) -> Path:
@@ -892,6 +920,14 @@ def prepared_run(
         )
         review_queue: list[dict[str, str | int]] = []
         manifest["review_queue"] = review_queue
+        qmd = qmd_executable(scope, run)
+        bridge = (
+            None
+            if qmd is None
+            else QmdBridge(scope, QmdBridge.prepare(run), qmd)
+        )
+        if bridge is not None:
+            manifest["qmd_bridge"] = str(bridge.directory)
         if scope.review_queue_metadata:
             queue = scope.root / "raw/review-inbox"
             if any(
@@ -948,6 +984,7 @@ def prepared_run(
             executables=tuple(
                 path for path in (Path(sys.executable), provider) if path
             ),
+            qmd_bridge=bridge is not None,
         )
         (run / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
         locks = scope.root / "tools/runtime-state/locks"
@@ -983,6 +1020,9 @@ def prepared_run(
                     destination_fd=run_provider_fd,
                 )
                 transfer_back = (auth_store, store_fd, run_provider_fd)
+            if bridge is not None:
+                bridge.start()
+                stack.callback(bridge.stop)
             backup = _snapshot(scope, manifest["run_id"]) if snapshot else None
             if backup:
                 print(f"Recovery snapshot: {backup}", file=sys.stderr)

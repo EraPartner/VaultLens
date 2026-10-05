@@ -19,12 +19,12 @@ Read-only helper set only: `ls`/`grep`/`cat`/`head`/`tail`/`wc`/`sort`/`uniq`/`c
 
 ## Search capabilities
 
-Use the run's scoped qmd-compatible tools. `qmd search "<keywords>"` and the
-qmd Model Context Protocol tools search only the selected notes. `qmd query`
-is a lexical compatibility command in this runtime; it does not use embeddings,
-model reranking, a shared index, or model downloads. Follow the selected access
-profile and treat excluded material as unknown. Broader or semantic retrieval
-requires a separate operator-approved workflow.
+Use the run's scoped qmd-compatible tools; they return only the selected notes.
+`qmd search "<keywords>"` is lexical (word matching). `qmd query` ranks with the
+operator's qmd index (meaning-based, catches synonyms) when the launcher enables
+it, and otherwise falls back to the same lexical search. Its JSON says which:
+`mode` is `qmd` or `lexical`, and `fallback` gives the reason. Follow the
+selected access profile and treat excluded material as unknown.
 
 ## Context you receive
 

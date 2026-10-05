@@ -1101,6 +1101,26 @@ def child_checks(scope: RunScope, metadata: JsonObject, case: str) -> list[Check
         ),
         ("search.mcp", lambda: _search_mcp(root)),
     ]
+    bridge = run / "qmd-bridge"
+    if bridge.is_dir():
+        # Present when the launcher found the operator's qmd: the sandbox may
+        # post requests, but must not forge the host's answers.
+        request = bridge / "requests" / ("probe-" + case + ".txt")
+        response = bridge / "responses" / ("probe-" + case + ".txt")
+        checks.extend(
+            [
+                ("qmd-bridge.request-write", lambda: _scratch(request)),
+                ("qmd-bridge.response-python-write", lambda: _deny_write(response)),
+                (
+                    "qmd-bridge.response-shell-write",
+                    lambda: _shell(response, write=True, allowed=False),
+                ),
+                (
+                    "qmd-bridge.folder-write",
+                    lambda: _deny_write(bridge / ("probe-" + case + ".txt")),
+                ),
+            ]
+        )
     if case == "selected-read":
         checks.extend(
             [

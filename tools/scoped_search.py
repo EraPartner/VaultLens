@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Lexical search and stdio MCP over the current run's approved documents only.
+"""Scoped search and stdio MCP over the current run's approved documents only.
 
-The qmd-compatible surface deliberately has no global index, embeddings, model
-calls, network access or persistent cache. Every request rereads selected files;
-a search covers every approved document, however large the vault.
+`search` is lexical: every request rereads the selected files, and a search
+covers every approved document, however large the vault. It keeps no index,
+embeddings or cache and makes no model or network calls.
+
+`query` can also use the operator's qmd index through a bridge. The launcher
+runs qmd on the host, outside the sandbox, and passes back only the paths this
+run may read. Inside the sandbox, this module rereads every returned file under
+the same checks as `search`, so qmd's own snippets never reach the agent.
 The whole-process runtime remains responsible for OS access enforcement.
 """
 
@@ -14,8 +19,12 @@ import json
 import math
 import os
 import re
+import secrets
 import stat
+import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from collections.abc import Callable
 from typing import TextIO, cast
@@ -31,6 +40,13 @@ MAX_SNIPPET_CHARS = 1600
 MAX_GET_CHARS = 64 * 1024
 MAX_MESSAGE_CHARS = 128 * 1024
 TOKEN = re.compile(r"\w+", re.UNICODE)
+BRIDGE_DIRECTORY = "qmd-bridge"
+BRIDGE_TIMEOUT_SECONDS = 120.0
+BRIDGE_POLL_SECONDS = 0.05
+MAX_BRIDGE_MESSAGE_BYTES = 64 * 1024
+MAX_BRIDGE_CANDIDATES = 150
+MAX_QMD_OUTPUT_BYTES = 8 * 1024 * 1024
+BRIDGE_MESSAGE = re.compile(r"[0-9a-f]{32}\.json")
 
 
 def _items(value: object) -> list[object] | None:
@@ -50,8 +66,8 @@ def _strings(value: object) -> list[str] | None:
     return strings if len(strings) == len(items) else None
 
 
-def load_scope(manifest_path: Path) -> RunScope:
-    """Load one explicit manifest; never consult the environment or host policy."""
+def _read_manifest(manifest_path: Path) -> JsonObject:
+    """Read one explicit manifest file without following links."""
     manifest_path = Path(manifest_path)
     if not manifest_path.is_absolute() or manifest_path.is_symlink():
         raise ValueError("The scope manifest must be an absolute regular file")
@@ -64,12 +80,21 @@ def load_scope(manifest_path: Path) -> RunScope:
         if len(payload) > MAX_MANIFEST_BYTES:
             raise ValueError("Scope manifest exceeds the size limit")
         parsed: object = json.loads(payload)
-        if not isinstance(parsed, dict):
-            raise ValueError("Scope manifest requires version 1")
-        # JSON object keys are strings; the fields are validated individually below.
-        data = cast(JsonObject, parsed)
-        if data.get("version") != 1:
-            raise ValueError("Scope manifest requires version 1")
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Cannot read a valid explicit scope manifest") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("Scope manifest requires version 1")
+    # JSON object keys are strings; the fields are validated individually.
+    data = cast(JsonObject, parsed)
+    if data.get("version") != 1:
+        raise ValueError("Scope manifest requires version 1")
+    return data
+
+
+def load_scope(manifest_path: Path) -> RunScope:
+    """Load one explicit manifest; never consult the environment or host policy."""
+    data = _read_manifest(manifest_path)
+    try:
         root = Path(data["root"])
         if (
             not root.is_absolute()
@@ -115,8 +140,31 @@ def load_scope(manifest_path: Path) -> RunScope:
             Path(reports),
             data.get("review_queue_metadata", False),
         )
-    except (OSError, KeyError, TypeError, UnicodeError, json.JSONDecodeError) as exc:
+    except (OSError, KeyError, TypeError) as exc:
         raise ValueError("Cannot read a valid explicit scope manifest") from exc
+
+
+def load_bridge(manifest_path: Path) -> Path | None:
+    """Return the run's qmd bridge folder, or None when the launcher set none.
+
+    The folder must be the real `qmd-bridge` directory beside the manifest, so a
+    manifest cannot point the client at any other location.
+    """
+    value = _read_manifest(manifest_path).get("qmd_bridge")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("Malformed qmd bridge location")
+    directory = Path(value)
+    if (
+        not directory.is_absolute()
+        or directory.name != BRIDGE_DIRECTORY
+        or directory.parent != Path(manifest_path).parent
+        or directory.is_symlink()
+        or not directory.is_dir()
+    ):
+        raise ValueError("The qmd bridge must be the run's own bridge folder")
+    return directory
 
 
 def _read_document(scope: RunScope, path: Path, *, approved: bool = False) -> str:
@@ -209,12 +257,293 @@ def _title(text: str, path: Path) -> str:
     return path.stem
 
 
+def _read_bridge_message(directory: Path, name: str) -> bytes | None:
+    """Read one small regular file without following links; None if absent."""
+    if not BRIDGE_MESSAGE.fullmatch(name):
+        raise ValueError("Unexpected bridge message name")
+    try:
+        descriptor = os.open(
+            directory / name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+        )
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ValueError("Bridge message is not a regular file") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise ValueError("Bridge message is not a regular file")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            payload = stream.read(MAX_BRIDGE_MESSAGE_BYTES + 1)
+    except OSError as exc:
+        raise ValueError("Bridge message is unreadable") from exc
+    finally:
+        os.close(descriptor)
+    if len(payload) > MAX_BRIDGE_MESSAGE_BYTES:
+        raise ValueError("Bridge message exceeds the size limit")
+    return payload
+
+
+def _write_bridge_message(directory: Path, name: str, payload: JsonObject) -> None:
+    """Publish a message atomically so the reader never sees a partial file."""
+    if not BRIDGE_MESSAGE.fullmatch(name):
+        raise ValueError("Unexpected bridge message name")
+    staged = directory / f".{name}.{secrets.token_hex(8)}"
+    descriptor = os.open(
+        staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+        os.replace(staged, directory / name)
+    finally:
+        try:
+            os.unlink(staged)
+        except FileNotFoundError:
+            pass
+
+
+class QmdBridge:
+    """Host side: answer the sandbox's queries from the operator's qmd index.
+
+    Runs outside the sandbox, in the launcher. It returns only vault-relative
+    paths that this run's access profile may read, never qmd's text, titles or
+    snippets. qmd runs from "/" so no vault-local qmd configuration applies.
+    """
+
+    scope: RunScope
+    directory: Path
+    executable: Path
+    timeout: float
+    _stop: threading.Event
+    _thread: threading.Thread | None
+    _answered: set[str]
+
+    def __init__(
+        self,
+        scope: RunScope,
+        directory: Path,
+        executable: Path,
+        *,
+        timeout: float = BRIDGE_TIMEOUT_SECONDS,
+    ) -> None:
+        self.scope = scope
+        self.directory = directory
+        self.executable = executable
+        self.timeout = timeout
+        self._stop = threading.Event()
+        self._thread = None
+        self._answered = set()
+
+    @staticmethod
+    def prepare(run: Path) -> Path:
+        """Create the request/response folders; only requests is sandbox-writable."""
+        directory = run / BRIDGE_DIRECTORY
+        directory.mkdir(mode=0o700)
+        (directory / "requests").mkdir(mode=0o700)
+        (directory / "responses").mkdir(mode=0o700)
+        return directory
+
+    def start(self) -> None:
+        self._thread = threading.Thread(
+            target=self._serve, name="qmd-bridge", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=self.timeout + 5)
+
+    def _serve(self) -> None:
+        while not self._stop.is_set():
+            try:
+                handled = self.handle_pending()
+            except (OSError, ValueError):
+                handled = 0
+            if not handled:
+                self._stop.wait(BRIDGE_POLL_SECONDS)
+
+    def handle_pending(self, limit: int = 8) -> int:
+        """Answer up to `limit` waiting requests; returns how many were handled."""
+        requests = self.directory / "requests"
+        try:
+            # A request that cannot be removed (say, a directory) is answered
+            # once, so it cannot keep the bridge busy.
+            names = sorted(
+                name
+                for name in os.listdir(requests)
+                if BRIDGE_MESSAGE.fullmatch(name) and name not in self._answered
+            )
+        except OSError:
+            return 0
+        for name in names[:limit]:
+            self._answered.add(name)
+            try:
+                payload = _read_bridge_message(requests, name)
+            except ValueError:
+                payload = b""
+            try:
+                os.unlink(requests / name)
+            except OSError:
+                pass
+            if payload is None:
+                continue
+            response = self.answer(payload)
+            try:
+                _write_bridge_message(self.directory / "responses", name, response)
+            except OSError:
+                continue
+        return min(len(names), limit)
+
+    def answer(self, payload: bytes) -> JsonObject:
+        try:
+            decoded: object = json.loads(payload)
+            if not isinstance(decoded, dict):
+                raise ValueError("Bridge request must be an object")
+            request = cast(JsonObject, decoded)
+            query = request.get("query")
+            if (
+                not isinstance(query, str)
+                or not query.strip()
+                or len(query) > MAX_QUERY_CHARS
+                or "\0" in query
+            ):
+                raise ValueError("Bridge query must be a nonempty string")
+            limit = _bounded_int(
+                request.get("limit"), default=10, maximum=MAX_RESULTS
+            )
+            return {"status": "ok", "results": self.query(query, limit)}
+        except (ValueError, TypeError, UnicodeError) as exc:
+            return {"status": "error", "error": str(exc)[:500]}
+
+    def query(self, query: str, limit: int) -> list[JsonObject]:
+        """Run qmd and keep only documents this run may read, best first."""
+        candidates = min(MAX_BRIDGE_CANDIDATES, max(20, limit * 3))
+        try:
+            completed = subprocess.run(
+                [
+                    str(self.executable),
+                    "query",
+                    "--format",
+                    "json",
+                    "--full-path",
+                    "-n",
+                    str(candidates),
+                    "--",
+                    query,
+                ],
+                cwd="/",
+                capture_output=True,
+                timeout=self.timeout,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ValueError(f"qmd could not run: {type(exc).__name__}") from exc
+        if completed.returncode != 0:
+            raise ValueError(f"qmd exited with status {completed.returncode}")
+        if len(completed.stdout) > MAX_QMD_OUTPUT_BYTES:
+            raise ValueError("qmd output exceeds the size limit")
+        try:
+            parsed: object = json.loads(completed.stdout or b"[]")
+        except json.JSONDecodeError as exc:
+            raise ValueError("qmd returned malformed JSON") from exc
+        items = _items(parsed)
+        if items is None:
+            raise ValueError("qmd returned an unexpected result shape")
+        results: list[JsonObject] = []
+        seen: set[str] = set()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            entry = cast(JsonObject, item)
+            file = entry.get("file")
+            score = entry.get("score")
+            if not isinstance(file, str) or "\0" in file:
+                continue
+            path = Path(file)
+            if not path.is_absolute() or ".." in path.parts:
+                continue
+            # The index may record the vault through a symlinked folder. Resolve
+            # once, then judge the real path; aliases inside the vault are refused
+            # by readable() and by the sandbox's own descriptor walk.
+            path = path.resolve()
+            if (
+                not path.is_relative_to(self.scope.root)
+                or path.suffix not in {".md", ".txt"}
+                or protected_name(path.name)
+                or not self.scope.readable(path)
+            ):
+                continue
+            relative = path.relative_to(self.scope.root).as_posix()
+            if relative in seen:
+                continue
+            seen.add(relative)
+            results.append(
+                {
+                    "path": relative,
+                    "score": float(score)
+                    if isinstance(score, (int, float)) and not isinstance(score, bool)
+                    else 0.0,
+                }
+            )
+            if len(results) >= limit:
+                break
+        return results
+
+
+def bridge_query(
+    directory: Path,
+    query: str,
+    limit: int,
+    *,
+    timeout: float = BRIDGE_TIMEOUT_SECONDS,
+) -> list[tuple[str, float]]:
+    """Sandbox side: ask the host bridge and wait for its answer."""
+    name = f"{secrets.token_hex(16)}.json"
+    _write_bridge_message(
+        directory / "requests", name, {"query": query, "limit": limit}
+    )
+    deadline = time.monotonic() + timeout
+    while True:
+        payload = _read_bridge_message(directory / "responses", name)
+        if payload is not None:
+            break
+        if time.monotonic() >= deadline:
+            raise ValueError("qmd bridge timed out")
+        time.sleep(BRIDGE_POLL_SECONDS)
+    try:
+        decoded: object = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ValueError("qmd bridge returned malformed JSON") from exc
+    if not isinstance(decoded, dict):
+        raise ValueError("qmd bridge returned an unexpected response")
+    response = cast(JsonObject, decoded)
+    if response.get("status") != "ok":
+        error = response.get("error")
+        raise ValueError(f"qmd bridge failed: {error if isinstance(error, str) else 'unknown'}")
+    items = _items(response.get("results"))
+    if items is None:
+        raise ValueError("qmd bridge returned an unexpected response")
+    results: list[tuple[str, float]] = []
+    for item in items:
+        if isinstance(item, dict):
+            entry = cast(JsonObject, item)
+            path = entry.get("path")
+            score = entry.get("score")
+            if isinstance(path, str) and isinstance(score, (int, float)):
+                results.append((path, float(score)))
+    return results
+
+
 class ScopedSearch:
     scope: RunScope
+    bridge: Path | None
     _approved: set[Path]
 
-    def __init__(self, scope: RunScope) -> None:
+    def __init__(self, scope: RunScope, bridge: Path | None = None) -> None:
         self.scope = scope
+        self.bridge = bridge
         self._approved = set()
 
     def _documents(self) -> list[Path]:
@@ -329,6 +658,63 @@ class ScopedSearch:
             "skipped_documents": skipped,
         }
 
+    def query(self, arguments: JsonObject) -> JsonObject:
+        """Rank with the operator's qmd index; fall back to lexical search.
+
+        The bridge returns paths only. Each one is checked and reread here,
+        and the snippet comes from that reread text, never from qmd.
+        """
+        queries = _queries(arguments)
+        limit = _bounded_int(arguments.get("limit"), default=10, maximum=MAX_RESULTS)
+        snippet_chars = _bounded_int(
+            arguments.get("snippet_chars"),
+            default=DEFAULT_SNIPPET_CHARS,
+            maximum=MAX_SNIPPET_CHARS,
+        )
+        if self.bridge is None:
+            return {**self.search(arguments), "fallback": "qmd is not enabled for this run"}
+        try:
+            ranked = bridge_query(self.bridge, " ".join(queries), limit)
+        except (ValueError, OSError) as exc:
+            return {**self.search(arguments), "fallback": str(exc)[:200]}
+        terms = sorted(
+            {token.casefold() for query in queries for token in TOKEN.findall(query)},
+            key=len,
+            reverse=True,
+        )
+        results: list[JsonObject] = []
+        skipped = 0
+        for relative, score in ranked[:limit]:
+            try:
+                path = self._path(relative)
+                text = _read_document(self.scope, path)
+            except ValueError:
+                skipped += 1
+                continue
+            lowered = text.casefold()
+            # Anchor on the longest query word found; else show the start.
+            position = next(
+                (found for term in terms if (found := lowered.find(term)) >= 0), -1
+            )
+            start = max(0, position - snippet_chars // 8) if position >= 0 else 0
+            name = path.relative_to(self.scope.root).as_posix()
+            results.append(
+                {
+                    "file": name,
+                    "path": name,
+                    "docid": name,
+                    "title": _title(text, path),
+                    "score": round(score, 4),
+                    "snippet": text[start : start + snippet_chars],
+                }
+            )
+        return {
+            "mode": "qmd",
+            "results": results,
+            "truncated": len(ranked) > limit,
+            "skipped_documents": skipped,
+        }
+
     def get(self, arguments: JsonObject) -> JsonObject:
         path = self._path(
             arguments.get("path", arguments.get("file", arguments.get("docid")))
@@ -378,8 +764,10 @@ class ScopedSearch:
     def status(self, _arguments: JsonObject | None = None) -> JsonObject:
         return {
             "mode": "lexical",
+            "query_mode": "lexical" if self.bridge is None else "qmd",
             "profile": self.scope.name,
             "documents": len(self._documents()),
+            # The sandbox holds no embeddings or index; qmd's live on the host.
             "embeddings": False,
             "persistent_index": False,
         }
@@ -391,7 +779,7 @@ class ScopedSearch:
         tool_arguments = cast(JsonObject, arguments)
         operations: dict[str, Callable[[JsonObject], JsonObject]] = {
             "search": self.search,
-            "query": self.search,
+            "query": self.query,
             "get": self.get,
             "multi_get": self.multi_get,
             "status": self.status,
@@ -433,7 +821,7 @@ def _tools() -> list[JsonObject]:
         ),
         (
             "query",
-            "Lexical query; accepts query or searches. No semantic models or embeddings, so pass key terms rather than a full sentence.",
+            "Meaning-based query through the operator's qmd index when this run enables it, limited to approved documents; accepts query or searches. Without qmd it falls back to lexical search and says why in `fallback`, so then pass key terms rather than a full sentence.",
             query_schema,
         ),
         (
@@ -471,7 +859,7 @@ def _tools() -> list[JsonObject]:
         ),
         (
             "status",
-            "Report the current selected document scope; embeddings are disabled.",
+            "Report the current selected document scope and whether query uses qmd.",
             {"type": "object", "properties": {}},
         ),
     ]
@@ -556,7 +944,7 @@ def serve_mcp(
                     "protocolVersion": parameters.get("protocolVersion", "2024-11-05"),
                     "capabilities": {"tools": {}},
                     "serverInfo": {"name": "qmd", "version": "1.0"},
-                    "instructions": "Search is lexical and restricted to current run selections. Never use a global qmd index.",
+                    "instructions": "Results are restricted to current run selections. search is lexical; query uses the operator's qmd index through the launcher when enabled, else lexical.",
                 }
             elif method == "ping":
                 result = {}
@@ -615,14 +1003,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-n", "--limit", type=int, default=10)
     args = parser.parse_args(argv)
     try:
-        search = ScopedSearch(load_scope(args.manifest))
+        search = ScopedSearch(load_scope(args.manifest), load_bridge(args.manifest))
         if args.operation == "mcp":
             serve_mcp(search, sys.stdin, sys.stdout)
             return 0
         if args.operation in {"search", "query"}:
-            payload = search.search(
-                {"query": " ".join(args.values), "limit": args.limit}
-            )
+            operation = search.search if args.operation == "search" else search.query
+            payload = operation({"query": " ".join(args.values), "limit": args.limit})
         elif args.operation == "get":
             if len(args.values) != 1:
                 raise ValueError("get requires one approved document path")
