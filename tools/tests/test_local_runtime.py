@@ -48,6 +48,16 @@ class RuntimeTests(unittest.TestCase):
     scope: access.RunScope
     env: dict[str, str]
 
+    def test_sigusr1_leaves_a_stop_request_for_the_confined_loop(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = Path(temporary)
+            (run / "scratch").mkdir()
+            before = signal.getsignal(signal.SIGUSR1)
+            with runtime.graceful_stop_requests(run):
+                os.kill(os.getpid(), signal.SIGUSR1)
+            self.assertTrue((run / "scratch" / runtime.STOP_REQUEST_FILE).exists())
+            self.assertEqual(signal.getsignal(signal.SIGUSR1), before)
+
     def setUp(self) -> None:
         # These unit fixtures exercise preparation, not operating-system evidence.
         verification = mock.patch.object(runtime, "require_verified_runtime")
@@ -1167,6 +1177,7 @@ class RuntimeTests(unittest.TestCase):
         previous: dict[signal.Signals, object] = {
             signal.SIGTERM: object(),
             signal.SIGINT: object(),
+            signal.SIGUSR1: object(),
         }
 
         def install(signum: signal.Signals, handler: object) -> object:
