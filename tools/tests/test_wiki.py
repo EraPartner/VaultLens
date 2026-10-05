@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import wiki  # noqa: E402
 import wiki_index  # noqa: E402
+import wiki_inventory  # noqa: E402
 import wiki_lint  # noqa: E402
 import wiki_links  # noqa: E402
 import wiki_log  # noqa: E402
@@ -747,6 +748,140 @@ def test_log_frontmatter_is_stdlib_and_yaml_safe() -> None:
     )
 
 
+def test_inventory_records_pass_lint() -> None:
+    print("inventory records vs lint:")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "wiki"
+        make_clean_wiki(root)
+        use_wiki(root)
+        with (
+            mock.patch.object(wiki_inventory, "INVENTORY_DIR", root / "inventory"),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            rc = wiki_inventory.inventory_new("task", "foo", "", "proposed", "p2", "")
+        check("inventory new accepts the default status", rc == 0)
+        rep = wiki_lint.build_report(wiki.list_content_pages(), strict=False)
+        check(
+            "lint accepts an inventory record's own statuses",
+            not rep["errors"]["invalid_status"],
+            str(rep["errors"]["invalid_status"]),
+        )
+        write_page(
+            root, "concepts/c.md", "[[concepts/a]]", **base_fields(title="C", status="proposed")
+        )
+        write_page(
+            root,
+            "inventory/task/bad.md",
+            "[[concepts/a]]",
+            **base_fields(title="Bad", type="inventory", status="bogus"),
+        )
+        rep = wiki_lint.build_report(wiki.list_content_pages(), strict=False)
+        flagged = " ".join(rep["errors"]["invalid_status"])
+        check("lint still rejects 'proposed' on a concept", "concepts/c.md" in flagged, flagged)
+        check("lint still rejects unknown inventory status", "inventory/task/bad.md" in flagged, flagged)
+
+
+def test_links_skip_frontmatter_and_code() -> None:
+    print("dual-links skip frontmatter and code spans:")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "wiki"
+        make_clean_wiki(root)
+        write_page(
+            root,
+            "concepts/c.md",
+            "Real [[concepts/b]] and `[[concepts/b]]` in code.",
+            **base_fields(title="C", related="[[concepts/b]]"),
+        )
+        use_wiki(root)
+        with contextlib.redirect_stdout(io.StringIO()):
+            wiki_links.cmd_links(fix=True, write=True)
+        text = (root / "concepts/c.md").read_text()
+        check("frontmatter wikilink left untouched", "related: [[concepts/b]]\n" in text, text)
+        check("code-span wikilink left untouched", "`[[concepts/b]]`" in text, text)
+        check("body wikilink still mirrored", "Real [[concepts/b]] ([B](b.md))" in text, text)
+
+
+def test_index_nested_links() -> None:
+    print("index links for nested pages:")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "wiki"
+        make_clean_wiki(root)
+        for kind in ("task", "question"):
+            write_page(
+                root,
+                f"inventory/{kind}/foo.md",
+                "[[concepts/a]]",
+                **base_fields(title=f"Foo {kind}", type="inventory"),
+            )
+        use_wiki(root)
+        with contextlib.redirect_stdout(io.StringIO()):
+            wiki_index.rebuild_indexes()
+        text = (root / "inventory" / "_index.md").read_text()
+        check("nested link keeps its subfolder (task)", "(task/foo.md)" in text, text)
+        check("same-name files do not collide", "(question/foo.md)" in text, text)
+        check("no bare nested link", "(foo.md)" not in text, text)
+
+
+def test_project_slug_validation() -> None:
+    print("project slug validation:")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "wiki"
+        make_clean_wiki(root)
+        use_wiki(root)
+        projects = wiki.PROJECTS_DIR
+        repo = projects.parent
+        outside = projects.parent / "outside"
+        outside.mkdir()
+        (outside / "project.md").write_text(
+            "---\ntitle: Outside\ntype: project\nstatus: active\nwiki_refs: []\n---\n",
+            encoding="utf-8",
+        )
+        (outside / "AGENDA.md").write_text("---\nenabled: false\n---\n", encoding="utf-8")
+        with (
+            mock.patch.object(wiki_projects, "PROJECTS_DIR", projects),
+            mock.patch.object(wiki_projects, "ROOT", repo),
+            mock.patch.object(wiki, "ROOT", repo),
+        ):
+            before = (outside / "project.md").read_text(), (outside / "AGENDA.md").read_text()
+            for bad in ("../outside", "a/../../outside", "..", "", "/abs", "a\\b"):
+                check(f"find_project rejects {bad!r}", find_project(bad) is None)
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                shown = wiki_projects._project_show("../outside", False)  # pyright: ignore[reportPrivateUsage]
+                linked = wiki_projects._project_link("../outside", "concepts/a")  # pyright: ignore[reportPrivateUsage]
+                frozen = wiki_projects._project_freeze("../outside", True)  # pyright: ignore[reportPrivateUsage]
+                enabled = wiki_projects._project_agenda("enable", "../outside", None, False)  # pyright: ignore[reportPrivateUsage]
+            check("show/link/freeze/agenda refuse a traversal slug", (shown, linked, frozen, enabled) == (1, 1, 1, 1))
+            check("traversal output does not leak the outside project", "Outside" not in out.getvalue())
+            after = (outside / "project.md").read_text(), (outside / "AGENDA.md").read_text()
+            check("files outside projects/ are unchanged", before == after)
+
+
+def test_append_log_matches_validate() -> None:
+    print("append-log vs validate-log:")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "wiki"
+        root.mkdir()
+        with (
+            mock.patch.object(wiki_log, "WIKI_DIR", root),
+            mock.patch.object(wiki_log, "LOG_NOTES_DIR", root / "log"),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            ok = wiki_log.append_log_entry("ingest", "A title", "Summary.", [], [], "")
+            bad_ops = [
+                wiki_log.append_log_entry(op, "T", "S", [], [], "")
+                for op in ("two words", "bad|op", "x\n## [2020-01-01] fake | y")
+            ]
+            bad_title = wiki_log.append_log_entry("ingest", "T\n## injected", "S", [], [], "")
+            bad_summary = wiki_log.append_log_entry("ingest", "T", "S\n## injected", [], [], "")
+            valid = wiki_log.validate_log()
+        check("a well-formed entry is appended", ok == 0)
+        check("operations validate-log would reject are refused", all(rc != 0 for rc in bad_ops), str(bad_ops))
+        check("multi-line title is refused", bad_title != 0)
+        check("multi-line summary is refused", bad_summary != 0)
+        check("validate-log passes after all attempts", valid == 0)
+        check("no stray log note files for refused entries", len(list((root / "log").glob("*.md"))) == 1)
+
+
 def main() -> int:
     test_golden()
     test_reports_excluded()
@@ -767,6 +902,11 @@ def main() -> int:
     test_source_id_stats_and_sampling()
     test_bounded_cli_output_defaults()
     test_log_frontmatter_is_stdlib_and_yaml_safe()
+    test_inventory_records_pass_lint()
+    test_links_skip_frontmatter_and_code()
+    test_index_nested_links()
+    test_project_slug_validation()
+    test_append_log_matches_validate()
     print(f"\n{passed} passed, {failed} failed")
     return 1 if failed else 0
 
