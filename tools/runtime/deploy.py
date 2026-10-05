@@ -122,37 +122,6 @@ ADAPTER_EXPORTS = (
     *(f".codex/agents/{name}.toml" for name in ROLE_NAMES),
 )
 PROTECTED_TARGETS = frozenset((*INSTRUCTION_EXPORTS.values(), *ADAPTER_EXPORTS))
-RETIRE_FILES = frozenset(
-    ".devcontainer/" + name
-    for name in (
-        ".dockerignore",
-        "Dockerfile",
-        "allowlist.extra.txt",
-        "allowlist.txt",
-        "bin/claude",
-        "bin/codex",
-        "bin/doctor",
-        "bin/verify-pins",
-        "claude-explicit-format.sh",
-        "claude-guard.mjs",
-        "claude-policy-install.sh",
-        "claude-policy-verify.sh",
-        "claude-post-edit.mjs",
-        "claude-stage-items.txt",
-        "clienthello-policy.py",
-        "entrypoint.sh",
-        "init-firewall.sh",
-        "launcher-common.sh",
-        "perms-fix.sh",
-        "post-create.sh",
-        "post-start.sh",
-        "session-launch.py",
-        "squid.conf",
-    )
-)
-PRIVATE_LAUNCHER = ".devcontainer/bin/agent"
-
-
 def _absolute(path: Path) -> Path:
     if ".." in path.parts:
         raise ValueError(f"Path traversal is not allowed: {path}")
@@ -234,62 +203,12 @@ def _entry(source: Path, target: str, destination: Path | None) -> JsonObject:
     }
 
 
-def _retirement_plan(manifest_path: Path, destination: Path) -> list[JsonObject]:
-    manifest_path = _no_alias(manifest_path, regular=True)
-    loaded: object = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(loaded, dict):
-        raise ValueError("Invalid source retirement manifest")
-    # isinstance narrows to dict[Unknown, Unknown]; JSON object keys are always str.
-    manifest = cast(JsonObject, loaded)
-    if not isinstance(manifest.get("records"), list):
-        raise ValueError("Invalid source retirement manifest")
-    entries: list[JsonObject] = []
-    for raw_record in manifest["records"]:
-        if not isinstance(raw_record, dict):
-            raise ValueError("Retirement records must be objects")
-        record = cast(JsonObject, raw_record)  # keys are str, as above
-        target: str = record.get("path", "")
-        if record.get("action") != "retire" or not target.startswith(".devcontainer/"):
-            continue
-        if target not in RETIRE_FILES or any(
-            entry["target"] == target for entry in entries
-        ):
-            raise ValueError(f"Unknown or duplicate retirement target: {target}")
-        source = _no_alias(manifest_path.parent / "source" / target, regular=True)
-        if _digest(source) != record.get("sha256"):
-            raise ValueError(f"Retirement source hash mismatch: {target}")
-        entries.append(
-            {
-                "source": str(source),
-                "target": target,
-                "source_sha256": record["sha256"],
-                "previous_sha256": _existing(_target(destination, target)),
-            }
-        )
-    if {entry["target"] for entry in entries} != set(RETIRE_FILES):
-        raise ValueError(
-            "Retirement source manifest must cover the exact known container bundle"
-        )
-    launcher = _target(destination, PRIVATE_LAUNCHER)
-    if launcher.exists():
-        entries.append(
-            {
-                "source": None,
-                "target": PRIVATE_LAUNCHER,
-                "source_sha256": None,
-                "previous_sha256": _digest(launcher),
-            }
-        )
-    return entries
-
-
 def plan_deployment(
     source: Path,
     destination: Path,
     *,
     instruction_candidates: Path,
     adapter_candidates: Path,
-    retirement_manifest: Path | None = None,
 ) -> JsonObject:
     source, destination = _root(source), _root(destination)
     if (
@@ -314,15 +233,6 @@ def plan_deployment(
         "files": files,
         "protected_candidates": pending,
         "fish_functions_pending": list(SHELL_FILES),
-        "retirement_manifest": str(_no_alias(retirement_manifest, regular=True))
-        if retirement_manifest
-        else None,
-        "retirement_manifest_sha256": _digest(retirement_manifest)
-        if retirement_manifest
-        else None,
-        "retirement": _retirement_plan(retirement_manifest, destination)
-        if retirement_manifest
-        else [],
         "preserved": [
             "notes",
             "raw",
@@ -377,14 +287,11 @@ def _validate_plan(plan: JsonObject) -> None:
         target: instructions / name for name, target in INSTRUCTION_EXPORTS.items()
     }
     export_sources.update({name: adapters / name for name in ADAPTER_EXPORTS})
-    if plan.get("retirement_manifest"):
-        manifest_path = Path(plan["retirement_manifest"])
-        if _digest(manifest_path) != plan.get(
-            "retirement_manifest_sha256"
-        ) or _retirement_plan(manifest_path, destination) != plan.get("retirement"):
-            raise ValueError("Container retirement changed after review")
-    elif plan.get("retirement"):
-        raise ValueError("Retirement requires an exact reviewed source manifest")
+    if plan.get("retirement_manifest") or plan.get("retirement"):
+        # Fail closed: a plan from before the removal must not silently drop deletions.
+        raise ValueError(
+            "Container retirement was removed; regenerate the plan without it"
+        )
     for entry in (*plan["files"], *plan["protected_candidates"]):
         expected_source = (
             source / entry["target"]
@@ -488,10 +395,7 @@ def _replace_entries(
                 backup = snapshot / "replaced" / entry["backup_name"]
                 _atomic_copy(target, backup, expected=entry["previous_sha256"])
             completed.append(entry)
-            if entry.get("action") == "retire":
-                target.unlink()
-            else:
-                _atomic_copy(Path(entry["source"]), target, expected=entry["sha256"])
+            _atomic_copy(Path(entry["source"]), target, expected=entry["sha256"])
             journal["applied"].append(entry["target"])
             _write_json(snapshot / "manifest.json", journal)
     except Exception as exc:
@@ -560,24 +464,12 @@ def _apply_validated(plan: JsonObject) -> JsonObject:
     }
     _write_json(snapshot / "manifest.json", journal)
     staged: list[JsonObject] = []
-    retirement: list[JsonObject] = []
     try:
         for index, entry in enumerate(plan["protected_candidates"]):
             relative = f"candidates/{index:02d}-{Path(entry['target']).name}.candidate"
             target = _target(migration, relative)
             _atomic_copy(Path(entry["source"]), target, expected=entry["sha256"])
             staged.append({**entry, "staged": relative})
-        for index, entry in enumerate(plan.get("retirement", [])):
-            if entry["source"] is not None:
-                relative = f"retired-sources/{index:02d}-{Path(entry['target']).name}.candidate"
-                _atomic_copy(
-                    Path(entry["source"]),
-                    _target(migration, relative),
-                    expected=entry["source_sha256"],
-                )
-                retirement.append({**entry, "staged": relative})
-            else:
-                retirement.append({**entry, "staged": None})
     except (ValueError, OSError) as exc:
         journal.update(
             status="failed_staging", error=str(exc), protected_candidates=staged
@@ -605,7 +497,6 @@ def _apply_validated(plan: JsonObject) -> JsonObject:
             if entry["target"].startswith("tools/shell/")
         ],
         "status": "pending_operator_apply",
-        "retirement": retirement,
     }
     _write_json(migration / "manifest.json", migration_manifest)
     journal.update(
@@ -618,7 +509,6 @@ def _apply_validated(plan: JsonObject) -> JsonObject:
         "snapshot": str(snapshot),
         "migration": str(migration),
         "protected_pending": len(staged),
-        "retirement_pending": len(retirement),
         "fish_functions_pending": list(SHELL_FILES),
         "operator_command": [
             sys.executable,
@@ -634,7 +524,6 @@ def operator_apply(
     migration: Path,
     *,
     fish_functions: Path | None = None,
-    retire_containers: bool = False,
 ) -> JsonObject:
     """Manually install reviewed candidates; never called by the agent runtime."""
     if os.environ.get("VAULTLENS_RUNTIME_MANIFEST"):
@@ -654,7 +543,6 @@ def operator_apply(
             migration,
             destination,
             fish_functions=fish_functions,
-            retire_containers=retire_containers,
         )
 
 
@@ -663,7 +551,6 @@ def _operator_apply_locked(
     destination: Path,
     *,
     fish_functions: Path | None,
-    retire_containers: bool,
 ) -> JsonObject:
     manifest_path = _no_alias(migration / "manifest.json", regular=True)
     loaded: object = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -732,41 +619,6 @@ def _operator_apply_locked(
                         "backup_name": "fish/" + source.name,
                     }
                 )
-    if retire_containers:
-        retirement = manifest.get("retirement", [])
-        if not retirement or any(not isinstance(entry, dict) for entry in retirement):
-            raise ValueError("Container retirement requires an exact staged manifest")
-        targets = [entry.get("target") for entry in retirement]
-        if (
-            not set(targets).issubset(RETIRE_FILES | {PRIVATE_LAUNCHER})
-            or not RETIRE_FILES.issubset(targets)
-            or len(targets) != len(set(targets))
-        ):
-            raise ValueError("Invalid container retirement allowlist")
-        for index, entry in enumerate(retirement):
-            if entry["target"] != PRIVATE_LAUNCHER:
-                expected_staged = f"retired-sources/{index:02d}-{Path(entry['target']).name}.candidate"
-                if entry.get("staged") != expected_staged or _digest(
-                    _target(migration, expected_staged)
-                ) != entry.get("source_sha256"):
-                    raise ValueError(f"Retirement source changed: {entry['target']}")
-            target = _target(destination, entry["target"])
-            current = _existing(target)
-            if current != entry["previous_sha256"]:
-                raise ValueError(
-                    f"Container target changed after review: {entry['target']}"
-                )
-            if current is not None:
-                entries.append(
-                    {
-                        **entry,
-                        "sha256": None,
-                        "source": None,
-                        "destination": str(target),
-                        "backup_name": entry["target"],
-                        "action": "retire",
-                    }
-                )
     snapshot = _no_alias(
         destination / "tools/runtime-state/deployments" / (_new_id() + "-operator")
     )
@@ -789,9 +641,6 @@ def _operator_apply_locked(
         "applied": len(entries),
         "snapshot": str(snapshot),
         "fish_functions_applied": fish_functions is not None,
-        "container_files_retired": sum(
-            entry.get("action") == "retire" for entry in entries
-        ),
     }
 
 
@@ -805,7 +654,6 @@ def main(argv: list[str] | None = None) -> int:
     preview.add_argument("--destination", type=Path, required=True)
     preview.add_argument("--instruction-candidates", type=Path, required=True)
     preview.add_argument("--adapter-candidates", type=Path, required=True)
-    preview.add_argument("--retirement-manifest", type=Path)
     apply = commands.add_parser(
         "apply", help="apply a reviewed plan to destination tools only"
     )
@@ -816,7 +664,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     operator.add_argument("--migration", type=Path, required=True)
     operator.add_argument("--fish-functions", type=Path)
-    operator.add_argument("--retire-containers", action="store_true")
     args = parser.parse_args(argv)
     try:
         if args.command == "plan":
@@ -825,7 +672,6 @@ def main(argv: list[str] | None = None) -> int:
                 args.destination,
                 instruction_candidates=args.instruction_candidates,
                 adapter_candidates=args.adapter_candidates,
-                retirement_manifest=args.retirement_manifest,
             )
         elif args.command == "apply":
             plan_path = _no_alias(args.plan, regular=True)
@@ -834,7 +680,6 @@ def main(argv: list[str] | None = None) -> int:
             result = operator_apply(
                 args.migration,
                 fish_functions=args.fish_functions,
-                retire_containers=args.retire_containers,
             )
         print(json.dumps(result, indent=2))
     except (ValueError, OSError, KeyError, TypeError) as exc:

@@ -212,8 +212,9 @@ credential files. Runtime report and recovery directories are separate from note
 The trusted parent records headless stdout in the profile's report folder and echoes it live.
 Each report has private permissions, run provenance, and a four MiB limit. Failed, truncated,
 or incomplete capture is marked partial. Agent file tools do not gain a report write grant.
-Writer runs retain snapshots under `tools/runtime-state/backups/`; inspect the reported snapshot
-and resulting diff before accepting automated changes.
+Writer runs retain snapshots under `tools/runtime-state/backups/`, and only the newest ten are
+kept (older ones are removed after each new snapshot); inspect the reported snapshot and
+resulting diff before accepting automated changes.
 Automatic reports stay under `wiki/reports/agents/`, with optional nested folders. Every run
 excludes that reserved subtree from reads and search, so derived private context does not enter
 another agent's corpus through its report. Review a report before promoting its content into notes.
@@ -256,8 +257,7 @@ python3 tools/runtime/deploy.py plan \
   --source /path/to/VaultLens \
   --destination /path/to/Brain \
   --instruction-candidates /path/to/instruction-export \
-  --adapter-candidates /path/to/adapter-export \
-  --retirement-manifest /path/to/retired-container/manifest.json > /tmp/vaultlens-deployment-plan.json
+  --adapter-candidates /path/to/adapter-export > /tmp/vaultlens-deployment-plan.json
 
 # Review the plan and each replacement before applying it.
 python3 tools/runtime/deploy.py apply --plan /tmp/vaultlens-deployment-plan.json
@@ -273,8 +273,7 @@ completed replacements; conflicts with a concurrent edit are recorded instead of
 
 Protected root instructions and native `.claude`/`.codex` adapters are copied as inert `.candidate`
 files under `tools/runtime/migration/<id>/`. Their manifest records the intended final paths and
-hashes. Normal apply does not write protected root paths, installed fish functions, launchd files,
-or `.devcontainer`. It does not install packages, authenticate providers, start jobs, or publish Git.
+hashes. Normal apply does not write protected root paths, installed fish functions, or launchd files. It does not install packages, authenticate providers, start jobs, or publish Git.
 
 An operator must review and run this separate command outside an agent session to apply protected
 instructions and adapters and replace only the declared installed Brain fish functions:
@@ -289,24 +288,19 @@ That command validates staged hashes and exact targets, refuses symbolic links, 
 previous instruction/adapters and fish functions before replacement. Omit `--fish-functions` to
 leave installed functions pending. Start a fresh shell after reviewing the result.
 
-Review remaining provider integration and old installed `vaultlens-claude`, `vaultlens-codex`, and
-`vaultlens-shell` aliases through the host repair plan:
+Review remaining provider integration (fish wrappers, `.gitignore` entries, scheduler plist
+provider keys) through the host repair plan:
 
 ```sh
 python3 /path/to/Brain/tools/scripts/repair-provider-host.py --vault /path/to/Brain --diff
 python3 /path/to/Brain/tools/scripts/repair-provider-host.py --vault /path/to/Brain --apply
 ```
 
-The repair plan redirects recognized container aliases to the new Brain functions and preserves
-their originals in its backup. It preserves unrelated custom definitions and requires operator
-review for symlink aliases. These commands are manual operator actions.
-
-The optional source retirement manifest stages the exact retired container bundle with source
-hashes. It also records a live private `.devcontainer/bin/agent` launcher when present. Normal
-deployment leaves these live files intact. Add `--retire-containers` to the manual operator command
-to remove only that reviewed list after backing up the existing regular files. A changed target
-hash stops retirement; unrelated files and provider state are preserved. Host scheduler
-configuration still requires a separate explicit operator action.
+The repair plan keeps originals in its backup and never touches unrelated files. Old installed
+`vaultlens-claude`, `vaultlens-codex` and `vaultlens-shell` functions are no longer migrated;
+remove them by hand. Container-bundle retirement was removed from `deploy.py`, and a plan that
+still carries retirement entries is rejected. These commands are manual operator actions. Host
+scheduler configuration still requires a separate explicit operator action.
 
 Keep unattended work blocked until protected candidates, installed wrappers, native authentication,
 and operating-system isolation have been checked. A tools deployment with pending operator files

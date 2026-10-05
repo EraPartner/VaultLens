@@ -3,6 +3,7 @@
 
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -192,6 +193,18 @@ class AccessProfileTests(unittest.TestCase):
         scope = self.resolve("writer", capability="wiki-write")
         self.assertTrue(scope.writable(self.root / "wiki/concepts/new.md"))
 
+    def test_writable_rejects_traversal_out_of_a_write_grant(self) -> None:
+        # wiki-write may read raw/sources but only write wiki/.
+        scope = self.resolve("wiki-write", capability="wiki-write")
+        self.assertTrue(scope.writable(self.root / "wiki/concepts/new.md"))
+        self.assertTrue(scope.readable(self.root / "raw/sources/approved.txt"))
+        for escape in (
+            "wiki/../raw/sources/approved.txt",
+            "wiki/concepts/../../raw/sources/approved.txt",
+        ):
+            with self.subTest(escape=escape):
+                self.assertFalse(scope.writable(self.root / escape))
+
     def test_writers_are_restricted_to_the_selected_layer_and_project(self) -> None:
         scope = self.resolve(
             "project-write", project="alpha", capability="project-write"
@@ -242,6 +255,28 @@ class AccessProfileTests(unittest.TestCase):
         )
         self.assertFalse(scope.readable(self.root / "projects/alpha/notes/approved.md"))
         self.assertFalse(scope.readable(self.root / "projects"))
+
+    def test_aliased_glob_match_is_skipped_not_fatal(self) -> None:
+        # One symlinked or hard-linked project.md must not break every launch.
+        self.profiles["metadata"] = {"read": ["projects/*/project.md"]}
+        self.write_policy()
+        beta = self.root / "projects/beta/project.md"
+        beta.unlink()
+        beta.symlink_to(self.root / "projects/alpha/project.md")
+        gamma = self.root / "projects/gamma/project.md"
+        gamma.parent.mkdir()
+        linked = self.root / "tools/hard-linked.md"
+        linked.write_text("Public synthetic fixture\n")
+        os.link(linked, gamma)
+        scope = self.resolve("metadata")
+        self.assertEqual(
+            scope.document_paths(), [self.root / "projects/alpha/project.md"]
+        )
+        # An explicit (non-glob) selection of an alias still fails closed.
+        self.profiles["explicit"] = {"read": ["projects/beta/project.md"]}
+        self.write_policy()
+        with self.assertRaisesRegex(ValueError, "symbolic links"):
+            self.resolve("explicit")
 
     def test_denied_globs_cannot_freeze_exclusions_to_existing_matches(self) -> None:
         self.profiles["filtered-writer"] = {

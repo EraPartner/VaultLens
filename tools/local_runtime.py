@@ -26,7 +26,7 @@ import tempfile
 from collections.abc import Callable, Generator, Sequence
 from pathlib import Path
 from types import FrameType
-from typing import TYPE_CHECKING, NoReturn, TypedDict
+from typing import TYPE_CHECKING, NoReturn, TypedDict, cast
 from process_control import (
     ProcessCleanupError,
     check_process_records,
@@ -213,10 +213,34 @@ def native_executable(cli: str) -> Path:
     raise ValueError(f"Native CLI {cli!r} is not installed")
 
 
+CANCELLATION_GATE = "tools/runtime-state/cancellation-unconfirmed.json"
+
+
+def cancellation_gate_present(root: Path) -> bool:
+    """True if the gate exists, including as a dangling symlink (exists() follows links)."""
+    gate = root / CANCELLATION_GATE
+    return gate.is_symlink() or gate.exists()
+
+
+def _inner_cancellation_group(evidence: Path) -> int | None:
+    """Read the agent-writable evidence file; any bad content yields None, never raises."""
+    try:
+        data: object = json.loads(evidence.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    # json.loads objects always have str keys; isinstance only narrows to dict[Unknown, Unknown].
+    group_id = cast("dict[str, object]", data).get("group_id")
+    if isinstance(group_id, int) and not isinstance(group_id, bool):
+        return group_id
+    return None
+
+
 def runtime_available(root: Path = ROOT, cli: str | None = None) -> bool:
     try:
         check_process_records(root)
-        if (root / "tools/runtime-state/cancellation-unconfirmed.json").exists():
+        if cancellation_gate_present(root):
             return False
         load_policy(root)
         runtime_executable(root)
@@ -759,6 +783,9 @@ def verify_active_boundary() -> RunScope:
     return scope
 
 
+SNAPSHOT_KEEP = 10
+
+
 def _snapshot(scope: RunScope, run_id: str) -> Path | None:
     if not scope.write_paths:
         return None
@@ -775,7 +802,22 @@ def _snapshot(scope: RunScope, run_id: str) -> Path | None:
                     "node_modules", "__pycache__", ".git", ".claude", ".codex"
                 ),
             )
+    _prune_snapshots(backup.parent)
     return backup
+
+
+def _prune_snapshots(backups: Path, keep: int = SNAPSHOT_KEEP) -> None:
+    """Keep the newest ``keep`` snapshots; run ids start with a UTC timestamp."""
+    try:
+        runs = sorted(
+            path
+            for path in backups.iterdir()
+            if path.is_dir() and not path.is_symlink()
+        )
+        for stale in runs[:-keep]:
+            shutil.rmtree(stale)
+    except OSError as exc:
+        print(f"Snapshot pruning skipped: {exc}", file=sys.stderr)
 
 
 @contextlib.contextmanager
@@ -806,10 +848,10 @@ def prepared_run(
 ) -> Generator[tuple[Path, Path, dict[str, str]], None, None]:
     """Prepare private per-run state, scope search, and recoverable writer changes."""
     check_process_records(scope.root)
-    quarantine = scope.root / "tools/runtime-state/cancellation-unconfirmed.json"
-    if quarantine.exists():
+    quarantine = scope.root / CANCELLATION_GATE
+    if cancellation_gate_present(scope.root):
         raise ValueError(
-            "Previous tool cancellation is unconfirmed. Inspect tools/runtime-state/cancellation-unconfirmed.json before another run."
+            f"Previous tool cancellation is unconfirmed. Inspect {CANCELLATION_GATE} before another run."
         )
     executable = runtime_executable(scope.root)
     if require_verification:
@@ -1074,13 +1116,14 @@ def _execute_prepared(
         # Annotated so a stdin typed as Any cannot widen the narrowed type back to int | None.
         stdin_fd: int = sys.stdin.fileno()
         terminal = stdin_fd
-        foreground = os.tcgetpgrp(terminal)
-        previous[signal.SIGTTOU] = signal.signal(signal.SIGTTOU, signal.SIG_IGN)
         try:
+            foreground = os.tcgetpgrp(terminal)
+            previous[signal.SIGTTOU] = signal.signal(signal.SIGTTOU, signal.SIG_IGN)
             os.tcsetpgrp(terminal, child.pid)
         except OSError:
             terminate_group(child, grace=6.0)
-            signal.signal(signal.SIGTTOU, previous[signal.SIGTTOU])
+            if signal.SIGTTOU in previous:
+                signal.signal(signal.SIGTTOU, previous[signal.SIGTTOU])
             raise
 
     def stop(signum: int, _frame: FrameType | None) -> None:
@@ -1108,14 +1151,12 @@ def _execute_prepared(
             # Allow it to finish before killing the outer wrapper and proxies.
             terminate_group(child, grace=6.0)
         if result == 125:
-            evidence = run / "scratch/inner-cancellation.json"
-            data: dict[str, object] = (
-                json.loads(evidence.read_text()) if evidence.is_file() else {}
+            group_id = _inner_cancellation_group(
+                run / "scratch/inner-cancellation.json"
             )
-            group_id = data.get("group_id")
             raise ProcessCleanupError(
                 "Agent reported unconfirmed descendant cancellation",
-                group_id=group_id if isinstance(group_id, int) else None,
+                group_id=group_id,
             )
         if result < 0 or result in (128 + signal.SIGTERM, 128 + signal.SIGINT):
             # Native providers may own separate tool groups. After an outer

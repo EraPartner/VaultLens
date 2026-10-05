@@ -116,6 +116,29 @@ class MaintenanceTests(unittest.TestCase):
                 maintenance.maintain(self.root)
             run.assert_not_called()
 
+    def test_non_object_registry_metadata_is_a_value_error(self) -> None:
+        for payload in (b"[1]", b"null", b"{}", b'{"version": 3}'):
+            with self.subTest(payload=payload):
+                response = mock.MagicMock()
+                response.__enter__.return_value.read.return_value = payload
+                opener = mock.Mock()
+                opener.open.return_value = response
+                with mock.patch.object(
+                    maintenance.urllib.request, "build_opener", return_value=opener
+                ):
+                    with self.assertRaises(ValueError):
+                        maintenance.latest_release()
+
+    def test_symlinked_gate_blocks_maintenance(self) -> None:
+        gate = self.root / "tools/runtime-state/cancellation-unconfirmed.json"
+        gate.symlink_to(self.root / "missing-target")
+        with (
+            mock.patch.object(maintenance.subprocess, "run") as install,
+            self.assertRaisesRegex(ValueError, "Unconfirmed cleanup"),
+        ):
+            maintenance.maintain(self.root)
+        install.assert_not_called()
+
     def test_new_registry_release_is_reported_without_updating_pin(self) -> None:
         with (
             mock.patch.object(maintenance, "maintain") as maintain,
