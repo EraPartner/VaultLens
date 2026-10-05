@@ -83,6 +83,8 @@ wiki/index.md
 # brain's size and shape into the scaffold. Regenerate locally after cloning.
 wiki/_index.md
 wiki/system/_index.md
+# Archive registry written by `wiki.py archive`: private page paths and reasons.
+wiki/system/archive-registry.json
 
 projects/*/
 !.gitkeep

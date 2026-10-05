@@ -56,6 +56,7 @@ class InitTests(unittest.TestCase):
             "raw/inbox/private.pdf",
             "raw/review-inbox/private.url",
             "wiki/log/private.json",
+            "wiki/system/archive-registry.json",
         ]
         for relative in payloads:
             result = subprocess.run(
