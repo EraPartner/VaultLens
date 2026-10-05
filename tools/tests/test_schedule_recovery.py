@@ -21,6 +21,7 @@ from _loader import load_module
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "schedule"))
 import dispatch  # noqa: E402
 import agenda  # noqa: E402
+import restore_project as restore_cli  # noqa: E402
 from restore_project import restore_project  # noqa: E402
 
 # One alias per private name the suite exercises (tests legitimately touch internals).
@@ -1125,12 +1126,30 @@ class SchedulerRecoveryTests(unittest.TestCase):
             )
             arguments = shlex.split(command.split("`: `", 1)[1].removesuffix("`"))
             result = subprocess.run(
-                [sys.executable, *arguments[1:]], capture_output=True, text=True
+                [sys.executable, *arguments[1:]],
+                capture_output=True,
+                text=True,
+                env={**os.environ, "HOME": str(root / "home")},
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((project / "note").read_text(), "original")
             self.assertFalse((project / "created-by-run").exists())
             self.assertIn("previous contents preserved", result.stdout)
+
+    def test_restore_pauses_the_nightly_runner_until_ack(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            snapshot, project = self.fixture(root)
+            state = root / "runner-state.json"
+            with patch.object(agenda, "RUNNER_STATE_PATH", state):
+                self.assertFalse(agenda.is_paused_for_review(project.name))
+                rc = restore_cli.main(
+                    ["--snapshot", str(snapshot), "--project", str(project)]
+                )
+                self.assertEqual(rc, 0)
+                self.assertTrue(agenda.is_paused_for_review(project.name))
+                agenda.ack(project.name)
+                self.assertFalse(agenda.is_paused_for_review(project.name))
 
     def test_restore_copy_failure_keeps_current_tree(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

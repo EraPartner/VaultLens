@@ -288,6 +288,24 @@ class ProviderCommandsTests(unittest.TestCase):
             overrides(codex)["projects"]["/selected/vault"]["trust_level"], "untrusted"
         )
 
+    def test_interactive_sessions_add_the_boundary_without_a_synthetic_turn(
+        self,
+    ) -> None:
+        claude = build_provider_command("claude", request(interactive=True))
+        # Appending keeps Claude Code's own interactive prompt.
+        self.assertEqual(option(claude, "--append-system-prompt"), "ROLE")
+        self.assertNotIn("--system-prompt", claude)
+        self.assertEqual(claude[-1], "TASK")
+        headless = build_provider_command("claude", request())
+        self.assertEqual(option(headless, "--system-prompt"), "ROLE")
+        codex = build_provider_command("codex", request(interactive=True))
+        self.assertEqual(overrides(codex)["developer_instructions"], "ROLE")
+        self.assertEqual(codex[-2:], ["--", "TASK"])
+        # With no task the TUI opens idle instead of submitting the instruction.
+        idle = build_provider_command("codex", request(interactive=True, task_prompt=""))
+        self.assertNotIn("--", idle)
+        self.assertEqual(overrides(idle)["developer_instructions"], "ROLE")
+
     def test_explicit_stdio_mcp_is_translated_without_ambient_servers(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "scoped-mcp.json"

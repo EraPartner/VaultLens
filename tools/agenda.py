@@ -919,6 +919,18 @@ def record_run(slug: str, executed: int, when: str | None = None) -> None:
     save_runner_state(state)
 
 
+def pause_for_review(slug: str) -> None:
+    """Hold `slug` until the operator acks, e.g. after its run was rolled back.
+
+    A restored snapshot brings back the clear, due tasks the operator just
+    rejected; without a pause the next night would redo the same work.
+    """
+    state = load_runner_state()
+    rec = state.setdefault(slug, {"unacked": 0, "last_run": None})
+    rec["unacked"] = max(int(rec.get("unacked", 0)), MAX_UNACKED_NIGHTS)
+    save_runner_state(state)
+
+
 def ack(slug: str) -> None:
     """Operator reviewed `slug`'s changes — reset its stacking counter."""
     state = load_runner_state()

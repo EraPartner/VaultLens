@@ -117,6 +117,8 @@ INSTRUCTION_EXPORTS = {
     "wiki-agents.migration.md": ".agents/skills/wiki-agents/SKILL.md",
     "project-agents.migration.md": "projects/AGENTS.md",
     "wiki-project-clarify.migration.md": ".agents/skills/wiki-project-clarify/SKILL.md",
+    # wiki-agent.py refuses to run without the shared live-context policy.
+    "context-policy.migration.md": ".agents/context-policy.md",
     **{f"roles/{name}.md": f".agents/roles/{name}.md" for name in ROLE_NAMES},
 }
 ADAPTER_EXPORTS = (
