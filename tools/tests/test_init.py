@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import subprocess
 import sys
 import tempfile
@@ -65,6 +66,17 @@ class InitTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(result.returncode, 0, relative)
+
+    def test_templater_never_runs_code_in_new_notes(self) -> None:
+        # Agents create notes; Templater would run their `<%*` code on the host.
+        config = json.loads(
+            (REPO_ROOT / ".obsidian/plugins/templater-obsidian/data.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertIs(config["trigger_on_file_creation"], False)
+        self.assertIs(config["enable_system_commands"], False)
+        self.assertEqual(config["startup_templates"], [""])
 
     def test_operator_profile_is_an_optional_link_target(self) -> None:
         self.assertIn("entities/user-background", wiki.SPECIAL_LINK_TARGETS)
