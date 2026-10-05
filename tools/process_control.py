@@ -11,13 +11,8 @@ from pathlib import Path
 from collections.abc import Mapping
 from typing import IO, Any, Protocol, Required, TypedDict, TypeGuard, Unpack
 
-
-class ProcessCleanupError(RuntimeError):
-    """The caller must retain its cancellation gate until cleanup is confirmed."""
-
-    def __init__(self, message: str, *, group_id: int | None = None) -> None:
-        super().__init__(message)
-        self.group_id: int | None = group_id
+# Re-exported: callers import it from here; it lives in a leaf module so the guardian can too.
+from process_errors import ProcessCleanupError as ProcessCleanupError
 
 
 class SupervisedProcess(Protocol):
