@@ -31,7 +31,19 @@ from wiki import (
 )
 
 
+def _valid_slug(slug: str) -> bool:
+    """A project slug is one plain directory name under `projects/`."""
+    return (
+        bool(slug)
+        and slug == slug.strip()
+        and not slug.startswith(".")
+        and not any(ch in slug for ch in "/\\\0")
+    )
+
+
 def _find_project(slug: str) -> Project | None:
+    if not _valid_slug(slug):
+        return None
     project_md = PROJECTS_DIR / slug / "project.md"
     if not project_md.exists():
         return None
@@ -246,7 +258,7 @@ def _rebuild_deadlines() -> None:
 
 def _project_new(slug: str) -> int:
     cleaned = slug.strip().strip("/")
-    if not cleaned or "/" in cleaned or cleaned.startswith("."):
+    if not _valid_slug(cleaned):
         print(f"Invalid project slug: {slug!r}")
         return 1
     project_dir = PROJECTS_DIR / cleaned
@@ -462,6 +474,10 @@ def _project_agenda(
 ) -> int:
     """Handle `project agenda <sub> [<slug>] [<id>]`, delegating to tools/agenda.py."""
     today = dt.date.today()
+
+    if proj and not _valid_slug(proj):
+        print(f"Invalid project slug: {proj!r}")
+        return 1
 
     if sub == "scaffold-all":
         created = agenda.scaffold_all(PROJECTS_DIR, today)

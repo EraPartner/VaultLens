@@ -251,13 +251,16 @@ def search(query: str, limit: int, include_archived: bool = False) -> int:
     pages = list_content_pages()
     if not include_archived:
         pages = [page for page in pages if not page.is_archived]
+    patterns = [
+        re.compile(rf"(?<![A-Za-z0-9_]){re.escape(term)}(?![A-Za-z0-9_])")
+        for term in terms
+    ]
     scored: list[tuple[int, Page]] = []
     for page in pages:
         text = page.body.lower()
         title = page.title.lower()
         score = 0
-        for term in terms:
-            pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(term)}(?![A-Za-z0-9_])")
+        for pattern in patterns:
             score += len(pattern.findall(text))
             score += 5 * len(pattern.findall(title))
         if score > 0:
@@ -268,7 +271,7 @@ def search(query: str, limit: int, include_archived: bool = False) -> int:
         print("No results")
         return 0
 
-    for score, page in scored[:limit]:
+    for score, page in scored if limit <= 0 else scored[:limit]:
         print(f"{score:>3}  {page.rel.as_posix()}  {page.title}")
     return 0
 

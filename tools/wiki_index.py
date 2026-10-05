@@ -80,7 +80,9 @@ def build_category_index(category: str, pages: list[Page], today: str) -> str:
         "| --- | --- | --- | --- | --- |",
     ]
     for page in ordered:
-        link = f"[{_cell(page.title)}]({page.rel.name})"
+        # Relative to the category directory: nested pages keep their subfolder.
+        target = Path(*page.rel.parts[1:]).as_posix()
+        link = f"[{_cell(page.title)}]({target})"
         summary = _cell(_truncate(page.summary))
         tags = _cell(", ".join(page.tags))
         conf = _cell(page.confidence)
