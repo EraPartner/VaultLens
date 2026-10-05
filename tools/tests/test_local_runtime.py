@@ -396,6 +396,9 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn(str(self.root / ".obsidian"), filesystem["denyWrite"])
         self.assertIn(str(self.root / "tools/runtime-state"), filesystem["denyRead"])
         self.assertIn(
+            str(self.root / "tools/host-repair-backups"), filesystem["denyRead"]
+        )
+        self.assertIn(
             str(self.root / "tools/public-script.py"), filesystem["denyWrite"]
         )
         self.assertIn(str(self.run_dir / "provider"), filesystem["allowWrite"])

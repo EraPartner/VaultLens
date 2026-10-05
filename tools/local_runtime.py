@@ -559,6 +559,8 @@ def compile_settings(
         "/",
         str(state),
         str(scope.root / "tools/runtime-node"),
+        # Host repair backups hold the operator's shell functions and host paths.
+        str(scope.root / "tools/host-repair-backups"),
         str(scope.root / "raw/review-inbox"),
         *(str(path) for path in scope.denied_paths),
         # The account's real home, plus $HOME when an inherited variable differs.
