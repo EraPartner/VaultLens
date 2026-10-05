@@ -131,24 +131,24 @@ def main() -> int:
     print("compute_next_due (run on Sunday 2026-06-28):")
     check(
         "nightly +1",
-        agenda.compute_next_due("nightly", None, today) == date(2026, 6, 29),
+        agenda.compute_next_due("nightly", today) == date(2026, 6, 29),
     )
     check(
         "every:3d +3",
-        agenda.compute_next_due("every:3d", None, today) == date(2026, 7, 1),
+        agenda.compute_next_due("every:3d", today) == date(2026, 7, 1),
     )
     check(
         "weekly:Mon -> next Mon",
-        agenda.compute_next_due("weekly:Mon", None, today) == date(2026, 6, 29),
+        agenda.compute_next_due("weekly:Mon", today) == date(2026, 6, 29),
     )
     check(
         "weekly:Sun strictly after -> +7",
-        agenda.compute_next_due("weekly:Sun", None, today) == date(2026, 7, 5),
+        agenda.compute_next_due("weekly:Sun", today) == date(2026, 7, 5),
     )
-    check("once -> None", agenda.compute_next_due("once", None, today) is None)
+    check("once -> None", agenda.compute_next_due("once", today) is None)
     check(
         "weekdays next match",
-        agenda.compute_next_due("weekdays:Mon,Wed,Fri", None, today)
+        agenda.compute_next_due("weekdays:Mon,Wed,Fri", today)
         == date(2026, 6, 29),
     )
 
@@ -225,6 +225,26 @@ def main() -> int:
         check("T2 questions removed", t2b.questions == [])
         check("clarifications entry removed", "opened 2026-06-28" not in body)
         check("updated stamped", fm2.get("updated") == "2026-06-28")
+
+    print("resolve only touches real tasks (not Clarifications entries):")
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "AGENDA.md"
+        orphan = SAMPLE.replace(
+            "### [T2] Survey recent papers — opened", "### [T9] Orphan question — opened"
+        )
+        p.write_text(orphan, encoding="utf-8")
+        found = agenda.resolve(p, "T9", today)
+        check("resolve of an id with no task returns False", found is False)
+        check("orphan Clarifications entry is not edited", p.read_text(encoding="utf-8") == orphan)
+        check("complete of an orphan id returns False", agenda.complete(p, "T9", today) is False)
+
+    print("operator-facing text names the real skill:")
+    check("scaffold points at wiki-project-clarify", "/project-clarify" not in agenda.AGENDA_TEMPLATE)
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "AGENDA.md"
+        p.write_text(SAMPLE, encoding="utf-8")
+        agenda.resolve(p, "T2", today)
+        check("resolve run-log names the real skill", "/project-clarify" not in p.read_text(encoding="utf-8"))
 
     print("lint:")
     with tempfile.TemporaryDirectory() as d:

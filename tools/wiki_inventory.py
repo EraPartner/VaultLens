@@ -94,6 +94,10 @@ def inventory_new(
             f"Unknown priority {priority!r}. Choose from: {', '.join(sorted(PRIORITIES))}"
         )
         return 1
+    for name, value in (("title", title), ("summary", summary)):
+        if "\n" in value or "\r" in value:
+            print(f"Invalid {name}: must be a single line")
+            return 1
     cleaned = slug.strip().strip("/")
     if not cleaned or "/" in cleaned or cleaned.startswith("."):
         print(f"Invalid slug: {slug!r}")

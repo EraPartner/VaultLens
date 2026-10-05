@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # Install / refresh the Brain scheduled-agent LaunchAgent.
 #
-# User-level only (no sudo): copies the plist into ~/Library/LaunchAgents and
+# User-level only (no sudo): renders the plist template for this checkout and
+# account (render_plist.py), installs the result into ~/Library/LaunchAgents and
 # (re)bootstraps it into the per-user GUI domain. The overnight forced-wake
-# (pmset) needs sudo and is NOT run here -- it is printed for you to run.
+# (pmset) and the sudoers rule need sudo and are NOT run here -- they are
+# printed for you to run (--render-sudoers fills in the sudoers template).
 #
-# Re-run this after editing com.brain.schedule.plist or dispatch.py.
+# Re-run this after editing com.brain.schedule.plist, dispatch.py or
+# render_plist.py; the dispatcher itself needs no reinstall for code-only edits
+# because launchd runs it straight from this checkout.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,6 +18,14 @@ SRC="$HERE/$LABEL.plist"
 DEST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
 MODE="${1:---install}"
+case "$MODE" in
+  --install|--prepare-disabled|--enable-prepared|--render|--render-sudoers) ;;
+  *)
+    echo "usage: $0 [--install|--prepare-disabled|--enable-prepared|--render OUTPUT|--render-sudoers OUTPUT]" >&2
+    exit 2
+    ;;
+esac
+
 PYTHON="${BRAIN_PYTHON:-/opt/homebrew/bin/python3}"
 if [[ -n "${BRAIN_PYTHON:-}" ]]; then
   PYTHON="$(command -v "$BRAIN_PYTHON")" || {
@@ -31,17 +43,14 @@ if ! "$PYTHON" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else "D
   exit 2
 fi
 
-case "$MODE" in
-  --install|--prepare-disabled|--enable-prepared|--render) ;;
-  *)
-    echo "usage: $0 [--install|--prepare-disabled|--enable-prepared|--render OUTPUT]" >&2
-    exit 2
-    ;;
-esac
-
 if [[ "$MODE" == "--render" ]]; then
   [[ $# -eq 2 ]] || { echo "--render requires an output path" >&2; exit 2; }
   exec "$PYTHON" "$HERE/render_plist.py" "$SRC" "$2" --python-executable "$PYTHON"
+fi
+
+if [[ "$MODE" == "--render-sudoers" ]]; then
+  [[ $# -eq 2 ]] || { echo "--render-sudoers requires an output path" >&2; exit 2; }
+  exec "$PYTHON" "$HERE/render_plist.py" --sudoers "$HERE/brain-schedule.sudoers" "$2"
 fi
 
 if [[ "$MODE" == "--enable-prepared" ]]; then
@@ -110,8 +119,9 @@ To remove the wake later:
 
 To run the nightly batch with the LID CLOSED on AC (no external display needed),
 install the least-privilege sudoers rule (3 exact pmset calls, nothing else):
-  sudo install -m 0440 -o root -g wheel "$HERE/brain-schedule.sudoers" /etc/sudoers.d/brain-schedule
-  sudo visudo -cf /etc/sudoers.d/brain-schedule   # must print "parsed OK"
+  "$HERE/install.sh" --render-sudoers /tmp/brain-schedule.sudoers
+  sudo visudo -cf /tmp/brain-schedule.sudoers      # must print "parsed OK"
+  sudo install -m 0440 -o root -g wheel /tmp/brain-schedule.sudoers /etc/sudoers.d/brain-schedule
 Without it, lid-closed nights are skipped and caught up when you next open on AC.
 To remove it:
   sudo rm /etc/sudoers.d/brain-schedule

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 from typing import cast
 
 from wiki import (
@@ -27,25 +28,46 @@ from wiki import (
 REGISTRY_PATH = WIKI_DIR / "system" / "archive-registry.json"
 
 
+class RegistryError(Exception):
+    """The archive registry exists but cannot be trusted."""
+
+
 def _load_registry() -> dict[str, dict[str, str]]:
     if not REGISTRY_PATH.exists():
         return {}
     try:
         data = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {}
-    archived = data.get("archived", {})
-    if not isinstance(archived, dict):
-        return {}
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise RegistryError(f"{REGISTRY_PATH} is not valid JSON ({exc})") from exc
     # json.loads yields Unknown here; the registry is only written by _save_registry,
     # which emits exactly this shape.
+    if not isinstance(data, dict):
+        raise RegistryError(f"{REGISTRY_PATH} is not a JSON object")
+    archived = cast("dict[str, object]", data).get("archived")
+    if not isinstance(archived, dict):
+        raise RegistryError(f"{REGISTRY_PATH} has no 'archived' object")
     return cast("dict[str, dict[str, str]]", archived)
 
 
 def _save_registry(archived: dict[str, dict[str, str]]) -> None:
     REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
     payload = {"archived": dict(sorted(archived.items()))}
-    REGISTRY_PATH.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    tmp = REGISTRY_PATH.with_name(f".{REGISTRY_PATH.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, REGISTRY_PATH)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _registry_or_report() -> dict[str, dict[str, str]] | None:
+    """Load the registry, or print why it is unusable. Never replaces a bad file."""
+    try:
+        return _load_registry()
+    except RegistryError as exc:
+        print(f"Archive registry unusable: {exc}")
+        print("Fix or remove it by hand; nothing was changed.")
+        return None
 
 
 def _resolve_key(ref: str) -> Page | None:
@@ -77,8 +99,10 @@ def archive_page(ref: str, reason: str) -> int:
     if page.is_archived:
         print(f"Already archived: {key}")
         return 0
+    registry = _registry_or_report()
+    if registry is None:
+        return 1
     _set_status(page, "archived")
-    registry = _load_registry()
     registry[key] = {"archived_on": dt.date.today().isoformat(), "reason": reason or ""}
     _save_registry(registry)
     print(f"Archived {key} (status: archived, registry updated).")
@@ -92,8 +116,16 @@ def restore_page(ref: str) -> int:
         print(f"Page not found: {ref!r}")
         return 1
     key = page.rel.with_suffix("").as_posix()
+    registry = _registry_or_report()
+    if registry is None:
+        return 1
+    if not page.is_archived:
+        # Never promote a draft/superseded page to active; only clear stale registry rows.
+        if registry.pop(key, None) is not None:
+            _save_registry(registry)
+        print(f"Not archived: {key} (status: {page.status or 'unset'}); status unchanged.")
+        return 0
     _set_status(page, "active")
-    registry = _load_registry()
     registry.pop(key, None)
     _save_registry(registry)
     print(f"Restored {key} (status: active, removed from registry).")
@@ -102,7 +134,9 @@ def restore_page(ref: str) -> int:
 
 
 def list_archived(as_json: bool) -> int:
-    registry = _load_registry()
+    registry = _registry_or_report()
+    if registry is None:
+        return 1
     # Reconcile with on-disk status so the registry can't silently drift.
     on_disk = {
         page.rel.with_suffix("").as_posix()

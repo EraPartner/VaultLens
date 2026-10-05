@@ -62,6 +62,7 @@ from llm_provider import (  # noqa: E402
 )
 from agent_profiles import AGENT_FILES, resolve_role_settings  # noqa: E402
 from local_runtime import default_access_profile, runtime_available  # noqa: E402
+from process_control import ProcessCleanupError, signal_group  # noqa: E402
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -182,6 +183,9 @@ from project_state import is_frozen_project  # noqa: E402
 MAX_PROJECTS_PER_NIGHT = 4
 SNAPSHOT_DIR = STATE_DIR / "project-snapshots"
 SNAPSHOT_RETENTION_DAYS = 14
+# Dispatcher logs under ~/.brain/logs: dated tick logs and per-invocation agent
+# stdout/stderr captures (kept after a failed or cancelled run for diagnosis).
+LOG_RETENTION_DAYS = 30
 
 # Backoff for short rate-limits (seconds): 30m -> 1h -> 2h (capped). Monthly quota
 # uses a flat ~24h re-probe (we don't try to compute the exact reset).
@@ -241,6 +245,25 @@ def in_window(now: datetime, window: tuple[int, int]) -> bool:
 Ledger = dict[str, Any]  # pyright: ignore[reportExplicitAny] - persisted JSON validated by load_ledger
 
 
+def _require_timestamp(record: Ledger, key: str, where: str) -> None:
+    """Refuse a ledger whose `key` is set but is not a timezone-aware ISO time.
+
+    Later code compares these values with `now`; a malformed one would abort the
+    tick with a bare ValueError or TypeError instead of the recovery message.
+    """
+    value = record.get(key)
+    if value is None:
+        return
+    try:
+        if not isinstance(value, str) or parse(value).tzinfo is None:
+            raise ValueError(value)
+    except ValueError:
+        raise RuntimeError(
+            f"Schedule ledger {where}.{key} is not a timezone-aware ISO time; "
+            "refusing unattended work."
+        ) from None
+
+
 def load_ledger() -> Ledger:
     try:
         loaded: object = json.loads(STATE_FILE.read_text(encoding="utf-8"))
@@ -269,6 +292,10 @@ def load_ledger() -> Ledger:
             raise RuntimeError(
                 f"Schedule ledger {key} is malformed; refusing unattended work."
             )
+    for name, record in data["jobs"].items():
+        _require_timestamp(record, "last_ok", f"jobs.{name}")
+    for name, record in data["accounts"].items():
+        _require_timestamp(record, "limited_until", f"accounts.{name}")
     for key in ("agent_in_flight", "cancellation_pending"):
         if key in data and not isinstance(data[key], dict):
             raise RuntimeError(
@@ -315,31 +342,45 @@ def save_ledger(ledger: Ledger) -> None:
 # --------------------------------------------------------------------------- #
 
 
+_TRACEBACK_FRAME_RE = re.compile(r'^\s*File ".*", line \d+', re.IGNORECASE)
+# `quota` also matches inside error codes such as `insufficient_quota`.
+_QUOTA_RE = re.compile(
+    r"(?<![a-z0-9])quotas?(?![a-z0-9])|premium request|monthly limit"
+    r"|upgrade your plan|usage[ _-]limit|session limit|weekly limit"
+    r"|hit your limit|spend(?:ing)? limit|credit balance is too low"
+)
+_RATELIMIT_RE = re.compile(r"rate[ -]limit|(?<![\w.])429(?![\w.])|too many requests")
+
+
+def _without_traceback_frames(text: str) -> str:
+    """Drop Python traceback frame lines and the source line printed under each."""
+    kept: list[str] = []
+    skip_source = False
+    for line in text.splitlines():
+        if _TRACEBACK_FRAME_RE.match(line):
+            skip_source = True
+            continue
+        if skip_source and line.startswith(" "):
+            skip_source = False
+            continue
+        skip_source = False
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def classify_failure(returncode: int, text: str) -> str:
-    """Map a CLI exit into one of: ok | quota | ratelimit | transient."""
+    """Map a CLI exit into one of: ok | quota | ratelimit | transient.
+
+    Traceback frames are ignored and bare `quota`/`429` match only as whole
+    tokens, so a line number or identifier in a crash trace cannot start a 24h
+    cooldown for the whole LLM batch.
+    """
     if returncode == 0:
         return "ok"
-    t = text.lower()
-    if any(
-        s in t
-        for s in (
-            "quota",
-            "premium request",
-            "monthly limit",
-            "upgrade your plan",
-            "usage limit",
-            "usage_limit",
-            "usage-limit",
-            "session limit",
-            "weekly limit",
-            "hit your limit",
-            "spend limit",
-            "spending limit",
-            "credit balance is too low",
-        )
-    ):
+    t = _without_traceback_frames(text.lower())
+    if _QUOTA_RE.search(t):
         return "quota"
-    if any(s in t for s in ("rate limit", "rate-limit", "429", "too many requests")):
+    if _RATELIMIT_RE.search(t):
         return "ratelimit"
     return "transient"
 
@@ -380,13 +421,15 @@ def step_due(step: "Step", ledger: Ledger, now: datetime) -> bool:
         return False
     rec = ledger["jobs"].get(step.name, {})
     last = rec.get("last_ok")
-    last_dt = parse(last) if last else None
+    last_dt = parse(last).astimezone(now.tzinfo) if last else None
     if step.period == "daily":
         return not (last_dt and last_dt.date() == now.date())
     if step.period == "weekly":
         if last_dt is None:
             return True  # first run on the first eligible nightly window
-        age = (now - last_dt).days
+        # Calendar days, not elapsed 24h blocks: a tick earlier in the day than
+        # the previous success would otherwise count 6 days and slip a weekday.
+        age = (now.date() - last_dt.date()).days
         if age < 7:
             return False
         if now.weekday() == 6:  # prefer Sunday
@@ -413,11 +456,6 @@ class Step:
     effort: str = "low"  # Scheduled runs pass this override to either provider.
     timeout: int = 1800
     report: bool = False  # capture stdout into excluded wiki/reports/agents/scheduled
-
-
-def _slugify(text: str) -> str:  # pyright: ignore[reportUnusedFunction]  # no production caller; exercised by test_schedule.py
-    """Lowercase-hyphen slug matching the wiki's source-page / source-text naming."""
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
 def _select_ingest_pdfs(
@@ -569,12 +607,12 @@ def _snapshot_project(
                     "Snapshot or completion marker is not a regular target"
                 )
             metadata = json.loads(completion.read_text(encoding="utf-8"))
-            stat = dst.stat()
+            dst_stat = dst.stat()
             expected = {
                 "version": 1,
                 "project": slug,
-                "device": stat.st_dev,
-                "inode": stat.st_ino,
+                "device": dst_stat.st_dev,
+                "inode": dst_stat.st_ino,
             }
             if metadata != expected:
                 raise ValueError("Completion marker does not match this snapshot")
@@ -607,15 +645,15 @@ def _snapshot_project(
                     elif staged.exists() or staged.is_symlink():
                         staged.unlink()
                     continue
-                stat = staged.stat()
+                staged_stat = staged.stat()
                 staged_marker = Path(temporary) / "complete.json"
                 staged_marker.write_text(
                     json.dumps(
                         {
                             "version": 1,
                             "project": slug,
-                            "device": stat.st_dev,
-                            "inode": stat.st_ino,
+                            "device": staged_stat.st_dev,
+                            "inode": staged_stat.st_ino,
                         }
                     )
                     + "\n",
@@ -646,6 +684,43 @@ def _prune_snapshots(retention_days: int = SNAPSHOT_RETENTION_DAYS) -> int:
         if d < cutoff:
             shutil.rmtree(date_dir, ignore_errors=True)
             removed += 1
+    return removed
+
+
+_LOG_NAME_RE = re.compile(
+    r"schedule-\d{4}-\d{2}-\d{2}\.log|agent-[A-Za-z0-9_]+\.std(?:out|err)\.log"
+)
+
+
+def _prune_logs(
+    log_dir: Path | None = None,
+    retention_days: int = LOG_RETENTION_DAYS,
+    *,
+    keep_agent_logs: bool = False,
+) -> int:
+    """Delete dispatcher logs older than the retention window; return the count.
+
+    Only regular files named like the dispatcher's own logs are touched (launchd's
+    own out/err logs and anything else stay). `keep_agent_logs` preserves agent
+    captures while a cancellation is unresolved: the recovery message points at them.
+    """
+    directory = LOG_DIR if log_dir is None else log_dir
+    if directory.is_symlink() or not directory.is_dir():
+        return 0
+    cutoff = now_local().timestamp() - retention_days * 86400
+    removed = 0
+    for entry in directory.iterdir():
+        if not _LOG_NAME_RE.fullmatch(entry.name):
+            continue
+        if keep_agent_logs and entry.name.startswith("agent-"):
+            continue
+        try:
+            metadata = entry.lstat()
+            if stat.S_ISREG(metadata.st_mode) and metadata.st_mtime < cutoff:
+                entry.unlink()
+                removed += 1
+        except OSError:
+            continue
     return removed
 
 
@@ -912,8 +987,8 @@ class Gates:
 # --------------------------------------------------------------------------- #
 
 
-def run_host(args: list[str], timeout: int) -> tuple[int, str]:
-    cmd = [PYTHON, str(ROOT / "tools" / "wiki.py")] + args
+def _run_captured(cmd: list[str], timeout: int) -> tuple[int, str]:
+    """Run a host command; map timeout to 124 and launch failure to 127."""
     try:
         p = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout, cwd=str(ROOT)
@@ -925,17 +1000,13 @@ def run_host(args: list[str], timeout: int) -> tuple[int, str]:
         return 127, str(error)
 
 
+def run_host(args: list[str], timeout: int) -> tuple[int, str]:
+    return _run_captured([PYTHON, str(ROOT / "tools" / "wiki.py"), *args], timeout)
+
+
 def run_qmd(args: list[str], timeout: int) -> tuple[int, str]:
     """Run qmd on the host so it can use Metal and its persistent host index."""
-    try:
-        p = subprocess.run(
-            [QMD, *args], capture_output=True, text=True, timeout=timeout, cwd=str(ROOT)
-        )
-        return p.returncode, (p.stdout or "") + (p.stderr or "")
-    except subprocess.TimeoutExpired:
-        return 124, "timeout"
-    except OSError as error:
-        return 127, str(error)
+    return _run_captured([QMD, *args], timeout)
 
 
 def exec_brain_wiki(
@@ -1035,10 +1106,9 @@ def _cancel_agent_group(process: subprocess.Popen[str] | subprocess.Popen[bytes]
     issues: list[str] = []
     for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
-            os.killpg(process.pid, sig)
-        except ProcessLookupError:
-            break
-        except OSError as exc:
+            if not signal_group(process, sig):
+                break
+        except (ProcessCleanupError, OSError) as exc:
             issues.append(f"{sig.name}: {exc}")
         if sig == signal.SIGTERM:
             try:
@@ -1515,30 +1585,26 @@ def notify(title: str, msg: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Chief-of-Staff proposals → per-project inboxes (the CoS→AGENDA routing seam)
+# Handoff routing → per-project inboxes (the project-runner→AGENDA seam)
 # --------------------------------------------------------------------------- #
 #
 # The CoS is read-only by design (SPEC decision 4): it emits a machine-readable
-# `## Proposals` block in its brief but writes nothing. The dispatcher — which
-# already captures the brief's stdout into a report — also parses that block and
-# appends each proposal to the `## Inbox` of the PROJECT it names. The existing
-# project-runner then grooms + (when that project is enabled) actions them, so
-# there is ONE executor per project, not a second write-capable agent. Keeps the
-# orthogonal split: CoS decides what should happen (and where), the dispatcher
-# wires, each project's runner acts within its own scope. A proposal whose target
-# is not a real project is left advisory (logged + still in the brief/report), not
-# force-filed somewhere — so there is no catch-all "assistant" project to maintain.
+# `## Proposals` block in its brief but writes nothing, and the dispatcher no
+# longer routes it: strip_cos_proposals removes that tail from the stored brief.
+# Only project-runner `handoff::` lines are routed, through route_handoffs, into
+# the `## Inbox` of the project they name. The existing project-runner then
+# grooms + (when that project is enabled) actions them, so there is ONE executor
+# per project, not a second write-capable agent. A handoff whose target is not a
+# real opted-in project is left advisory (logged), not force-filed somewhere.
 
 
-# The shared routed-work-item grammar for BOTH CoS proposals and inter-role
-# handoffs: `<keyword>:: <target-project> | <imperative task> | <why-or-ref>`.
+# The routed-work-item grammar: `<keyword>:: <target-project> | <imperative task> | <why-or-ref>`.
 def _routed_re(keyword: str) -> re.Pattern[str]:
     return re.compile(
         rf"^\s*{keyword}::\s*(?P<target>[^|]+?)\s*\|\s*(?P<task>[^|]+?)\s*\|\s*(?P<why>.+?)\s*$"
     )
 
 
-_PROPOSAL_RE = _routed_re("proposal")  # CoS → project
 _HANDOFF_RE = _routed_re("handoff")  # any producer role → another desk
 
 
@@ -1579,11 +1645,6 @@ def _parse_routed(text: str, pattern: re.Pattern[str]) -> list[RoutedItem]:
         if task and target:
             out.append({"target": target, "task": task, "why": why})
     return out
-
-
-def parse_cos_proposals(text: str) -> list[RoutedItem]:
-    """CoS `proposal:: <project> | <task> | <why>` lines from a brief."""
-    return _parse_routed(text, _PROPOSAL_RE)
 
 
 def parse_handoffs(text: str) -> list[RoutedItem]:
@@ -1641,8 +1702,7 @@ class RoutingGuard:
     """Anti-loop / anti-runaway guard for the handoff bus. One instance is shared by
     every routing call within a SINGLE dispatcher tick, so its cap and cycle-blocks span
     all producers that route in that tick — within the nightly batch that means every
-    project-runner handoff across projects; a cos-brief that routes in the same tick
-    shares it too, but a cos-brief running in a separate morning tick gets its own guard.
+    project-runner handoff across projects.
     Blocks self-handoffs, direct reciprocal edges (A→B when B→A was already routed this
     tick), and a hard per-tick cap. Longer cycles are bounded by the cap plus the facts
     that desks default `enabled: false` and the operator reviews the brief daily; precise
@@ -1712,32 +1772,6 @@ def _route_work_items(
     return total
 
 
-def route_cos_proposals(
-    out: str,
-    now: datetime,
-    log: Callable[[str], None],
-    guard: "RoutingGuard | None" = None,
-    projects_dir: Path | None = None,
-) -> int:
-    """Route a CoS brief's `## Proposals` into the named projects' inboxes. Best-effort:
-    catches everything so a routing problem can never abort the morning tick."""
-    try:
-        props = parse_cos_proposals(out)
-        if not props:
-            return 0
-        total = _route_work_items(
-            props, "cos", now, log, guard or RoutingGuard(), projects_dir
-        )
-        if total:
-            notify(
-                "Brain schedule", f"CoS routed {total} proposal(s) to project inboxes"
-            )
-        return total
-    except Exception as e:  # noqa: BLE001 - routing must never break the tick
-        log(f"cos proposals: routing failed ({e}); brief unaffected")
-        return 0
-
-
 def route_handoffs(
     out: str,
     source: str,
@@ -1746,9 +1780,8 @@ def route_handoffs(
     guard: "RoutingGuard | None" = None,
     projects_dir: Path | None = None,
 ) -> int:
-    """Route a producer agent's `handoff::` lines to other desks' inboxes — the same
-    guarded path as CoS proposals (sharing one guard means caps and cycle-blocks span
-    both). Best-effort: never raises into the tick."""
+    """Route a producer agent's `handoff::` lines to other desks' inboxes through the
+    per-tick guard. Best-effort: never raises into the tick."""
     try:
         items = parse_handoffs(out)
         if not items:
@@ -2088,6 +2121,14 @@ def cmd_run(dry_run: bool = False) -> int:
                         f"pruned {len(pruned)} old report(s) (keep latest "
                         f"{REPORT_RETENTION}/type)"
                     )
+                logs = _prune_logs(
+                    keep_agent_logs=bool(
+                        ledger.get("cancellation_pending")
+                        or "agent_in_flight" in ledger
+                    )
+                )
+                if logs:
+                    log(f"pruned {logs} old dispatcher log(s) (keep {LOG_RETENTION_DAYS}d)")
                 snaps = _prune_snapshots()
                 if snaps:
                     log(

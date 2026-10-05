@@ -151,8 +151,12 @@ class SchedulerRecoveryTests(unittest.TestCase):
                     patch.object(fixture.Gates, "get", return_value=True) as gate,
                     patch.object(fixture, "run_host", return_value=(0, "done")) as host,
                     patch.object(fixture, "run_llm") as model,
-                    patch.object(fixture, "prune_reports", return_value=[]),
-                    patch.object(fixture, "_prune_snapshots", return_value=0),
+                    patch.multiple(
+                        fixture,
+                        prune_reports=Mock(return_value=[]),
+                        _prune_snapshots=Mock(return_value=0),
+                        _prune_logs=Mock(return_value=0),
+                    ),
                     patch.object(
                         fixture.subprocess, "run", return_value=Mock(stdout="")
                     ),
@@ -714,6 +718,7 @@ class SchedulerRecoveryTests(unittest.TestCase):
             patch.object(dispatch, "write_schedule_status"),
             patch.object(dispatch, "prune_reports", return_value=[]),
             patch.object(dispatch, "_prune_snapshots", return_value=0),
+            patch.object(dispatch, "_prune_logs", return_value=0),
             patch.object(
                 subprocess,
                 "run",
@@ -759,6 +764,43 @@ class SchedulerRecoveryTests(unittest.TestCase):
                 self.assertEqual(second, ("deferred", "claude", ""))
                 launch.assert_called_once()
                 self.assertEqual(ledger["accounts"]["claude"]["last_error"], "quota")
+
+    def test_cancel_group_reports_a_denied_signal_only_for_a_live_group(self) -> None:
+        cancel = dispatch._cancel_agent_group  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+        process = Mock()
+        process.pid = 4242
+        process.wait.return_value = 0
+        for listing, expected in (
+            ("4242 S\n1 Ss\n", "denied for live process group 4242"),
+            ("4242 Z\n1 Ss\n", None),
+            ("1 Ss\n", None),
+        ):
+            with (
+                self.subTest(listing=listing),
+                patch.object(os, "killpg", side_effect=PermissionError(1, "denied")),
+                patch.object(
+                    subprocess,
+                    "run",
+                    return_value=Mock(stdout=listing),
+                ),
+            ):
+                message = cancel(process)
+            if expected is None:
+                self.assertEqual(message, "host process group cancellation attempted")
+            else:
+                self.assertIn(expected, message)
+
+    def test_cancel_group_survives_an_unverifiable_group(self) -> None:
+        cancel = dispatch._cancel_agent_group  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+        process = Mock()
+        process.pid = 4242
+        process.wait.return_value = 0
+        with (
+            patch.object(os, "killpg", side_effect=PermissionError(1, "denied")),
+            patch.object(subprocess, "run", side_effect=OSError("ps missing")),
+        ):
+            message = cancel(process)
+        self.assertIn("cannot verify process group 4242", message)
 
     def test_scheduled_launch_is_bound_to_dispatcher_checkout(self) -> None:
         with tempfile.TemporaryDirectory(prefix="schedule checkout ") as temporary:
