@@ -174,10 +174,10 @@ def _native_alias_helper_body() -> bytes:
     ).encode()
 
 
-def native_alias_helper(source: Path | None = None) -> bytes:
+def native_alias_helper(_source: Path | None = None) -> bytes:
     """Generate a managed helper whose roots come only from alias/user choices.
 
-    ``source`` remains accepted for compatibility and never affects routing.
+    ``_source`` remains accepted for compatibility and never affects routing.
     The content stamp distinguishes an unchanged generated helper from a custom
     edit, so later tool versions can offer a reviewable helper replacement.
     """

@@ -15,7 +15,7 @@ from typing import Any, cast
 
 # Policy files are arbitrary JSON from disk; every field is validated at runtime in
 # load_policy before use, so values are typed Any at this parse boundary only.
-JsonObject = dict[str, Any]
+JsonObject = dict[str, Any]  # pyright: ignore[reportExplicitAny] - JSON parse boundary, validated in load_policy
 
 REPORT_SUBTREE = Path("wiki/reports/agents")
 

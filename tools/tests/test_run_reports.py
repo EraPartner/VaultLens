@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import os
+import secrets
 import stat
 import subprocess
 import sys
@@ -34,6 +35,9 @@ def retained_bytes(recorder: reports.Recorder) -> int:
 
 
 class ReportTests(unittest.TestCase):
+    root: Path
+    scope: RunScope
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="vaultlens-report-test-")
         self.addCleanup(temporary.cleanup)
@@ -122,7 +126,7 @@ class ReportTests(unittest.TestCase):
 
     def test_4_mib_limit_bounds_file_and_memory_without_stopping_echo(self) -> None:
         class CountingEcho:
-            count = 0
+            count: int = 0
 
             def write(self, value: str) -> int:
                 self.count += len(value.encode())
@@ -158,7 +162,7 @@ class ReportTests(unittest.TestCase):
 
     def test_stream_read_error_surfaces_with_saved_partial_output(self) -> None:
         class BrokenInput:
-            calls = 0
+            calls: int = 0
 
             def read(self, _size: int) -> str:
                 self.calls += 1
@@ -206,7 +210,7 @@ class ReportTests(unittest.TestCase):
         os.write(write_fd, b"Public pipe fixture")
         recorder = self.recorder()
         with mock.patch.object(
-            reports.os, "read", side_effect=OSError("Public read failure")
+            os, "read", side_effect=OSError("Public read failure")
         ):
             thread = recorder.pump_in_thread(stream, io.StringIO())
             thread.join(timeout=1)
@@ -365,7 +369,7 @@ class ReportTests(unittest.TestCase):
         temporary = self.scope.reports / f".{recorder.filename}.publicnonce.part"
         temporary.write_text("Public existing temporary fixture")
         with mock.patch.object(
-            reports.secrets, "token_hex", return_value="publicnonce"
+            secrets, "token_hex", return_value="publicnonce"
         ):
             with self.assertRaises(reports.ReportCaptureError):
                 recorder.finish(0)
@@ -373,7 +377,7 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(list(self.scope.reports.iterdir()), [temporary])
 
     def test_failed_disk_write_leaves_no_partial_published_file(self) -> None:
-        with mock.patch.object(reports.os, "write", return_value=0):
+        with mock.patch.object(os, "write", return_value=0):
             with self.assertRaises(reports.ReportCaptureError):
                 self.recorder().finish(0)
         self.assertEqual(list(self.scope.reports.iterdir()), [])

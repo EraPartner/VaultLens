@@ -17,7 +17,7 @@ class ProcessCleanupError(RuntimeError):
 
     def __init__(self, message: str, *, group_id: int | None = None) -> None:
         super().__init__(message)
-        self.group_id = group_id
+        self.group_id: int | None = group_id
 
 
 class SupervisedProcess(Protocol):
@@ -30,10 +30,10 @@ class SupervisedProcess(Protocol):
     def returncode(self) -> int | None: ...
 
     @property
-    def stdout(self) -> IO[Any] | None: ...
+    def stdout(self) -> IO[Any] | None: ...  # pyright: ignore[reportExplicitAny] - mirrors typeshed Popen.stdout (str or bytes)
 
     @property
-    def stderr(self) -> IO[Any] | None: ...
+    def stderr(self) -> IO[Any] | None: ...  # pyright: ignore[reportExplicitAny] - mirrors typeshed Popen.stderr (str or bytes)
 
     def poll(self) -> int | None: ...
 
@@ -42,7 +42,7 @@ class SupervisedProcess(Protocol):
     # Any mirrors typeshed's Popen.communicate, which is tuple[Any, Any] for str and bytes pipes.
     def communicate(
         self, input: None = None, timeout: float | None = None
-    ) -> tuple[Any, Any]: ...
+    ) -> tuple[Any, Any]: ...  # pyright: ignore[reportExplicitAny] - mirrors typeshed Popen.communicate
 
 
 class OwnedProcess(SupervisedProcess, Protocol):
