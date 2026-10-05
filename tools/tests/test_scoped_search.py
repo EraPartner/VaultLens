@@ -15,7 +15,6 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from local_access import RunScope  # noqa: E402
-import scoped_search  # noqa: E402
 from scoped_search import (  # noqa: E402
     DEFAULT_SNIPPET_CHARS,
     MAX_DOCUMENT_BYTES,
@@ -223,15 +222,34 @@ class ScopedSearchTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 self.search.search({"query": "alpha", "snippet_chars": value})
 
-    def test_document_cap_names_unsearched_directories(self) -> None:
-        payload = self.search.search({"query": "marker"})
-        self.assertNotIn("unsearched_documents", payload)
-        total = len(self.scope.document_paths())
-        with patch.object(scoped_search, "MAX_DOCUMENTS", 1):
-            payload = self.search.search({"query": "marker"})
-        self.assertTrue(payload["truncated"])
-        self.assertEqual(payload["unsearched_documents"], total - 1)
-        self.assertIn("wiki/concepts", payload["unsearched_directories"])
+    def test_search_covers_every_document_in_a_large_vault(self) -> None:
+        # The old 4,096-document cap silently skipped later paths.
+        for index in range(4200):
+            self.write(f"wiki/bulk/{index:05d}.md", f"bulk note {index}")
+        self.write("wiki/zz-last/final.md", "Approved last-path corpus marker.")
+        payload = self.search.search({"query": "last-path"})
+        self.assertEqual(
+            [result["file"] for result in payload["results"]],
+            ["wiki/zz-last/final.md"],
+        )
+        self.assertEqual(payload["skipped_documents"], 0)
+        self.assertGreater(self.search.status()["documents"], 4200)
+
+    def test_cached_approval_still_refuses_later_link_swaps(self) -> None:
+        self.assertEqual(len(self.search.search({"query": "alpha"})["results"]), 1)
+        self.note.unlink()
+        self.note.symlink_to(self.outside / "global-index.md")
+        self.assertEqual(self.search.search({"query": "Denied-index"})["results"], [])
+        self.note.unlink()
+        secret = self.root / "wiki/private/secret.md"
+        os.link(secret, self.note)
+        self.assertEqual(
+            self.search.search({"query": "Denied-private"})["results"], []
+        )
+        self.write("wiki/concepts/new.md", "Approved fresh-file corpus marker.")
+        self.assertEqual(
+            len(self.search.search({"query": "fresh-file"})["results"]), 1
+        )
 
     def test_manifest_is_explicit_and_rejects_external_selections(self) -> None:
         with patch.dict(

@@ -272,6 +272,14 @@ class RunScope:
         )
 
     def document_paths(self) -> list[Path]:
+        return sorted(
+            path
+            for path in self.document_candidates()
+            if self.readable(path) and path.name not in PROTECTED_NAMES
+        )
+
+    def document_candidates(self) -> set[Path]:
+        """Markdown/text files under the read grants, before access checks."""
         result: set[Path] = set()
         for grant in self.read_paths:
             candidates: list[Path]
@@ -296,12 +304,8 @@ class RunScope:
                     )
             else:
                 candidates = []
-            result.update(
-                path
-                for path in candidates
-                if self.readable(path) and path.name not in PROTECTED_NAMES
-            )
-        return sorted(result)
+            result.update(candidates)
+        return result
 
     def manifest(self) -> JsonObject:
         return {
