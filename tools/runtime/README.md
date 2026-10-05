@@ -32,7 +32,10 @@ python3 tools/local_runtime.py doctor
 python3 tools/runtime/probe.py
 ```
 
-The package is pinned and installation disables package scripts, audit, and funding requests.
+The package and its whole dependency tree are locked in `tools/runtime/package-lock.json` with
+integrity hashes; the installer runs `npm ci`, which installs exactly that tree and disables
+package scripts, audit, and funding requests. To review a new release, regenerate the lockfile
+with `npm install --package-lock-only --ignore-scripts` in `tools/runtime/` and review its diff.
 `doctor` checks the package version and operating-system prerequisites. A synthetic isolation probe
 must establish real denied reads, denied writes, process behavior, and network confinement on the
 deployment host. Each run also performs a confinement preflight before loading note content.
@@ -220,7 +223,9 @@ excludes that reserved subtree from reads and search, so derived private context
 another agent's corpus through its report. Review a report before promoting its content into notes.
 Unconfirmed descendant cleanup writes `tools/runtime-state/cancellation-unconfirmed.json` and
 blocks further launches. An operator must verify that the recorded process group is gone before
-removing that marker. The runtime never clears it automatically.
+removing that marker. The marker names the kept `run_directory`; it holds a copy of the provider
+login and run scratch, so delete it once cleanup is confirmed. The runtime never clears either
+automatically.
 Job removal allows a bounded two-second wait for launchd to finish teardown. A repeated cleanup
 request preserves the original failure instead of replacing it after the guardian has stopped.
 Raw PDFs are extracted to private scratch storage. Agent preprocessing does not modify raw files
@@ -228,6 +233,9 @@ or automatically promote an inbox document.
 
 Ordinary analysis exposes only the selected provider's model and login endpoints. Web research is
 opt-in through a separate profile's explicit `research_domains` and local shell networking.
+Each domain must be a named public host (`example.org`, `*.example.org`, optional `:443`); IP
+literals, local names and TLD-wide wildcards are refused, and private, link-local, multicast,
+IPv4-mapped and NAT64 address ranges stay denied after DNS resolution.
 Hosted provider WebSearch/WebFetch tools remain disabled because server-side browsing cannot
 enforce this local domain list. Model choice and native tool approval cannot widen that
 process-level network or filesystem policy.

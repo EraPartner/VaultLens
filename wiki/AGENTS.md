@@ -58,5 +58,7 @@ pages. `wiki/log.md` is append-only; headings are `## [YYYY-MM-DD] operation | t
 
 ## Obsidian behavior
 
-Templater auto-applies the matching `wiki/_templates/` template when a file is created in a `wiki/`
-subfolder; Dataview tables update automatically from frontmatter (JS API enabled).
+Templater's creation trigger is off: it would run template code from any new note, including
+agent-written ones, outside the sandbox. Insert a `wiki/_templates/` template by hand with
+Templater's insert command; agents copy the shapes directly. Dataview tables update automatically
+from frontmatter (JS API enabled).

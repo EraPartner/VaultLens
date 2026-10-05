@@ -301,8 +301,9 @@ recognized project default to `project-write`; other interactive launches defaul
 for reporting. Root wiki editing requires an explicit `--access-profile wiki-write`.
 Plain `brain-shell` uses the same defaults and explicit editing option.
 
-Profiles keep sources, the consent queue, tools, agent instructions, Obsidian configuration, and
-Git metadata protected from agent writes. A clean per-run environment excludes inherited cloud
+Profiles keep sources, the consent queue, tools, agent instructions, Obsidian configuration,
+`wiki/_templates/`, and Git metadata protected from agent writes. Templater runs template code on
+the host, so its creation trigger is off and headless reports escape `<%` markers. A clean per-run environment excludes inherited cloud
 credentials, SSH sockets, unrelated home files, and host hooks. Only selected provider state and
 model/login endpoints are available; research domains must be added explicitly to a separate
 profile. Model and provider changes do not change note scope.

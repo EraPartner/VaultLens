@@ -53,7 +53,7 @@ unless the operator asks; see `tools/evals/README.md`.
   `wiki/topics/` thematic syntheses · `wiki/syntheses/` cross-topic analyses ·
   `wiki/comparisons/` side-by-side · `wiki/queries/` preserved Q&A · `wiki/reports/` lint/audit + scheduled-agent outputs ·
   `wiki/inventory/<kind>/` tracked intentions (ingest-candidate/question/task/watch/corpus/artifact/item) ·
-  `wiki/_templates/` page templates · `wiki/log/` runtime background-agent logs (gitignored) ·
+  `wiki/_templates/` page templates · `wiki/log/` legacy log folder (gitignored; background enhance logs now go to private `tools/runtime-state/logs/`) ·
   `wiki/home.md` + `wiki/SETUP.md` reader-facing nav docs
 - `projects/<slug>/` one folder per project · `project.md` metadata · `notes/` scratch · `queries/` durable Q&A · `AGENDA.md` dormant autonomous-runner agenda (opt-in via its `enabled` frontmatter flag)
 - `tools/wiki.py` CLI dispatcher → focused modules (`wiki_ingest`, `wiki_lint`, `wiki_query`,

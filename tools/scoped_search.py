@@ -20,7 +20,7 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import TextIO, cast
 
-from local_access import PROTECTED_NAMES, JsonObject, RunScope
+from local_access import JsonObject, RunScope, protected_name
 
 MAX_MANIFEST_BYTES = 1024 * 1024
 MAX_DOCUMENT_BYTES = 1024 * 1024
@@ -128,7 +128,7 @@ def _read_document(scope: RunScope, path: Path, *, approved: bool = False) -> st
     """
     if (
         path.suffix not in {".md", ".txt"}
-        or path.name in PROTECTED_NAMES
+        or protected_name(path.name)
         or not (approved or scope.readable(path))
     ):
         raise ValueError("Document is unavailable in this access profile")
@@ -225,7 +225,7 @@ class ScopedSearch:
         """
         paths: list[Path] = []
         for path in sorted(self.scope.document_candidates()):
-            if path.name in PROTECTED_NAMES:
+            if protected_name(path.name):
                 continue
             if path not in self._approved:
                 if not self.scope.readable(path):

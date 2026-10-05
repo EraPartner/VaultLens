@@ -205,6 +205,13 @@ class AccessProfileTests(unittest.TestCase):
             with self.subTest(escape=escape):
                 self.assertFalse(scope.writable(self.root / escape))
 
+    def test_wiki_writers_cannot_edit_templater_templates(self) -> None:
+        # Obsidian Templater runs template code on the host, outside the sandbox.
+        scope = self.resolve("wiki-write", capability="wiki-write")
+        self.assertFalse(scope.writable(self.root / "wiki/_templates/source.md"))
+        self.assertFalse(scope.writable(self.root / "wiki/_templates/new.md"))
+        self.assertTrue(scope.writable(self.root / "wiki/concepts/new.md"))
+
     def test_writers_are_restricted_to_the_selected_layer_and_project(self) -> None:
         scope = self.resolve(
             "project-write", project="alpha", capability="project-write"
@@ -386,6 +393,34 @@ class AccessProfileTests(unittest.TestCase):
                 scope.readable(self.root / "raw" / directory / "public.md"), directory
             )
 
+    def test_letter_case_never_reopens_denied_or_protected_paths(self) -> None:
+        # APFS is case-insensitive by default: wiki/Reports is wiki/reports.
+        self.profiles["raw-read"] = {"read": ["raw", "wiki"]}
+        self.write_policy()
+        scope = self.resolve("raw-read", capability="read")
+        for variant in (
+            "raw/Review-Inbox/consent.md",
+            "RAW/REVIEW-INBOX/consent.md",
+            "wiki/.ENV",
+            "wiki/ID_RSA",
+            "wiki/Credentials.json",
+            "wiki/x.PEM",
+            "wiki/.Git/config",
+            "wiki/.OBSIDIAN/app.json",
+        ):
+            with self.subTest(variant=variant):
+                self.assertTrue(access.forbidden(self.root / variant, self.root))
+                self.assertFalse(scope.readable(self.root / variant))
+        reader = self.resolve("wiki-read")
+        for variant in ("wiki/Reports/agents/prior.md", "wiki/PRIVATE/hidden.md"):
+            with self.subTest(variant=variant):
+                self.assertFalse(reader.readable(self.root / variant))
+        writer = self.resolve("wiki-write", capability="wiki-write")
+        for variant in ("wiki/_Templates/source.md", "wiki/agents.md", "wiki/Agents.MD"):
+            with self.subTest(variant=variant):
+                self.assertFalse(writer.writable(self.root / variant))
+        self.assertTrue(writer.writable(self.root / "wiki/concepts/new.md"))
+
     def test_research_domains_are_opt_in_and_reports_stay_dedicated(self) -> None:
         self.assertEqual(self.resolve().research_domains, ())
         for domain in (
@@ -395,6 +430,16 @@ class AccessProfileTests(unittest.TestCase):
             "https://example.org",
             "example.org:80",
             "../example.org",
+            "com",
+            "*.com",
+            "LOCALHOST",
+            "*.localhost",
+            "api.localhost",
+            "169.254.169.254",
+            "2130706433",
+            "0x7f.0.0.1",
+            "printer.local",
+            "-bad.example.org",
         ):
             with self.subTest(domain=domain):
                 self.write_policy(
@@ -402,10 +447,13 @@ class AccessProfileTests(unittest.TestCase):
                 )
                 with self.assertRaisesRegex(ValueError, "explicit HTTPS"):
                     self.resolve("research")
-        self.profiles["research"] = {"research_domains": ["example.org:443"]}
+        self.profiles["research"] = {
+            "research_domains": ["example.org:443", "*.example.org", "docs.python.org"]
+        }
         self.write_policy()
         self.assertEqual(
-            self.resolve("research").research_domains, ("example.org:443",)
+            self.resolve("research").research_domains,
+            ("example.org:443", "*.example.org", "docs.python.org"),
         )
         for reports in (
             "projects/alpha",
