@@ -10,6 +10,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import cast
 
 import wiki
 
@@ -98,7 +99,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     log_parser = sub.add_parser("append-log", help="Append entry to wiki/log.md")
     log_parser.add_argument(
-        "--operation", help="ingest|query|lint|other (omit when using --from-json)"
+        "--operation",
+        help="One word, e.g. ingest|query|lint|other (omit when using --from-json)",
     )
     log_parser.add_argument("--title", help="Entry title")
     log_parser.add_argument("--summary", help="One-line summary")
@@ -299,14 +301,37 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.from_json:
             json_path = Path(args.from_json)
-            payload = json.loads(json_path.read_text(encoding="utf-8"))
+            try:
+                payload = cast(
+                    "object", json.loads(json_path.read_text(encoding="utf-8"))
+                )
+            except (OSError, ValueError) as exc:
+                parser.error(f"--from-json {json_path}: {exc}")
+            fields = cast("dict[str, object]", payload) if isinstance(payload, dict) else {}
+            texts = {
+                key: fields.get(key, "" if key == "notes" else None)
+                for key in ("operation", "title", "summary", "notes")
+            }
+            lists = {key: fields.get(key, []) for key in ("pages", "sources")}
+            if (
+                not isinstance(payload, dict)
+                or not all(isinstance(v, str) for v in texts.values())
+                or not all(
+                    isinstance(v, list) and all(isinstance(i, str) for i in cast("list[object]", v))
+                    for v in lists.values()
+                )
+            ):
+                parser.error(
+                    "--from-json must be an object with string operation, title, summary, "
+                    "optional string notes, and optional string lists pages and sources"
+                )
             return append_log_entry(
-                operation=payload["operation"],
-                title=payload["title"],
-                summary=payload["summary"],
-                pages=payload.get("pages", []),
-                sources=payload.get("sources", []),
-                notes=payload.get("notes", ""),
+                operation=cast("str", texts["operation"]),
+                title=cast("str", texts["title"]),
+                summary=cast("str", texts["summary"]),
+                pages=cast("list[str]", lists["pages"]),
+                sources=cast("list[str]", lists["sources"]),
+                notes=cast("str", texts["notes"]),
             )
         missing = [
             name

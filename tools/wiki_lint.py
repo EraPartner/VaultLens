@@ -28,9 +28,16 @@ from wiki import (
     normalize_link_target,
 )
 from project_state import PROJECT_STATUSES
+from wiki_inventory import STATUSES as INVENTORY_STATUSES
 
 ALLOWED_STATUS = {"active", "superseded", "archived", "draft"}
 SKIP_CATEGORIES = {"system", "root"}
+
+
+def allowed_statuses(page: Page) -> set[str]:
+    """Status vocabulary for a page; inventory records have their own lifecycle."""
+    return INVENTORY_STATUSES if page.category == "inventory" else ALLOWED_STATUS
+
 
 # Required frontmatter. Every content page needs the base set; some categories
 # add their own. `lint` reports pages missing or blank in these.
@@ -198,10 +205,9 @@ def check_status_values(pages: list[Page]) -> list[str]:
         if page.category in SKIP_CATEGORIES:
             continue
         st = page.status
-        if st and st not in ALLOWED_STATUS:
-            out.append(
-                f"{page.rel.as_posix()}: status '{st}' not in {sorted(ALLOWED_STATUS)}"
-            )
+        allowed = allowed_statuses(page)
+        if st and st not in allowed:
+            out.append(f"{page.rel.as_posix()}: status '{st}' not in {sorted(allowed)}")
     return out
 
 
@@ -237,14 +243,14 @@ def check_dates(pages: list[Page]) -> tuple[list[str], list[str]]:
 def apply_fixes(pages: list[Page]) -> list[str]:
     """Case-normalise confidence/volatility/status when that makes them valid."""
     fixes: list[str] = []
-    valid = {
-        "confidence": CONFIDENCE_VALUES,
-        "volatility": VOLATILITY_VALUES,
-        "status": ALLOWED_STATUS,
-    }
     for page in pages:
         if page.category in SKIP_CATEGORIES:
             continue
+        valid = {
+            "confidence": CONFIDENCE_VALUES,
+            "volatility": VOLATILITY_VALUES,
+            "status": allowed_statuses(page),
+        }
         text = page.path.read_text(encoding="utf-8")
         changed = False
         for field, allowed in valid.items():
