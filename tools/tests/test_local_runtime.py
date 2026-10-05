@@ -450,6 +450,19 @@ class RuntimeTests(unittest.TestCase):
         ):
             self.assertEqual(runtime.native_executable("claude"), native)
 
+    def test_native_discovery_also_checks_the_account_home(self) -> None:
+        native = self.auth_home / ".local/bin/claude"
+        native.parent.mkdir(parents=True)
+        native.write_text("PUBLIC_NATIVE_FIXTURE")
+        native.chmod(0o700)
+        with (
+            mock.patch.object(shutil, "which", return_value=None),
+            mock.patch.object(
+                Path, "home", return_value=self.root / "unrelated-home-variable"
+            ),
+        ):
+            self.assertEqual(runtime.native_executable("claude"), native)
+
     def test_native_discovery_refuses_retired_launcher_paths(self) -> None:
         legacy = self.root / ".devcontainer/bin/claude"
         legacy.parent.mkdir(parents=True)
@@ -1298,6 +1311,28 @@ class RuntimeTests(unittest.TestCase):
         for index in range(11):
             _snapshot(scope, f"20260101T0000{index:02d}-run{index}")
         self.assertTrue((outside / "file.txt").exists())
+
+    def test_run_environment_creates_every_directory_it_grants(self) -> None:
+        run = self.root / "xdg-run"
+        run.mkdir(mode=0o700)
+        env = runtime.clean_environment(run, self.root, None, provider_executable=None)
+        for key in ("XDG_DATA_HOME", "XDG_STATE_HOME"):
+            self.assertTrue(Path(env[key]).is_dir(), key)
+
+    def test_sandbox_denies_the_account_home_even_if_home_variable_differs(
+        self,
+    ) -> None:
+        run = self.root / "home-run"
+        run.mkdir(mode=0o700)
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        with mock.patch.dict(os.environ, {"HOME": str(elsewhere)}):
+            settings = runtime.compile_settings(
+                self.scope, run, None, executables=()
+            )
+        denied = settings["filesystem"]["denyRead"]
+        self.assertIn(str(self.auth_home), denied)
+        self.assertIn(str(elsewhere), denied)
 
     def test_terminal_probe_failure_does_not_leak_the_child(self) -> None:
         child = mock.Mock(pid=23456, handles_terminal=False)
