@@ -125,12 +125,17 @@ def resolve_provider(
     env = os.environ if environ is None else environ
     config = load_config(path) if config is None else config
     configured_cli: str = config.get("cli", DEFAULT_CLI)
-    selected = (
-        cli if cli is not None else env.get("VAULTLENS_LLM_CLI", configured_cli)
-    )
+    if cli is not None:
+        selected, origin = cli, "the cli argument"
+    elif "VAULTLENS_LLM_CLI" in env:
+        selected, origin = env["VAULTLENS_LLM_CLI"], "VAULTLENS_LLM_CLI"
+    else:
+        selected, origin = configured_cli, "the saved provider preference"
     selected = selected.strip().lower()
     if selected not in BACKENDS:
-        raise ValueError("VAULTLENS_LLM_CLI must be claude or codex")
+        raise ValueError(
+            f"Unsupported provider {selected!r} from {origin}; must be claude or codex"
+        )
     defaults = BACKENDS[selected]
     default_model = defaults["model"]
     if profile is not None:

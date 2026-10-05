@@ -119,6 +119,16 @@ class ProviderTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.resolve()
 
+    def test_unsupported_provider_error_names_its_source(self) -> None:
+        with self.assertRaisesRegex(ValueError, r"'gemini' from the cli argument"):
+            self.resolve(cli="gemini")
+        with self.assertRaisesRegex(ValueError, r"'gemini' from VAULTLENS_LLM_CLI"):
+            self.resolve(environ={"VAULTLENS_LLM_CLI": "gemini"})
+        with self.assertRaisesRegex(ValueError, "saved provider preference"):
+            providers.resolve_provider(
+                path=self.config, environ={}, config={"cli": "gemini"}
+            )
+
     def test_unreadable_config_fails_closed(self) -> None:
         with mock.patch.object(
             Path, "read_text", side_effect=PermissionError("fixture denial")

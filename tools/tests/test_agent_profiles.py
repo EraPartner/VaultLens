@@ -203,28 +203,41 @@ class RoleProfileTests(unittest.TestCase):
                 }
             }
         )
+        import tomllib
+
         search = profiles.load_role(self.roles / profiles.AGENT_FILES["search"])
         enhance = profiles.load_role(self.roles / profiles.AGENT_FILES["enhance"])
         # A global env model is scoped to a launch; it must not contaminate both providers' adapters.
         with mock.patch.dict("os.environ", {"VAULTLENS_LLM_MODEL": "wrong-provider"}):
-            claude = generator.claude_manifest(search)
-            codex = generator.codex_manifest(search)
-        import tomllib
+            claude = generator.claude_manifest(search, local_models=True)
+            codex = generator.codex_manifest(search, local_models=True)
+            # Tracked adapters ignore the same local mapping.
+            self.assertIn('model: "sonnet"', generator.claude_manifest(search))
+            self.assertEqual(
+                tomllib.loads(generator.codex_manifest(search))["model"], "gpt-6-luna"
+            )
 
         self.assertIn('model: "custom-standard"', claude)
         self.assertIn("effort: medium", claude)
         self.assertEqual(tomllib.loads(codex)["model"], name)
         self.assertEqual(tomllib.loads(codex)["model_reasoning_effort"], "medium")
         self.assertEqual(
-            tomllib.loads(generator.codex_manifest(enhance))["model"], "custom-deep"
+            tomllib.loads(generator.codex_manifest(enhance, local_models=True))["model"],
+            "custom-deep",
         )
         self.assertEqual(
-            tomllib.loads(generator.codex_manifest(enhance))["model_reasoning_effort"],
+            tomllib.loads(generator.codex_manifest(enhance, local_models=True))[
+                "model_reasoning_effort"
+            ],
             "xhigh",
         )
         self.save({"profiles": {"claude": {"standard": ""}, "codex": {"standard": ""}}})
-        self.assertIn('model: "inherit"', generator.claude_manifest(search))
-        self.assertNotIn("model", tomllib.loads(generator.codex_manifest(search)))
+        self.assertIn(
+            'model: "inherit"', generator.claude_manifest(search, local_models=True)
+        )
+        self.assertNotIn(
+            "model", tomllib.loads(generator.codex_manifest(search, local_models=True))
+        )
 
 
 if __name__ == "__main__":

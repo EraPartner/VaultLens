@@ -10,17 +10,27 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 echo "Setting up QMD search engine for wiki..."
 echo "Wiki directory: $REPO_ROOT"
 
-# Check if qmd is installed (any package manager)
+# Check if qmd is installed (any package manager). A global install changes the
+# host, so ask first and never install from a non-interactive run.
 if ! command -v qmd &> /dev/null; then
-    echo "qmd not found. Installing..."
     if command -v bun &> /dev/null; then
-        bun install -g @tobilu/qmd
+        INSTALL=(bun install -g @tobilu/qmd)
     elif command -v npm &> /dev/null; then
-        npm install -g @tobilu/qmd
+        INSTALL=(npm install -g @tobilu/qmd)
     else
-        echo "Error: Neither bun nor npm found. Install one first."
+        echo "Error: qmd is not installed, and neither bun nor npm was found." >&2
         exit 1
     fi
+    echo "qmd is not installed. Install command: ${INSTALL[*]}"
+    if [ ! -t 0 ]; then
+        echo "Run it yourself, then re-run this script." >&2
+        exit 1
+    fi
+    read -r -p "Run it now? [y/N] " reply
+    case "$reply" in
+        [yY]*) "${INSTALL[@]}" ;;
+        *) echo "Not installing. Install qmd, then re-run this script." >&2; exit 1 ;;
+    esac
 fi
 
 echo "Using qmd at: $(command -v qmd)"
@@ -29,11 +39,12 @@ echo "Using qmd at: $(command -v qmd)"
 echo ""
 echo "Adding wiki collection..."
 cd "$REPO_ROOT"
-qmd collection add wiki/ --name wiki 2>/dev/null || echo "Wiki collection may already exist"
+# qmd's own output stays visible, so a real failure is not mistaken for "exists".
+qmd collection add wiki/ --name wiki || echo "Note: the wiki collection was not added (see above); it may already exist"
 
 # Add raw sources collection
 echo "Adding raw sources collection..."
-qmd collection add raw/ --name raw 2>/dev/null || echo "Raw collection may already exist"
+qmd collection add raw/ --name raw || echo "Note: the raw collection was not added (see above); it may already exist"
 
 # raw/review-inbox is a human consent queue. Keep it out of lexical, vector,
 # and hybrid search so an agent cannot discover its contents before approval.
