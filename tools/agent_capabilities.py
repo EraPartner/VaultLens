@@ -52,6 +52,8 @@ READ_ONLY_SHELL_RULES = (
     "python3 tools/wiki.py lint --strict",
     "python3 tools/wiki.py lint --json",
     "python3 tools/wiki.py lint --strict --json",
+    # Exact forms only: `lint *` would also grant `lint --fix`, which writes.
+    "python3 tools/wiki.py lint --json --strict",
     "python3 tools/wiki.py search *",
     "python3 tools/wiki.py coverage *",
     "python3 tools/wiki.py tags *",

@@ -450,7 +450,7 @@ def _state(root: Path, *, create: bool = False) -> Generator[int, None, None]:
             pass
         else:
             raise ValueError(
-                "Runtime verification is blocked by unconfirmed process cancellation"
+                "Runtime verification is blocked by unconfirmed process cancellation; an operator must confirm the process group recorded in tools/runtime-state/cancellation-unconfirmed.json is gone before removing that file (tools/runtime/README.md)"
             )
         yield descriptor
     finally:
@@ -517,7 +517,7 @@ def record_verified_probe(
             fingerprint = fingerprint_runtime(root, version)
             if fingerprint != before:
                 raise ValueError(
-                    "Runtime changed during the probe; rerun the complete operating system probe"
+                    "Runtime changed during the probe; rerun the complete operating system probe: python3 tools/runtime/probe.py"
                 )
             receipt = {
                 "version": RECEIPT_VERSION,
@@ -647,7 +647,7 @@ def require_verified_runtime(root: Path, version: str) -> None:
             )
             if data["fingerprint"] != fingerprint_runtime(root, version):
                 raise ValueError(
-                    "Runtime verification is stale; rerun the complete operating system probe"
+                    "Runtime verification is stale; rerun the complete operating system probe: python3 tools/runtime/probe.py"
                 )
     except (
         OSError,
@@ -658,5 +658,5 @@ def require_verified_runtime(root: Path, version: str) -> None:
         RuntimeError,
     ) as exc:
         raise ValueError(
-            "Runtime verification is missing, unreadable or invalid; run the complete operating system probe"
+            "Runtime verification is missing, unreadable or invalid; run the complete operating system probe: python3 tools/runtime/probe.py"
         ) from exc

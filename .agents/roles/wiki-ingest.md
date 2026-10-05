@@ -62,8 +62,8 @@ requires a separate operator-approved workflow.
 ### 3. Link and Update
 
 - **Find related existing pages** before creating new ones — search first:
-  - `qmd query "<concept or topic>" --format json` — hybrid BM25 + vector + LLM reranking. Best for finding semantically related pages even when keywords differ. Prefer `mcp__qmd__*` tools when available.
-  - `qmd search "<keywords>"` — BM25 only. Fast, good for exact term lookups.
+  - `qmd query "<concept or topic keywords>" --format json` — lexical in scoped runs (word matching, no embeddings); retry with synonyms to find related pages worded differently. Prefer `mcp__qmd__*` tools when available.
+  - `qmd search "<keywords>"` — the same lexical search; good for exact term lookups.
   - `python3 tools/wiki.py search "<query>"` — substring fallback when qmd is unavailable.
 - Create/update entity pages in `wiki/entities/`
 - Add to concept pages in `wiki/concepts/`
