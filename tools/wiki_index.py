@@ -166,6 +166,20 @@ def _stale_categories(grouped: dict[str, list[Page]]) -> list[str]:
     return sorted(stale)
 
 
+def _orphan_indexes(grouped: dict[str, list[Page]]) -> list[Path]:
+    """Derived category indexes whose category no longer has any page."""
+    orphans: list[Path] = []
+    for index_path in sorted(WIKI_DIR.glob(f"*/{INDEX_NAME}")):
+        if index_path.parent.name in grouped:
+            continue
+        text = index_path.read_text(encoding="utf-8")
+        fm, body = parse_frontmatter(text)
+        # Only remove files this module wrote; a hand-made _index.md stays.
+        if fm.get("type") == "index" and "> Derived index of `wiki/" in body:
+            orphans.append(index_path)
+    return orphans
+
+
 def rebuild_indexes() -> int:
     """Regenerate every category `_index.md` plus the root index."""
     pages = list_content_pages()
@@ -184,6 +198,9 @@ def rebuild_indexes() -> int:
         build_root_index(grouped, today), encoding="utf-8"
     )
     written += 1
+    for orphan in _orphan_indexes(grouped):
+        orphan.unlink()
+        print(f"Removed {orphan.relative_to(WIKI_DIR).as_posix()} (category is empty).")
 
     print(
         f"Rebuilt {written} index files ({sum(len(v) for v in grouped.values())} pages)."
@@ -196,6 +213,7 @@ def check_indexes() -> int:
     pages = list_content_pages()
     grouped = _pages_by_category(pages)
     stale = _stale_categories(grouped)
+    stale += [f"{path.parent.name} (empty)" for path in _orphan_indexes(grouped)]
     if not stale:
         print(f"All indexes current ({len(grouped)} categories).")
         return 0

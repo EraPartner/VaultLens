@@ -165,5 +165,25 @@ class CliRoundTripTests(unittest.TestCase):
             self.assertTrue(following.startswith("- "), f"empty section {header!r} in:\n{out}")
 
 
+    def test_index_rebuild_removes_an_emptied_category_index(self) -> None:
+        page = self.page("comparisons/a-vs-b.md", "Body.", title="A vs B")
+        self.assertEqual(self.wiki("index", "--rebuild").returncode, 0)
+        derived = self.root / "wiki" / "comparisons" / "_index.md"
+        self.assertTrue(derived.exists())
+        page.unlink()
+        check = self.wiki("index")
+        self.assertEqual(check.returncode, 1, check.stdout)
+        self.assertIn("comparisons (empty)", check.stdout)
+        self.assertEqual(self.wiki("index", "--rebuild").returncode, 0)
+        self.assertFalse(derived.exists())
+        self.assertEqual(self.wiki("index").returncode, 0)
+
+    def test_index_rebuild_keeps_a_hand_written_index(self) -> None:
+        manual = self.root / "wiki" / "comparisons" / "_index.md"
+        manual.parent.mkdir(parents=True, exist_ok=True)
+        manual.write_text("# My own notes\n", encoding="utf-8")
+        self.assertEqual(self.wiki("index", "--rebuild").returncode, 0)
+        self.assertTrue(manual.exists())
+
 if __name__ == "__main__":
     unittest.main()
