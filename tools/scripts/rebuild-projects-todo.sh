@@ -41,6 +41,13 @@ PROJECTS_DIR="$ROOT/projects"
 LIVE="$PROJECTS_DIR/TODO.md"
 WIDGET="$PROJECTS_DIR/TODO-widget.md"
 
+# Build both views in temp files and replace the real ones only after every step
+# succeeded, so a failing project CLI leaves the previous views intact.
+SLUGS="$(python3 "$ROOT/tools/wiki.py" project list --slugs)"
+LIVE_TMP="$(mktemp "$PROJECTS_DIR/.TODO.md.XXXXXX")"
+WIDGET_TMP="$(mktemp "$PROJECTS_DIR/.TODO-widget.md.XXXXXX")"
+trap 'rm -f "$LIVE_TMP" "$WIDGET_TMP"' EXIT
+
 # === Live embedded aggregator (desktop) ===
 {
   echo "# Projects TODO (live)"
@@ -64,8 +71,8 @@ WIDGET="$PROJECTS_DIR/TODO-widget.md"
       echo "_No open tasks yet._"
     fi
     echo
-  done < <(python3 "$ROOT/tools/wiki.py" project list --slugs)
-} > "$LIVE"
+  done <<< "$SLUGS"
+} > "$LIVE_TMP"
 
 # === Widget aggregator (filtered, inlined) ===
 # Flatten all matching blocks across projects, then sort alphabetically by
@@ -99,9 +106,13 @@ WIDGET="$PROJECTS_DIR/TODO-widget.md"
         }
         END { flush() }
       ' "$todo"
-    done < <(python3 "$ROOT/tools/wiki.py" project list --slugs)
+    done <<< "$SLUGS"
   } | sort | tr '\v' '\n'
-} > "$WIDGET"
+} > "$WIDGET_TMP"
+
+chmod 644 "$LIVE_TMP" "$WIDGET_TMP"
+mv "$LIVE_TMP" "$LIVE"
+mv "$WIDGET_TMP" "$WIDGET"
 
 echo "Wrote $LIVE"
 echo "Wrote $WIDGET"

@@ -19,7 +19,7 @@ native agent runtime) and never any vault content.
 | Wiki CLI and modules (`wiki.py` dispatches to `wiki_*.py`) | `tools/` |
 | Headless agent launcher, adapter generator | `tools/agents/` |
 | Access profiles, provider commands, launch routing, scoped search | `tools/access-profiles.json`, `tools/local_*.py`, `tools/agent_*.py`, `tools/provider_commands.py`, `tools/brain_launch.py`, `tools/scoped_search.py` |
-| Native whole-process runtime: install, probe, deploy, maintain | `tools/runtime/`, `tools/runtime_*.py`, `tools/process_control.py`, `tools/macos_processes.py` |
+| Native whole-process runtime: install, probe, deploy, maintain | `tools/runtime/`, `tools/runtime_*.py`, `tools/process_errors.py`, `tools/process_control.py`, `tools/macos_processes.py` |
 | Host fish wrappers and host repair scripts | `tools/shell/`, `tools/scripts/` |
 | Scheduled-agent dispatcher, recovery, spec | `tools/schedule/` |
 | Context budgeting and fixture evals | `tools/context_*.py`, `tools/evals/` |
@@ -78,12 +78,10 @@ Do not claim isolation is verified from a cloud run.
   `reportAny`, `reportUnusedCallResult`, `reportImplicitOverride`, `reportImplicitRelativeImport`
   and `reportImplicitStringConcatenation` switched off (and `reportUninitializedInstanceVariable`
   off for `tools/tests` only, through `executionEnvironments`, because unittest `setUp` state is
-  never counted as initialised), checked against
-  `tools/typing-baseline.json`. The baseline holds the findings that predate the switch from
-  `strict`; any new finding fails CI. Shrink the baseline as you fix code
-  (`basedpyright --project tools/pyrightconfig.json --writebaseline` after fixing, never to admit
-  new findings). Do not disable further rules, add `# pyright: ignore`, bare `Any` or `cast` without a
-  one-line reason. Ruff `ANN` has no `per-file-ignores`; do not add any.
+  never counted as initialised). There is no baseline: any finding fails CI, so fix it
+  instead of recording it. Do not disable further rules, add `# pyright: ignore`, bare `Any` or
+  `cast` without a one-line reason. Import cycles are findings too; keep leaf modules (for example
+  `process_errors.py`) free of imports back into the modules that use them. Ruff `ANN` has no `per-file-ignores`; do not add any.
 - Conventional Commit subjects: `type(scope): summary`, at most 72 characters. The `commit-msg`
   hook accepts `feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert`.
 - Edit canonical roles in `.agents/roles/`, then regenerate adapters. Never hand-edit
