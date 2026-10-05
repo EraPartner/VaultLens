@@ -181,6 +181,7 @@ Day-to-day core — everything else lives in the per-operation runbooks under
 python3 tools/wiki.py lint                       # fast health check (links, metadata, staleness)
 python3 tools/wiki.py search "term"              # substring search (qmd preferred — see Search)
 qmd search "<keywords>"                          # scoped lexical search in agent runs
+qmd query "<question>"                           # scoped; ranks with qmd's index when enabled
 qmd update                                       # full-vault re-index: explicit operator workflow
 ```
 

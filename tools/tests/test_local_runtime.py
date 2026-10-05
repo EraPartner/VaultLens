@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -908,6 +909,77 @@ class RuntimeTests(unittest.TestCase):
                 pass
         self.assertEqual(
             (store / "public-login.fixture").read_text(), '{"fixture": "public original login"}'
+        )
+
+    def test_qmd_bridge_requests_are_writable_and_answers_are_not(self) -> None:
+        plain = runtime.compile_settings(self.scope, self.run_dir, None)
+        self.assertNotIn(
+            str(self.run_dir / "qmd-bridge/requests"), plain["filesystem"]["allowWrite"]
+        )
+        settings = runtime.compile_settings(
+            self.scope, self.run_dir, None, qmd_bridge=True
+        )["filesystem"]
+        self.assertIn(str(self.run_dir / "qmd-bridge/requests"), settings["allowWrite"])
+        self.assertIn(str(self.run_dir / "qmd-bridge/responses"), settings["denyWrite"])
+        self.assertNotIn(str(self.run_dir / "qmd-bridge"), settings["allowWrite"])
+        self.assertNotIn(str(self.run_dir / "qmd-bridge/responses"), settings["allowWrite"])
+
+    def test_qmd_bridge_uses_only_an_operator_qmd_outside_vault_and_run(
+        self,
+    ) -> None:
+        host = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, host)
+        outside = host / "qmd"
+        inside = self.root / "tools/qmd"
+        for path in (outside, inside):
+            path.write_text("#!/bin/sh\n")
+            path.chmod(0o700)
+        cases: tuple[tuple[str, dict[str, str], Path | None], ...] = (
+            (str(host), {}, outside),
+            (str(host), {"VAULTLENS_QMD_BRIDGE": "off"}, None),
+            (str(inside.parent), {}, None),
+            (str(self.run_dir), {}, None),
+            ("/public-missing", {}, None),
+        )
+        for path, extra, expected in cases:
+            with self.subTest(path=path, extra=extra):
+                with mock.patch.dict(
+                    os.environ, {"PATH": path, **extra}, clear=False
+                ):
+                    if "VAULTLENS_QMD_BRIDGE" not in extra:
+                        os.environ.pop("VAULTLENS_QMD_BRIDGE", None)
+                    self.assertEqual(
+                        runtime.qmd_executable(self.scope, self.run_dir), expected
+                    )
+
+    def test_prepared_run_starts_and_stops_the_qmd_bridge(self) -> None:
+        host = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, host)
+        qmd = host / "qmd"
+        qmd.write_text("#!/bin/sh\necho '[]'\n")
+        qmd.chmod(0o700)
+        with (
+            mock.patch.object(
+                runtime, "runtime_executable", return_value=Path("/public-runtime/srt")
+            ),
+            mock.patch.object(runtime, "qmd_executable", return_value=qmd),
+        ):
+            with runtime.prepared_run(self.scope, None, snapshot=False) as (
+                _executable,
+                run,
+                _env,
+            ):
+                manifest = json.loads((run / "scope.json").read_text())
+                self.assertEqual(manifest["qmd_bridge"], str(run / "qmd-bridge"))
+                settings = json.loads((run / "settings.json").read_text())
+                self.assertIn(
+                    str(run / "qmd-bridge/requests"),
+                    settings["filesystem"]["allowWrite"],
+                )
+                threads = [thread.name for thread in threading.enumerate()]
+                self.assertIn("qmd-bridge", threads)
+        self.assertNotIn(
+            "qmd-bridge", [thread.name for thread in threading.enumerate()]
         )
 
     def test_writer_lock_serializes_overlapping_scopes_and_releases_after_exit(

@@ -95,8 +95,10 @@ The setup script configures the `raw` collection to ignore `review-inbox/**` bef
 Native agent runs start a fresh lexical search server inside the same whole-process boundary.
 Its corpus includes only files approved by that run's access profile. The qmd-compatible CLI and
 Model Context Protocol (MCP) tools use this scoped corpus; they never copy or open the host's
-shared qmd index or cache. In an agent run, `qmd query` is a lexical compatibility command.
-Full-vault hybrid search remains the separate, explicit operator workflow above.
+shared qmd index or cache inside the sandbox. When `qmd` is on the launcher's `PATH`, `qmd query`
+asks the launcher to run qmd on the host and gets back only the paths the run may read, then
+reads those files itself; otherwise it is lexical. Set `VAULTLENS_QMD_BRIDGE=off` to keep it
+lexical. Full-vault hybrid search remains the separate, explicit operator workflow above.
 
 ## Source Approval Queues
 

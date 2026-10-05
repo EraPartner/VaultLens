@@ -21,12 +21,12 @@ Read-only helper set only: `ls`/`grep`/`cat`/`head`/`tail`/`wc`/`sort`/`uniq`/`c
 
 ## Search capabilities
 
-Use the run's scoped qmd-compatible tools. `qmd search "<keywords>"` and the
-qmd Model Context Protocol tools search only the selected notes. `qmd query`
-is a lexical compatibility command in this runtime; it does not use embeddings,
-model reranking, a shared index, or model downloads. Follow the selected access
-profile and treat excluded material as unknown. Broader or semantic retrieval
-requires a separate operator-approved workflow.
+Use the run's scoped qmd-compatible tools; they return only the selected notes.
+`qmd search "<keywords>"` is lexical (word matching). `qmd query` ranks with the
+operator's qmd index (meaning-based, catches synonyms) when the launcher enables
+it, and otherwise falls back to the same lexical search. Its JSON says which:
+`mode` is `qmd` or `lexical`, and `fallback` gives the reason. Follow the
+selected access profile and treat excluded material as unknown.
 
 ## Scope
 
@@ -49,7 +49,7 @@ The position to challenge arrives in the task prompt. If it is empty or vague, s
 1. **Read the operator profile first.** If `wiki/entities/user-background.md` (`[[entities/user-background]]`) exists, read it — the operator's goals, constraints, and stated priorities are the strongest source of "what this position ignores."
 2. **Decompose the position** into its load-bearing premises. What must be true for it to be a good call?
 3. **Search the operator's record** for counter-evidence. Cast wide; these are the stores that hold decisions and lessons:
-   - `qmd query "<key terms of the position and its premises>" --format json` — lexical in scoped runs (word matching, no embeddings), so retry with synonyms to catch history worded differently. Prefer `mcp__qmd__*` if available.
+   - `qmd query "<key terms of the position and its premises>" --format json` — meaning-based when qmd is enabled; if `mode` is `lexical`, retry with synonyms to catch history worded differently. Prefer `mcp__qmd__*` if available.
    - `wiki/queries/` and `projects/*/queries/` — preserved Q&A that captured past decisions, designs, and analyses.
    - `wiki/log.md` — the activity timeline; `grep` it for prior work, reconciliations, and reversals on this topic.
    - Pages with `status: superseded` — conclusions the operator already abandoned (`grep -rl "status: superseded" wiki/`).

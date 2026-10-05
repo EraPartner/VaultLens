@@ -21,12 +21,12 @@ Read-only helper set only: `ls`/`grep`/`cat`/`head`/`tail`/`wc`/`sort`/`uniq`/`c
 
 ## Search capabilities
 
-Use the run's scoped qmd-compatible tools. `qmd search "<keywords>"` and the
-qmd Model Context Protocol tools search only the selected notes. `qmd query`
-is a lexical compatibility command in this runtime; it does not use embeddings,
-model reranking, a shared index, or model downloads. Follow the selected access
-profile and treat excluded material as unknown. Broader or semantic retrieval
-requires a separate operator-approved workflow.
+Use the run's scoped qmd-compatible tools; they return only the selected notes.
+`qmd search "<keywords>"` is lexical (word matching). `qmd query` ranks with the
+operator's qmd index (meaning-based, catches synonyms) when the launcher enables
+it, and otherwise falls back to the same lexical search. Its JSON says which:
+`mode` is `qmd` or `lexical`, and `fallback` gives the reason. Follow the
+selected access profile and treat excluded material as unknown.
 
 ## Scope
 
@@ -45,8 +45,8 @@ requires a separate operator-approved workflow.
 1. Build a candidate set of pages with shared context. Use any of:
    - `python3 tools/wiki.py tags <tag>` — list pages sharing a frontmatter tag (AND across multiple tags supported).
    - `python3 tools/wiki.py tags --domain <domain>` — restrict by `domain` frontmatter.
-   - `qmd query "<topic key terms>" --format json` — lexical in scoped runs (word matching, no embeddings). When tags are sparse or the conflict is wording-level, retry with synonyms. Prefer `mcp__qmd__*` if available.
-   - `qmd search "<keywords>"` — the same lexical search; use it for exact-term hits.
+   - `qmd query "<topic key terms>" --format json` — meaning-based when qmd is enabled. If `mode` is `lexical` and tags are sparse or the conflict is wording-level, retry with synonyms. Prefer `mcp__qmd__*` if available.
+   - `qmd search "<keywords>"` — lexical (word matching); use it for exact-term hits.
    - `python3 tools/wiki.py search "<keywords>"` — substring fallback.
 2. Scan for contradictory language keywords:
    - "however", "but", "although", "contrary", "opposite"

@@ -21,12 +21,12 @@ Read-only helper set plus file-management (`touch`/`mkdir`/`mv`/`cp`/`sed`/`awk`
 
 ## Search capabilities
 
-Use the run's scoped qmd-compatible tools. `qmd search "<keywords>"` and the
-qmd Model Context Protocol tools search only the selected notes. `qmd query`
-is a lexical compatibility command in this runtime; it does not use embeddings,
-model reranking, a shared index, or model downloads. Follow the selected access
-profile and treat excluded material as unknown. Broader or semantic retrieval
-requires a separate operator-approved workflow.
+Use the run's scoped qmd-compatible tools; they return only the selected notes.
+`qmd search "<keywords>"` is lexical (word matching). `qmd query` ranks with the
+operator's qmd index (meaning-based, catches synonyms) when the launcher enables
+it, and otherwise falls back to the same lexical search. Its JSON says which:
+`mode` is `qmd` or `lexical`, and `fallback` gives the reason. Follow the
+selected access profile and treat excluded material as unknown.
 
 ## Scope
 
@@ -62,8 +62,8 @@ requires a separate operator-approved workflow.
 ### 3. Link and Update
 
 - **Find related existing pages** before creating new ones — search first:
-  - `qmd query "<concept or topic keywords>" --format json` — lexical in scoped runs (word matching, no embeddings); retry with synonyms to find related pages worded differently. Prefer `mcp__qmd__*` tools when available.
-  - `qmd search "<keywords>"` — the same lexical search; good for exact term lookups.
+  - `qmd query "<concept or topic keywords>" --format json` — meaning-based when qmd is enabled; if `mode` is `lexical`, retry with synonyms to find related pages worded differently. Prefer `mcp__qmd__*` tools when available.
+  - `qmd search "<keywords>"` — lexical (word matching); good for exact term lookups.
   - `python3 tools/wiki.py search "<query>"` — substring fallback when qmd is unavailable.
 - Create/update entity pages in `wiki/entities/`
 - Add to concept pages in `wiki/concepts/`
