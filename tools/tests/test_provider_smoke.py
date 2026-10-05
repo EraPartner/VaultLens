@@ -10,22 +10,25 @@ import tempfile
 import unittest
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 from unittest import mock
 
 from _loader import load_module
 
-# A recorded mock call (`unittest.mock._Call` is private); only its args/kwargs are read.
-MockCall = Any
+# A recorded mock call; typeshed only exposes the type as the private `_Call`.
+from unittest.mock import _Call as MockCall  # pyright: ignore[reportPrivateUsage] - no public name for the call-record type
 
 smoke = load_module(
     "provider_smoke", Path(__file__).resolve().parents[1] / "scripts/provider-smoke.py"
 )
 
 import local_runtime as runtime  # noqa: E402
+from local_access import RunScope  # noqa: E402
 
 
 class ProviderSmokeTests(unittest.TestCase):
+    root: Path  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
+    env: dict[str, str]  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -36,7 +39,9 @@ class ProviderSmokeTests(unittest.TestCase):
     def run_mocked(
         self,
         execute: bool,
-        invocation: Callable[..., subprocess.CompletedProcess[str]],
+        invocation: Callable[
+            [list[str], Path, dict[str, str], int], subprocess.CompletedProcess[str]
+        ],
         *,
         preflight: BaseException | None = None,
     ) -> tuple[dict[str, str], list[MockCall], MockCall]:
@@ -323,7 +328,7 @@ class ProviderSmokeTests(unittest.TestCase):
     def test_unconfirmed_smoke_cleanup_reaches_runtime_quarantine(self) -> None:
         (self.root / "tools").mkdir()
         (self.root / "wiki").mkdir()
-        scope = runtime.RunScope(
+        scope = RunScope(
             self.root,
             "public-scope",
             (self.root / "wiki",),

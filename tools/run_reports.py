@@ -51,8 +51,8 @@ class ReportCaptureError(RuntimeError):
         cleanup_unconfirmed: bool = False,
     ) -> None:
         super().__init__(message)
-        self.report_path = report_path
-        self.cleanup_unconfirmed = cleanup_unconfirmed
+        self.report_path: Path | None = report_path
+        self.cleanup_unconfirmed: bool = cleanup_unconfirmed
 
 
 def _label(value: str) -> str:
@@ -186,26 +186,29 @@ class Recorder:
             raise ValueError(
                 "Report size must exceed 4096 bytes and stay at most 4 MiB"
             )
-        self.scope = scope
+        self.scope: RunScope = scope
+        self.role: str
+        self.provider: str
+        self.profile: str
         self.role, self.provider, self.profile = map(
             _label, (role, provider, scope.name)
         )
-        self.max_bytes = max_bytes
-        self.started = datetime.now(timezone.utc)
+        self.max_bytes: int = max_bytes
+        self.started: datetime = datetime.now(timezone.utc)
         stamp = self.started.strftime("%Y%m%dT%H%M%S%fZ")
-        self.filename = (
+        self.filename: str = (
             f"agent-{stamp}-{self.role}-{self.profile}-{secrets.token_hex(8)}.md"
         )
-        self._body = bytearray()
+        self._body: bytearray = bytearray()
         self._errors: list[str] = []
-        self._lock = threading.Lock()
-        self._stop = threading.Event()
+        self._lock: threading.Lock = threading.Lock()
+        self._stop: threading.Event = threading.Event()
         self._thread: threading.Thread | None = None
-        self._started = False
-        self._finished = False
-        self.truncated = False
-        self.eof = False
-        self.cleanup_unconfirmed = False
+        self._started: bool = False
+        self._finished: bool = False
+        self.truncated: bool = False
+        self.eof: bool = False
+        self.cleanup_unconfirmed: bool = False
 
     def _error(self, kind: str) -> None:
         with self._lock:

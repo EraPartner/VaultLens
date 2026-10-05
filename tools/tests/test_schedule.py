@@ -16,12 +16,13 @@ import sys
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agents"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "schedule"))
 
 import dispatch  # noqa: E402
+from agent_profiles import AGENT_FILES  # noqa: E402
+from llm_provider import load_config, load_profile_models  # noqa: E402
 
 # One alias per private name the suite exercises (tests legitimately touch internals).
 _env_flag = dispatch._env_flag  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
@@ -242,7 +243,7 @@ def main() -> int:
     }
     s_fail = dispatch.format_schedule_status(failed, {}, meta, nowt)
     check("failing job named in verdict", "cos-brief" in s_fail and "failing" in s_fail)
-    never: dict[str, dict[str, Any]] = {n: {} for n, _ in meta}  # never run -> stale, not failing
+    never: dict[str, dict[str, object]] = {n: {} for n, _ in meta}  # never run -> stale, not failing
     s_stale = dispatch.format_schedule_status(never, {}, meta, nowt)
     check(
         "never-run jobs read as stale", "stale" in s_stale and "failing" not in s_stale
@@ -397,7 +398,7 @@ def main() -> int:
         fixture_root = Path(temporary)
         role_dir = fixture_root / ".agents" / "roles"
         role_dir.mkdir(parents=True)
-        for filename in dispatch.AGENT_FILES.values():
+        for filename in AGENT_FILES.values():
             source = dispatch.ROOT / ".agents" / "roles" / filename
             (role_dir / filename).write_text(
                 source.read_text(encoding="utf-8"), encoding="utf-8"
@@ -413,8 +414,8 @@ def main() -> int:
             json.dumps({"profiles": {"claude": {"standard": "local-standard"}}}),
             encoding="utf-8",
         )
-        config_snapshot = dispatch.load_config(config_path)
-        profiles_snapshot = dispatch.load_profile_models(profiles_path)
+        config_snapshot = load_config(config_path)
+        profiles_snapshot = load_profile_models(profiles_path)
         env_snapshot: dict[str, str] = {}
         for provider in ("claude", "codex"):
             frozen = dispatch.freeze_role_models(

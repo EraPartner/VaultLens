@@ -44,7 +44,8 @@ _SignalHandler = (
 
 class _SmokeInterrupted(BaseException):
     def __init__(self, signum: int) -> None:
-        self.signum = signum
+        super().__init__()
+        self.signum: int = signum
 
 
 def command(

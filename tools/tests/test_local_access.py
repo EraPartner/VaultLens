@@ -17,12 +17,16 @@ from scoped_search import ScopedSearch
 
 
 class AccessProfileTests(unittest.TestCase):
+    root: Path  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
+    profiles: dict[str, JsonObject]  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
+    policy: JsonObject  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="vaultlens-access-test-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         (self.root / "tools").mkdir()
-        self.profiles: dict[str, JsonObject] = {
+        self.profiles = {
             "selected-read": {"reports": "wiki/reports/agents"},
             "wiki-read": {
                 "extends": "selected-read",
@@ -37,7 +41,7 @@ class AccessProfileTests(unittest.TestCase):
                 "write": ["projects/{project}"],
             },
         }
-        self.policy: JsonObject = {
+        self.policy = {
             "version": 1,
             "profiles": self.profiles,
             "defaults": {"search": "wiki-read", "ingest": "wiki-write"},

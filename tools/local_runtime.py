@@ -1016,7 +1016,7 @@ def _verify_preflight(
 class _StopRun(BaseException):
     def __init__(self, signum: int) -> None:
         super().__init__()
-        self.signum = signum
+        self.signum: int = signum
 
 
 def _finish_report(
