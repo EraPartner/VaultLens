@@ -205,6 +205,13 @@ class AccessProfileTests(unittest.TestCase):
             with self.subTest(escape=escape):
                 self.assertFalse(scope.writable(self.root / escape))
 
+    def test_wiki_writers_cannot_edit_templater_templates(self) -> None:
+        # Obsidian Templater runs template code on the host, outside the sandbox.
+        scope = self.resolve("wiki-write", capability="wiki-write")
+        self.assertFalse(scope.writable(self.root / "wiki/_templates/source.md"))
+        self.assertFalse(scope.writable(self.root / "wiki/_templates/new.md"))
+        self.assertTrue(scope.writable(self.root / "wiki/concepts/new.md"))
+
     def test_writers_are_restricted_to_the_selected_layer_and_project(self) -> None:
         scope = self.resolve(
             "project-write", project="alpha", capability="project-write"

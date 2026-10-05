@@ -61,6 +61,9 @@ SECRET_NAMES = (
     ".git-credentials",
 )
 PROTECTED_NAMES = {"AGENTS.md", "AGENTS.override.md", "CLAUDE.md", ".mcp.json"}
+# Obsidian Templater executes code from these templates on the host, outside the
+# sandbox, so no write grant may reach them.
+PROTECTED_SUBTREES = ("wiki/_templates",)
 PROFILE_KEYS = {
     "extends",
     "description",
@@ -266,6 +269,10 @@ class RunScope:
         if ".." in path.parts:
             return False
         if path.name in PROTECTED_NAMES or not self.readable(path):
+            return False
+        if any(
+            path.is_relative_to(self.root / subtree) for subtree in PROTECTED_SUBTREES
+        ):
             return False
         return any(
             path == grant or path.is_relative_to(grant) for grant in self.write_paths

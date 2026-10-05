@@ -39,6 +39,7 @@ from runtime_maintenance import shared_runtime
 from local_access import (
     FORBIDDEN_DIRS,
     PROTECTED_NAMES,
+    PROTECTED_SUBTREES,
     ROOT,
     SECRET_NAMES,
     RunScope,
@@ -602,6 +603,7 @@ def compile_settings(
             "AGENTS.md",
             "CLAUDE.md",
             ".mcp.json",
+            *PROTECTED_SUBTREES,
         )
     ]
     protected.extend(

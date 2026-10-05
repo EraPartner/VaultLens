@@ -392,6 +392,8 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn(str(self.root / "wiki/concepts/private"), filesystem["denyWrite"])
         self.assertIn(str(self.root / "raw/review-inbox"), filesystem["denyRead"])
         self.assertIn(str(self.root / "raw"), filesystem["denyWrite"])
+        self.assertIn(str(self.root / "wiki/_templates"), filesystem["denyWrite"])
+        self.assertIn(str(self.root / ".obsidian"), filesystem["denyWrite"])
         self.assertIn(str(self.root / "tools/runtime-state"), filesystem["denyRead"])
         self.assertIn(
             str(self.root / "tools/public-script.py"), filesystem["denyWrite"]
