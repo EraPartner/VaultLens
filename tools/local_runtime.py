@@ -194,7 +194,9 @@ def native_executable(cli: str) -> Path:
     candidates = [Path(located)] if located else []
     candidates.extend(
         (
-            Path.home() / ".local/bin" / cli,
+            *dict.fromkeys(
+                home / ".local/bin" / cli for home in (_operator_home(), Path.home())
+            ),
             Path("/opt/homebrew/bin") / cli,
             Path("/usr/local/bin") / cli,
         )
@@ -262,7 +264,7 @@ def clean_environment(
     config = run / "config"
     cache = run / "cache"
     scratch = run / "scratch"
-    for path in (home, config, cache, scratch, run / "bin"):
+    for path in (home, config, cache, scratch, run / "data", run / "state", run / "bin"):
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
     paths = [
         str(run / "bin"),
@@ -550,6 +552,8 @@ def compile_settings(
         str(scope.root / "tools/runtime-node"),
         str(scope.root / "raw/review-inbox"),
         *(str(path) for path in scope.denied_paths),
+        # The account's real home, plus $HOME when an inherited variable differs.
+        str(_operator_home()),
         str(Path.home()),
     ]
     aliases: set[str] = set()
@@ -1029,11 +1033,8 @@ def _verify_preflight(
     )
     previous: dict[signal.Signals, SignalHandler] = {}
 
-    def stop(signum: int, _frame: FrameType | None) -> None:
-        raise _StopRun(signum)
-
     for sig in (signal.SIGTERM, signal.SIGINT):
-        previous[sig] = signal.signal(sig, stop)
+        previous[sig] = signal.signal(sig, _stop_run)
     try:
         try:
             stdout, stderr = child.communicate(timeout=30)
@@ -1059,6 +1060,10 @@ class _StopRun(BaseException):
     def __init__(self, signum: int) -> None:
         super().__init__()
         self.signum: int = signum
+
+
+def _stop_run(signum: int, _frame: FrameType | None) -> None:
+    raise _StopRun(signum)
 
 
 def _finish_report(
@@ -1126,11 +1131,8 @@ def _execute_prepared(
                 signal.signal(signal.SIGTTOU, previous[signal.SIGTTOU])
             raise
 
-    def stop(signum: int, _frame: FrameType | None) -> None:
-        raise _StopRun(signum)
-
     for sig in (signal.SIGTERM, signal.SIGINT):
-        previous[sig] = signal.signal(sig, stop)
+        previous[sig] = signal.signal(sig, _stop_run)
     result = 125
     try:
         try:
