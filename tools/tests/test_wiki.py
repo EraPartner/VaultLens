@@ -414,6 +414,10 @@ def test_project_provider_scaffold() -> None:
             "project scaffold adds no CLAUDE.md that would hide AGENTS.md",
             not (project / "CLAUDE.md").exists(),
         )
+        check(
+            "project scaffold writes no qmd MCP enablement",
+            not (project / ".claude").exists(),
+        )
 
 
 def test_provider_adapter_generation() -> None:
