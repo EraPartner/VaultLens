@@ -39,6 +39,7 @@ from runtime_maintenance import shared_runtime
 from local_access import (
     FORBIDDEN_DIRS,
     PROTECTED_NAMES,
+    PROTECTED_SUBTREES,
     ROOT,
     SECRET_NAMES,
     RunScope,
@@ -501,6 +502,14 @@ def _transfer_auth(
                 contents = stream.read(1024 * 1024 + 1)
             if len(contents) > 1024 * 1024:
                 raise ValueError("Authentication state exceeds size limit")
+            # The run copy is agent-writable: refuse anything that is not a login
+            # document rather than persisting it into the private store.
+            try:
+                document = json.loads(contents)
+            except (UnicodeDecodeError, ValueError):
+                document = None
+            if not isinstance(document, dict):
+                raise ValueError("Authentication state must be a JSON object")
             try:
                 target = os.stat(name, dir_fd=destination_fd, follow_symlinks=False)
             except FileNotFoundError:
@@ -552,6 +561,8 @@ def compile_settings(
         "/",
         str(state),
         str(scope.root / "tools/runtime-node"),
+        # Host repair backups hold the operator's shell functions and host paths.
+        str(scope.root / "tools/host-repair-backups"),
         str(scope.root / "raw/review-inbox"),
         *(str(path) for path in scope.denied_paths),
         # The account's real home, plus $HOME when an inherited variable differs.
@@ -604,6 +615,7 @@ def compile_settings(
             "AGENTS.md",
             "CLAUDE.md",
             ".mcp.json",
+            *PROTECTED_SUBTREES,
         )
     ]
     protected.extend(
@@ -687,6 +699,10 @@ def compile_settings(
                 "::1/128",
                 "fe80::/10",
                 "fc00::/7",
+                "224.0.0.0/4",
+                "ff00::/8",
+                "::ffff:0:0/96",
+                "64:ff9b::/96",
             ],
         },
         "enableWeakerNestedSandbox": False,
@@ -857,7 +873,9 @@ def prepared_run(
     quarantine = scope.root / CANCELLATION_GATE
     if cancellation_gate_present(scope.root):
         raise ValueError(
-            f"Previous tool cancellation is unconfirmed. Inspect {CANCELLATION_GATE} before another run."
+            f"Previous tool cancellation is unconfirmed. Inspect {CANCELLATION_GATE} before another run. "
+            "After confirming the process group is gone, delete the run_directory it names "
+            "(it holds a provider login copy) and then the marker."
         )
     executable = runtime_executable(scope.root)
     if require_verification:

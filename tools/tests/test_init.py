@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import subprocess
 import sys
 import tempfile
@@ -56,6 +57,7 @@ class InitTests(unittest.TestCase):
             "raw/inbox/private.pdf",
             "raw/review-inbox/private.url",
             "wiki/log/private.json",
+            "wiki/system/archive-registry.json",
         ]
         for relative in payloads:
             result = subprocess.run(
@@ -64,6 +66,24 @@ class InitTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(result.returncode, 0, relative)
+
+    def test_templater_never_runs_code_in_new_notes(self) -> None:
+        # Agents create notes; Templater would run their `<%*` code on the host.
+        config = json.loads(
+            (REPO_ROOT / ".obsidian/plugins/templater-obsidian/data.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertIs(config["trigger_on_file_creation"], False)
+        self.assertIs(config["enable_system_commands"], False)
+        self.assertEqual(config["startup_templates"], [""])
+
+    def test_plain_claude_sessions_ask_before_reading_the_consent_queue(self) -> None:
+        # The blanket Read allow must not pre-approve raw/review-inbox.
+        settings = json.loads(
+            (REPO_ROOT / ".claude/settings.json").read_text(encoding="utf-8")
+        )
+        self.assertIn("Read(**/raw/review-inbox/**)", settings["permissions"]["ask"])
 
     def test_operator_profile_is_an_optional_link_target(self) -> None:
         self.assertIn("entities/user-background", wiki.SPECIAL_LINK_TARGETS)

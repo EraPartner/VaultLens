@@ -51,12 +51,38 @@ def latest_release() -> str:
     return version
 
 
+def _locked_version(root: Path) -> object:
+    """The sandbox version both the manifest and its lockfile name, else None."""
+    try:
+        manifest = json.loads((root / "tools/runtime/package.json").read_text())
+        lock = json.loads((root / "tools/runtime/package-lock.json").read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(manifest, dict) or not isinstance(lock, dict):
+        return None
+    dependencies = cast("dict[str, object]", manifest).get("dependencies")
+    packages = cast("dict[str, object]", lock).get("packages")
+    if not isinstance(dependencies, dict) or not isinstance(packages, dict):
+        return None
+    entry = cast("dict[str, object]", packages).get(
+        "node_modules/@anthropic-ai/sandbox-runtime"
+    )
+    pinned = cast("dict[str, object]", dependencies).get(
+        "@anthropic-ai/sandbox-runtime"
+    )
+    if not isinstance(entry, dict):
+        return None
+    locked = cast("dict[str, object]", entry).get("version")
+    return pinned if pinned == locked else None
+
+
 def validate_pins(root: Path) -> str:
     version = local_runtime.SRT_VERSION
     if (
         not VERSION.fullmatch(version)
         or f"'@anthropic-ai/sandbox-runtime@{version}'"
         not in (root / "tools/runtime/install.sh").read_text()
+        or _locked_version(root) != version
         or f"const VERSION = '{version}';"
         not in (root / "tools/runtime/macos-process-guard.mjs").read_text()
     ):

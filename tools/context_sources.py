@@ -7,6 +7,9 @@ import stat
 from contextlib import ExitStack
 from pathlib import Path
 
+# Previews feed prompts; a huge inbox file must not be read whole.
+MAX_PREVIEW_CHARACTERS = 1024 * 1024
+
 
 def read_inbox_preview(root: Path, path: Path) -> str | None:
     """Return approved text, or None for unreadable/nonregular/linked entries.
@@ -29,10 +32,13 @@ def read_inbox_preview(root: Path, path: Path) -> str | None:
             leaf_fd = os.open(
                 path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=inbox_fd
             )
-            if not stat.S_ISREG(os.fstat(leaf_fd).st_mode):
+            metadata = os.fstat(leaf_fd)
+            # A hard link is the same file as its other name, e.g. one in the
+            # consent queue; a path-based sandbox cannot tell them apart.
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
                 os.close(leaf_fd)
                 return None
             with os.fdopen(leaf_fd, encoding="utf-8") as source:
-                return source.read()
+                return source.read(MAX_PREVIEW_CHARACTERS)
     except (OSError, UnicodeError):
         return None

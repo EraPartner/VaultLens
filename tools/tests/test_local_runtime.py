@@ -392,7 +392,12 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn(str(self.root / "wiki/concepts/private"), filesystem["denyWrite"])
         self.assertIn(str(self.root / "raw/review-inbox"), filesystem["denyRead"])
         self.assertIn(str(self.root / "raw"), filesystem["denyWrite"])
+        self.assertIn(str(self.root / "wiki/_templates"), filesystem["denyWrite"])
+        self.assertIn(str(self.root / ".obsidian"), filesystem["denyWrite"])
         self.assertIn(str(self.root / "tools/runtime-state"), filesystem["denyRead"])
+        self.assertIn(
+            str(self.root / "tools/host-repair-backups"), filesystem["denyRead"]
+        )
         self.assertIn(
             str(self.root / "tools/public-script.py"), filesystem["denyWrite"]
         )
@@ -560,7 +565,7 @@ class RuntimeTests(unittest.TestCase):
         )
         source.mkdir()
         destination.mkdir()
-        (source / "public-login.fixture").write_text("PUBLIC_LOGIN_SENTINEL")
+        (source / "public-login.fixture").write_text('{"fixture": "PUBLIC_LOGIN_SENTINEL"}')
         (source / "public-session.fixture").write_text("PUBLIC_SESSION_SENTINEL")
         (source / "public-config.fixture").write_text("PUBLIC_CONFIG_SENTINEL")
         with mock.patch.object(
@@ -572,7 +577,7 @@ class RuntimeTests(unittest.TestCase):
             ["public-login.fixture"],
         )
         self.assertEqual(
-            (destination / "public-login.fixture").read_text(), "PUBLIC_LOGIN_SENTINEL"
+            (destination / "public-login.fixture").read_text(), '{"fixture": "PUBLIC_LOGIN_SENTINEL"}'
         )
         self.assertEqual(
             stat.S_IMODE((destination / "public-login.fixture").stat().st_mode), 0o600
@@ -685,7 +690,7 @@ class RuntimeTests(unittest.TestCase):
         legacy = self.root / "tools/runtime-state/providers/codex"
         for directory in (host, legacy):
             directory.mkdir(parents=True)
-            (directory / "public-login.fixture").write_text("PUBLIC_PRIOR_LOGIN")
+            (directory / "public-login.fixture").write_text('{"fixture": "PUBLIC_PRIOR_LOGIN"}')
         with (
             mock.patch.object(
                 runtime, "AUTH_FILES", {"codex": ("public-login.fixture",)}
@@ -716,7 +721,7 @@ class RuntimeTests(unittest.TestCase):
             )
         for directory in (host, legacy):
             self.assertEqual(
-                (directory / "public-login.fixture").read_text(), "PUBLIC_PRIOR_LOGIN"
+                (directory / "public-login.fixture").read_text(), '{"fixture": "PUBLIC_PRIOR_LOGIN"}'
             )
 
     def test_authentication_transfer_rejects_aliases_large_files_and_destination_links(
@@ -729,7 +734,7 @@ class RuntimeTests(unittest.TestCase):
         source.mkdir()
         destination.mkdir()
         original = self.root / "public-original.fixture"
-        original.write_text("public login fixture")
+        original.write_text('{"fixture": "public login fixture"}')
         selected = source / "public-login.fixture"
         with mock.patch.object(runtime, "AUTH_FILES", {"codex": (selected.name,)}):
             selected.symlink_to(original)
@@ -743,11 +748,28 @@ class RuntimeTests(unittest.TestCase):
             selected.write_bytes(b"x" * (1024 * 1024 + 1))
             with self.assertRaisesRegex(ValueError, "regular file"):
                 _transfer_auth(source, destination, "codex")
-            selected.write_text("public allowed fixture")
+            selected.write_text('{"fixture": "public allowed fixture"}')
             (destination / selected.name).symlink_to(original)
             with self.assertRaisesRegex(ValueError, "destination.*symbolic link"):
                 _transfer_auth(source, destination, "codex")
-        self.assertEqual(original.read_text(), "public login fixture")
+        self.assertEqual(original.read_text(), '{"fixture": "public login fixture"}')
+
+    def test_authentication_transfer_refuses_non_login_documents(self) -> None:
+        # The run copy is agent-writable; junk must never reach the private store.
+        source, destination = self.root / "public-source", self.root / "public-store"
+        source.mkdir()
+        destination.mkdir()
+        selected = source / "public-login.fixture"
+        (destination / selected.name).write_text('{"fixture": "public kept login"}')
+        with mock.patch.object(runtime, "AUTH_FILES", {"codex": (selected.name,)}):
+            for content in ("not json", "[1, 2]", '"text"', "\udcff"):
+                with self.subTest(content=content):
+                    selected.write_bytes(content.encode("utf-8", "surrogateescape"))
+                    with self.assertRaisesRegex(ValueError, "JSON object"):
+                        _transfer_auth(source, destination, "codex")
+        self.assertEqual(
+            (destination / selected.name).read_text(), '{"fixture": "public kept login"}'
+        )
 
     def test_runtime_state_directory_cannot_be_aliased_into_unrelated_storage(
         self,
@@ -764,10 +786,10 @@ class RuntimeTests(unittest.TestCase):
     def test_authentication_transfer_rejects_links_in_directory_chain(self) -> None:
         outside = self.root / "public-outside"
         outside.mkdir()
-        (outside / "public-login.fixture").write_text("PUBLIC_OUTSIDE_SENTINEL")
+        (outside / "public-login.fixture").write_text('{"fixture": "PUBLIC_OUTSIDE_SENTINEL"}')
         safe = self.root / "public-safe"
         safe.mkdir()
-        (safe / "public-login.fixture").write_text("PUBLIC_APPROVED_SENTINEL")
+        (safe / "public-login.fixture").write_text('{"fixture": "PUBLIC_APPROVED_SENTINEL"}')
         alias = self.root / "public-alias"
         alias.symlink_to(outside, target_is_directory=True)
         with mock.patch.object(
@@ -780,10 +802,10 @@ class RuntimeTests(unittest.TestCase):
                     ):
                         _transfer_auth(source, destination, "codex")
         self.assertEqual(
-            (safe / "public-login.fixture").read_text(), "PUBLIC_APPROVED_SENTINEL"
+            (safe / "public-login.fixture").read_text(), '{"fixture": "PUBLIC_APPROVED_SENTINEL"}'
         )
         self.assertEqual(
-            (outside / "public-login.fixture").read_text(), "PUBLIC_OUTSIDE_SENTINEL"
+            (outside / "public-login.fixture").read_text(), '{"fixture": "PUBLIC_OUTSIDE_SENTINEL"}'
         )
 
     def test_retained_auth_directory_refuses_replacement_before_refresh(self) -> None:
@@ -793,7 +815,7 @@ class RuntimeTests(unittest.TestCase):
         )
         source.mkdir()
         destination.mkdir()
-        (source / "public-login.fixture").write_text("PUBLIC_ORIGINAL_SENTINEL")
+        (source / "public-login.fixture").write_text('{"fixture": "PUBLIC_ORIGINAL_SENTINEL"}')
         with (
             mock.patch.object(
                 runtime, "AUTH_FILES", {"codex": ("public-login.fixture",)}
@@ -802,7 +824,7 @@ class RuntimeTests(unittest.TestCase):
         ):
             source.rename(self.root / "public-old-source")
             source.mkdir()
-            (source / "public-login.fixture").write_text("PUBLIC_REPLACEMENT_SENTINEL")
+            (source / "public-login.fixture").write_text('{"fixture": "PUBLIC_REPLACEMENT_SENTINEL"}')
             with self.assertRaisesRegex(ValueError, "directory changed"):
                 _transfer_auth(source, destination, "codex", source_fd=retained)
         self.assertEqual(list(destination.iterdir()), [])
@@ -812,7 +834,7 @@ class RuntimeTests(unittest.TestCase):
     ) -> None:
         store = runtime.auth_store_path(self.root, "codex")
         store.mkdir(parents=True)
-        (store / "public-login.fixture").write_text("public initial login")
+        (store / "public-login.fixture").write_text('{"fixture": "public initial login"}')
         (store / "public-config.fixture").write_text("public prior configuration")
         with (
             mock.patch.object(
@@ -832,10 +854,10 @@ class RuntimeTests(unittest.TestCase):
                 state = Path(env["CODEX_HOME"])
                 self.assertEqual(state, run / "provider")
                 self.assertEqual(
-                    (state / "public-login.fixture").read_text(), "public initial login"
+                    (state / "public-login.fixture").read_text(), '{"fixture": "public initial login"}'
                 )
                 self.assertFalse((state / "public-config.fixture").exists())
-                (state / "public-login.fixture").write_text("public refreshed login")
+                (state / "public-login.fixture").write_text('{"fixture": "public refreshed login"}')
                 (state / "public-history.fixture").write_text("public run history")
                 self.assertEqual(stat.S_IMODE(run.stat().st_mode), 0o700)
                 self.assertEqual(
@@ -848,7 +870,7 @@ class RuntimeTests(unittest.TestCase):
                 self.assertTrue((run / "bin/qmd").is_file())
             self.assertFalse(run.exists())
         self.assertEqual(
-            (store / "public-login.fixture").read_text(), "public refreshed login"
+            (store / "public-login.fixture").read_text(), '{"fixture": "public refreshed login"}'
         )
         self.assertFalse((store / "public-history.fixture").exists())
         self.assertEqual(
@@ -860,7 +882,7 @@ class RuntimeTests(unittest.TestCase):
     ) -> None:
         store = runtime.auth_store_path(self.root, "codex")
         store.mkdir(parents=True)
-        (store / "public-login.fixture").write_text("public original login")
+        (store / "public-login.fixture").write_text('{"fixture": "public original login"}')
         with (
             mock.patch.object(
                 runtime, "AUTH_FILES", {"codex": ("public-login.fixture",)}
@@ -878,14 +900,14 @@ class RuntimeTests(unittest.TestCase):
                     _env,
                 ):
                     (run / "provider/public-login.fixture").write_text(
-                        "public unreviewed refresh"
+                        '{"fixture": "public unreviewed refresh"}'
                     )
                     raise RuntimeError("public cancellation")
             self.assertFalse(run.exists())
             with runtime.prepared_run(self.scope, "codex", snapshot=False):
                 pass
         self.assertEqual(
-            (store / "public-login.fixture").read_text(), "public original login"
+            (store / "public-login.fixture").read_text(), '{"fixture": "public original login"}'
         )
 
     def test_writer_lock_serializes_overlapping_scopes_and_releases_after_exit(

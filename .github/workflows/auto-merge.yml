@@ -10,7 +10,9 @@ jobs:
     name: Auto-merge patch/minor
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    if: github.actor == 'dependabot[bot]'
+    # Check the PR author, not only the event actor, so a re-run or push by
+    # someone else on a Dependabot branch never enables auto-merge.
+    if: github.actor == 'dependabot[bot]' && github.event.pull_request.user.login == 'dependabot[bot]'
     permissions:
       contents: write
       pull-requests: write

@@ -151,9 +151,9 @@ Write only inside this project directory. Never modify `wiki/` or `raw/`.
 # Per-project TODO seed. Plain checkboxes in the Obsidian Tasks plugin emoji
 # format: add `⏫`/`🔺` priority, `📅 YYYY-MM-DD` due dates, etc. via the
 # editor autosuggest (`obsidian-tasks-plugin` is configured for this vault).
-# Mirrors `wiki/_templates/project-todo.md` (Templater), which auto-applies when
-# a TODO.md is created interactively in Obsidian; this constant is used when
-# the project is scaffolded via `wiki.py project new`.
+# Mirrors `wiki/_templates/project-todo.md` (Templater, inserted by hand in
+# Obsidian; the creation trigger is off); this constant is used when the
+# project is scaffolded via `wiki.py project new`.
 TODO_TEMPLATE = """\
 # {slug} TODO
 
