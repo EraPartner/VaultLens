@@ -32,7 +32,10 @@ python3 tools/local_runtime.py doctor
 python3 tools/runtime/probe.py
 ```
 
-The package is pinned and installation disables package scripts, audit, and funding requests.
+The package and its whole dependency tree are locked in `tools/runtime/package-lock.json` with
+integrity hashes; the installer runs `npm ci`, which installs exactly that tree and disables
+package scripts, audit, and funding requests. To review a new release, regenerate the lockfile
+with `npm install --package-lock-only --ignore-scripts` in `tools/runtime/` and review its diff.
 `doctor` checks the package version and operating-system prerequisites. A synthetic isolation probe
 must establish real denied reads, denied writes, process behavior, and network confinement on the
 deployment host. Each run also performs a confinement preflight before loading note content.

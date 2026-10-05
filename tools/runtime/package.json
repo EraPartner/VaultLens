@@ -1,0 +1,8 @@
+{
+  "name": "vaultlens-sandbox-runtime",
+  "private": true,
+  "description": "Reviewed sandbox runtime pin; install with tools/runtime/install.sh (npm ci).",
+  "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.78"
+  }
+}
