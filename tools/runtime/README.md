@@ -240,6 +240,10 @@ runtime does not reuse a shared vault index, host MCP configuration, or vector-m
 Blocking an original file is insufficient if an index retains a copy; the isolated corpus prevents
 that leak. Hybrid full-vault qmd search remains an explicit operator workflow.
 
+Search reads at most 4,096 documents and 32 MB per query, in path order. A result that hit either
+cap says `truncated` and lists `unsearched_documents` and up to 20 `unsearched_directories`.
+Each hit carries a 400-character snippet by default; `snippet_chars` raises it to at most 1,600.
+
 `tools/scripts/provider-smoke.py --root <vault> --profile wiki-read` checks the whole-process
 preflight and scoped lexical search without a model call. `--provider claude|codex --run-provider`
 opts into a literal synthetic response and can consume paid usage. This smoke check does not

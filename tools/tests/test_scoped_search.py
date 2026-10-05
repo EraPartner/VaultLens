@@ -15,10 +15,13 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from local_access import RunScope  # noqa: E402
+import scoped_search  # noqa: E402
 from scoped_search import (  # noqa: E402
+    DEFAULT_SNIPPET_CHARS,
     MAX_DOCUMENT_BYTES,
     MAX_GET_CHARS,
     MAX_RESULTS,
+    MAX_SNIPPET_CHARS,
     ScopedSearch,
     load_scope,
     serve_mcp,
@@ -205,6 +208,30 @@ class ScopedSearchTests(unittest.TestCase):
         result = self.search.get({"path": "wiki/concepts/current.md"})
         self.assertTrue(result["truncated"])
         self.assertEqual(len(result["text"]), MAX_GET_CHARS)
+
+    def test_snippets_are_bounded_and_adjustable(self) -> None:
+        self.note.write_text(
+            "# Current note\n" + "filler " * 100 + "alpha " + "tail " * 500,
+            encoding="utf-8",
+        )
+        result = self.search.search({"query": "alpha"})["results"][0]
+        self.assertEqual(len(result["snippet"]), DEFAULT_SNIPPET_CHARS)
+        self.assertIn("alpha", result["snippet"])
+        wide = self.search.search({"query": "alpha", "snippet_chars": MAX_SNIPPET_CHARS})
+        self.assertEqual(len(wide["results"][0]["snippet"]), MAX_SNIPPET_CHARS)
+        for value in (0, MAX_SNIPPET_CHARS + 1, True):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.search.search({"query": "alpha", "snippet_chars": value})
+
+    def test_document_cap_names_unsearched_directories(self) -> None:
+        payload = self.search.search({"query": "marker"})
+        self.assertNotIn("unsearched_documents", payload)
+        total = len(self.scope.document_paths())
+        with patch.object(scoped_search, "MAX_DOCUMENTS", 1):
+            payload = self.search.search({"query": "marker"})
+        self.assertTrue(payload["truncated"])
+        self.assertEqual(payload["unsearched_documents"], total - 1)
+        self.assertIn("wiki/concepts", payload["unsearched_directories"])
 
     def test_manifest_is_explicit_and_rejects_external_selections(self) -> None:
         with patch.dict(

@@ -26,6 +26,9 @@ MAX_CORPUS_BYTES = 32 * 1024 * 1024
 MAX_DOCUMENTS = 4096
 MAX_QUERY_CHARS = 4096
 MAX_RESULTS = 50
+DEFAULT_SNIPPET_CHARS = 400
+MAX_SNIPPET_CHARS = 1600
+MAX_UNSEARCHED_DIRECTORIES = 20
 MAX_GET_CHARS = 64 * 1024
 MAX_MESSAGE_CHARS = 128 * 1024
 TOKEN = re.compile(r"\w+", re.UNICODE)
@@ -232,12 +235,17 @@ class ScopedSearch:
         if not terms:
             raise ValueError("Queries must contain searchable words")
         limit = _bounded_int(arguments.get("limit"), default=10, maximum=MAX_RESULTS)
+        snippet_chars = _bounded_int(
+            arguments.get("snippet_chars"),
+            default=DEFAULT_SNIPPET_CHARS,
+            maximum=MAX_SNIPPET_CHARS,
+        )
         paths = self.scope.document_paths()
         results: list[JsonObject] = []
         consumed = 0
-        truncated = len(paths) > MAX_DOCUMENTS
+        searched = min(len(paths), MAX_DOCUMENTS)
         skipped = 0
-        for path in paths[:MAX_DOCUMENTS]:
+        for index, path in enumerate(paths[:MAX_DOCUMENTS]):
             try:
                 text = _read_document(self.scope, path)
             except ValueError:
@@ -245,7 +253,7 @@ class ScopedSearch:
                 continue
             consumed += len(text.encode("utf-8"))
             if consumed > MAX_CORPUS_BYTES:
-                truncated = True
+                searched = index
                 break
             relative = path.relative_to(self.scope.root).as_posix()
             lowered = text.casefold()
@@ -258,7 +266,7 @@ class ScopedSearch:
             position = min(
                 (lowered.find(term) for term in terms if term in lowered), default=0
             )
-            start = max(0, position - 200)
+            start = max(0, position - snippet_chars // 8)
             score = matches / len(terms) + min(sum(counts), 100) / 1000
             results.append(
                 {
@@ -267,16 +275,29 @@ class ScopedSearch:
                     "docid": relative,
                     "title": title,
                     "score": round(score, 4),
-                    "snippet": text[start : start + 1600],
+                    "snippet": text[start : start + snippet_chars],
                 }
             )
         results.sort(key=lambda result: (-result["score"], result["file"]))
-        return {
+        payload: JsonObject = {
             "mode": "lexical",
             "results": results[:limit],
-            "truncated": truncated or len(results) > limit,
+            "truncated": searched < len(paths) or len(results) > limit,
             "skipped_documents": skipped,
         }
+        if searched < len(paths):
+            # Name what the size caps left out, so a miss is not read as absence.
+            directories = sorted(
+                {
+                    path.parent.relative_to(self.scope.root).as_posix()
+                    for path in paths[searched:]
+                }
+            )
+            payload["unsearched_documents"] = len(paths) - searched
+            payload["unsearched_directories"] = directories[
+                :MAX_UNSEARCHED_DIRECTORIES
+            ]
+        return payload
 
     def get(self, arguments: JsonObject) -> JsonObject:
         path = self._path(
@@ -364,12 +385,17 @@ def _tools() -> list[JsonObject]:
                 },
             },
             "limit": {"type": "integer", "minimum": 1, "maximum": MAX_RESULTS},
+            "snippet_chars": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": MAX_SNIPPET_CHARS,
+            },
         },
     }
     definitions: list[tuple[str, str, JsonObject]] = [
         (
             "search",
-            "Lexical search over approved current Markdown/text documents.",
+            "Lexical search over approved current Markdown/text documents. Snippets default to 400 characters; set snippet_chars (up to 1600) for more, or use get.",
             query_schema,
         ),
         (
