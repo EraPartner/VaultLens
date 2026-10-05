@@ -119,9 +119,10 @@ To remove the wake later:
 
 To run the nightly batch with the LID CLOSED on AC (no external display needed),
 install the least-privilege sudoers rule (3 exact pmset calls, nothing else):
-  "$HERE/install.sh" --render-sudoers /tmp/brain-schedule.sudoers
-  sudo visudo -cf /tmp/brain-schedule.sudoers      # must print "parsed OK"
-  sudo install -m 0440 -o root -g wheel /tmp/brain-schedule.sudoers /etc/sudoers.d/brain-schedule
+  rule_dir="\$(mktemp -d)"                         # private directory, not shared /tmp
+  "$HERE/install.sh" --render-sudoers "\$rule_dir/brain-schedule.sudoers"
+  sudo visudo -cf "\$rule_dir/brain-schedule.sudoers"      # must print "parsed OK"
+  sudo install -m 0440 -o root -g wheel "\$rule_dir/brain-schedule.sudoers" /etc/sudoers.d/brain-schedule
 Without it, lid-closed nights are skipped and caught up when you next open on AC.
 To remove it:
   sudo rm /etc/sudoers.d/brain-schedule
