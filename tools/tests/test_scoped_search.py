@@ -28,6 +28,15 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scoped_search.py"
 
 
 class ScopedSearchTests(unittest.TestCase):
+    # Fixture state is built per test in setUp, which basedpyright does not count as initialisation.
+    temporary: tempfile.TemporaryDirectory[str]  # pyright: ignore[reportUninitializedInstanceVariable]
+    root: Path  # pyright: ignore[reportUninitializedInstanceVariable]
+    note: Path  # pyright: ignore[reportUninitializedInstanceVariable]
+    outside: Path  # pyright: ignore[reportUninitializedInstanceVariable]
+    scope: RunScope  # pyright: ignore[reportUninitializedInstanceVariable]
+    search: ScopedSearch  # pyright: ignore[reportUninitializedInstanceVariable]
+    manifest: Path  # pyright: ignore[reportUninitializedInstanceVariable]
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

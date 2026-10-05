@@ -199,6 +199,8 @@ def _title(text: str, path: Path) -> str:
 
 
 class ScopedSearch:
+    scope: RunScope
+
     def __init__(self, scope: RunScope) -> None:
         self.scope = scope
 
@@ -317,7 +319,7 @@ class ScopedSearch:
         ]
         return {"documents": documents, "mode": "lexical"}
 
-    def status(self, arguments: JsonObject | None = None) -> JsonObject:
+    def status(self, _arguments: JsonObject | None = None) -> JsonObject:
         paths = self.scope.document_paths()
         return {
             "mode": "lexical",

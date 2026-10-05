@@ -6,6 +6,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -67,8 +68,8 @@ def test_ingest() -> None:
 
         with (
             patch.object(wiki_ingest, "RAW_SOURCES_TEXT_DIR", text_dir),
-            patch.object(wiki_ingest.shutil, "which", return_value="/usr/bin/tool"),
-            patch.object(wiki_ingest.subprocess, "run", side_effect=extract),
+            patch.object(shutil, "which", return_value="/usr/bin/tool"),
+            patch.object(subprocess, "run", side_effect=extract),
         ):
             path, status = wiki_ingest.extract_pdf_to_markdown(pdf)
         check(
@@ -99,8 +100,8 @@ def test_ingest() -> None:
 
         with (
             patch.object(wiki_ingest, "RAW_SOURCES_TEXT_DIR", text_dir),
-            patch.object(wiki_ingest.shutil, "which", return_value="/usr/bin/tool"),
-            patch.object(wiki_ingest.subprocess, "run", side_effect=decrypt),
+            patch.object(shutil, "which", return_value="/usr/bin/tool"),
+            patch.object(subprocess, "run", side_effect=decrypt),
         ):
             path, status = wiki_ingest.extract_pdf_to_markdown(pdf, force=True)
         check(
@@ -115,9 +116,9 @@ def test_ingest() -> None:
 
         with (
             patch.object(wiki_ingest, "RAW_SOURCES_TEXT_DIR", text_dir),
-            patch.object(wiki_ingest.shutil, "which", return_value="/usr/bin/tool"),
+            patch.object(shutil, "which", return_value="/usr/bin/tool"),
             patch.object(
-                wiki_ingest.subprocess,
+                subprocess,
                 "run",
                 side_effect=subprocess.TimeoutExpired(["pdftotext"], 1),
             ),
