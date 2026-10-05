@@ -226,6 +226,9 @@ blocks further launches. An operator must verify that the recorded process group
 removing that marker. The marker names the kept `run_directory`; it holds a copy of the provider
 login and run scratch, so delete it once cleanup is confirmed. The runtime never clears either
 automatically.
+An interrupted headless run (SIGINT/SIGTERM) also writes the marker. To stop a headless loop without
+interrupting a run, send `kill -USR1 <pid>` to the launcher; it leaves `stop-requested` in the run's
+scratch and the loop exits after the current run.
 Job removal allows a bounded two-second wait for launchd to finish teardown. A repeated cleanup
 request preserves the original failure instead of replacing it after the guardian has stopped.
 Raw PDFs are extracted to private scratch storage. Agent preprocessing does not modify raw files

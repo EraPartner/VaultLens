@@ -1126,6 +1126,28 @@ def _stop_run(signum: int, _frame: FrameType | None) -> None:
     raise _StopRun(signum)
 
 
+# Graceful stop for headless loops. The confined child runs in its own session,
+# so SIGUSR1 to this launcher cannot reach it. The launcher leaves this file in
+# the run's scratch (the child's TMPDIR) and the loop exits between runs.
+STOP_REQUEST_FILE = "stop-requested"
+
+
+@contextlib.contextmanager
+def graceful_stop_requests(run: Path) -> Generator[None]:
+    def _request_stop(_signum: int, _frame: FrameType | None) -> None:
+        (run / "scratch" / STOP_REQUEST_FILE).touch()
+        print(
+            "\n[local-runtime] SIGUSR1 received; stopping after the current run.",
+            file=sys.stderr,
+        )
+
+    previous = signal.signal(signal.SIGUSR1, _request_stop)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGUSR1, previous)
+
+
 def _finish_report(
     recorder: Recorder, result: int, pending: BaseException | None
 ) -> None:
@@ -1250,25 +1272,29 @@ def _run(
     private_cwd: bool = False,
 ) -> int:
     with prepared_run(scope, cli, snapshot=snapshot) as (executable, run, env):
-        _verify_preflight(executable, run, env, scope.root)
-        recorder: Recorder | None = None
-        if report_role:
-            from run_reports import Recorder
-
-            if cli is None:
-                raise ValueError("Report capture requires a native provider")
-            recorder = Recorder(scope, report_role, cli)
-        if cli and command[0] == cli:
-            command = [env["VAULTLENS_PROVIDER_EXECUTABLE"], *command[1:]]
-        return _execute_prepared(
-            command,
-            executable,
-            run,
-            env,
-            run / "home" if private_cwd else run / "workspace",
-            interactive=interactive,
-            recorder=recorder,
+        stop_requests = (
+            contextlib.nullcontext() if interactive else graceful_stop_requests(run)
         )
+        with stop_requests:
+            _verify_preflight(executable, run, env, scope.root)
+            recorder: Recorder | None = None
+            if report_role:
+                from run_reports import Recorder
+
+                if cli is None:
+                    raise ValueError("Report capture requires a native provider")
+                recorder = Recorder(scope, report_role, cli)
+            if cli and command[0] == cli:
+                command = [env["VAULTLENS_PROVIDER_EXECUTABLE"], *command[1:]]
+            return _execute_prepared(
+                command,
+                executable,
+                run,
+                env,
+                run / "home" if private_cwd else run / "workspace",
+                interactive=interactive,
+                recorder=recorder,
+            )
 
 
 def launch_headless(root: Path, args: argparse.Namespace, *, argv: list[str]) -> int:

@@ -37,6 +37,7 @@ from agent_capabilities import Capabilities, profile_capabilities  # noqa: E402
 from context_budget import ReviewEntry, gather_context  # noqa: E402
 from context_sources import read_inbox_preview  # noqa: E402
 from local_runtime import (  # noqa: E402
+    STOP_REQUEST_FILE,
     active_scope,
     active_working_directory,
     launch_headless,
@@ -453,7 +454,10 @@ Examples:
   python3 tools/agents/wiki-agent.py enhance --background &
   disown
   tail -f tools/runtime-state/logs/bg-enhance-*.log   # follow progress
-  kill <pid printed at startup>         # stop it
+  kill -USR1 <pid printed at startup>   # stop after the current iteration
+  kill <pid printed at startup>         # stop now; interrupting a run blocks later
+                                        # runs until cleanup is verified (see
+                                        # tools/runtime/README.md)
 """,
     )
 
@@ -1141,6 +1145,16 @@ def run_agent(args: argparse.Namespace, strategy: str | None = None) -> int:
 _STOP_REQUESTED = False  # mutable flag; tests and handlers use this name
 
 
+def _stop_requested() -> bool:
+    """True after SIGUSR1/SIGINT/SIGTERM here, or a graceful stop from the launcher."""
+    if _STOP_REQUESTED:
+        return True
+    scratch = os.environ.get("TMPDIR")
+    return bool(
+        scratch and active_scope() is not None and (Path(scratch) / STOP_REQUEST_FILE).exists()
+    )
+
+
 def _install_signal_handlers() -> None:
     """Stop between iterations, or cancel the owned process group during a run.
 
@@ -1297,7 +1311,10 @@ def main(argv: list[str] | None = None) -> int:
             log_path = ROOT / log_path
         if _redirect_output_to_log(log_path):
             print(f"[wiki-agent] {_ts()} pid={os.getpid()} logging to {log_path}")
-            print(f"[wiki-agent] stop with: kill {os.getpid()}")
+            print(
+                f"[wiki-agent] stop after the current run: kill -USR1 {os.getpid()} "
+                f"(plain kill interrupts the run and sets the cancellation gate)"
+            )
     guard_rc = _enter_runtime(args, replay)
     if guard_rc is not None:
         return guard_rc
@@ -1385,7 +1402,8 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     for i in iter_source:
-        if _STOP_REQUESTED:
+        if _stop_requested():
+            print(f"[wiki-agent] {_ts()} stop requested; exiting between iterations.")
             break
         iter_count = i + 1
         per_iter_strategy = _resolve_strategy(args.strategy, i)

@@ -891,6 +891,22 @@ class TimeoutTests(AgentUnitTests):
             self.assertEqual(process.returncode, 0)
             self.assertIn("stop True", stdout)
 
+    def test_launcher_stop_file_ends_the_loop_inside_the_runtime_only(self) -> None:
+        agent = self.fixture_agent()
+        with tempfile.TemporaryDirectory() as temporary:
+            scratch = Path(temporary)
+            (scratch / agent.STOP_REQUEST_FILE).touch()
+            with patch.dict(os.environ, {"TMPDIR": str(scratch)}):
+                with patch.object(agent, "active_scope", return_value=object()):
+                    self.assertTrue(agent._stop_requested())
+                # Outside the runtime a stray file in TMPDIR must not stop anything.
+                with patch.object(agent, "active_scope", return_value=None):
+                    self.assertFalse(agent._stop_requested())
+            (scratch / agent.STOP_REQUEST_FILE).unlink()
+            with patch.dict(os.environ, {"TMPDIR": str(scratch)}):
+                with patch.object(agent, "active_scope", return_value=object()):
+                    self.assertFalse(agent._stop_requested())
+
     def test_completed_step_is_persisted_before_later_crash(self) -> None:
         now = dt.datetime(2026, 9, 5, 2, tzinfo=dt.timezone.utc)
         ledger: dispatch.Ledger = {"jobs": {}, "accounts": {}}
