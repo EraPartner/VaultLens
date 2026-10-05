@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
-"""Render or validate a scheduler plist without loading launchd or starting work."""
+"""Render or validate scheduler templates without loading launchd or starting work.
+
+The tracked plist and sudoers files are templates: `@BRAIN_ROOT@` (this checkout),
+`@BRAIN_HOME@` (the operator's home) and `@BRAIN_USER@` (the operator's account) are
+filled in at render time, so no host-specific path or user name is committed.
+"""
 
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
 import plistlib
+import re
 import sys
 from pathlib import Path
 from collections.abc import Mapping
@@ -24,6 +31,48 @@ PROVIDER_KEYS = (
 
 
 PlistDict = dict[str, object]
+
+_PLACEHOLDER_RE = re.compile(r"@BRAIN_[A-Z_]+@")
+# Portable account-name grammar; also keeps a hostile name out of a sudoers line.
+_ACCOUNT_RE = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
+
+
+def default_substitutions() -> dict[str, str]:
+    """Placeholder values for this checkout and the account running the renderer."""
+    return {
+        "@BRAIN_ROOT@": str(Path(__file__).resolve().parents[2]),
+        "@BRAIN_HOME@": str(Path.home()),
+        "@BRAIN_USER@": getpass.getuser(),
+    }
+
+
+def _fill(value: object, substitutions: Mapping[str, str]) -> object:
+    """Replace placeholders in every string of a plist value; reject leftovers."""
+    if isinstance(value, str):
+        for placeholder, replacement in substitutions.items():
+            value = value.replace(placeholder, replacement)
+        unresolved = _PLACEHOLDER_RE.search(value)
+        if unresolved:
+            raise ValueError(f"Unresolved template placeholder {unresolved.group()}")
+        return value
+    if isinstance(value, list):
+        items = cast("list[object]", value)  # plist arrays hold plist values
+        return [_fill(item, substitutions) for item in items]
+    if isinstance(value, dict):
+        table = cast("PlistDict", value)  # plist dictionary keys are always strings
+        return {key: _fill(item, substitutions) for key, item in table.items()}
+    return value
+
+
+def render_sudoers(template: str, user: str) -> str:
+    """Fill the sudoers template for `user`; refuse names that are not plain accounts."""
+    if not _ACCOUNT_RE.fullmatch(user) or user == "root":
+        raise ValueError(f"Not a valid non-root account name for sudoers: {user!r}")
+    result = template.replace("@BRAIN_USER@", user)
+    unresolved = _PLACEHOLDER_RE.search(result)
+    if unresolved:
+        raise ValueError(f"Unresolved template placeholder {unresolved.group()}")
+    return result
 
 
 def _plist_dict(data: object) -> PlistDict:
@@ -90,8 +139,11 @@ def render_plist(
     *,
     config_path: Path | None = None,
     python_executable: str | None = None,
+    substitutions: Mapping[str, str] | None = None,
 ) -> PlistDict:
     plist = _plist_dict(data)
+    if substitutions is not None:
+        plist = _plist_dict(_fill(plist, substitutions))
     table = _environment(plist)
     if table is None:
         raise ValueError("Scheduler EnvironmentVariables must map names to strings")
@@ -126,10 +178,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("destination", type=Path, nargs="?")
     parser.add_argument("--validate", action="store_true")
     parser.add_argument(
+        "--sudoers",
+        action="store_true",
+        help="render the sudoers template for the current account instead of a plist",
+    )
+    parser.add_argument(
         "--python-executable", help="Python executable launchd should use"
     )
     args = parser.parse_args(argv)
     try:
+        if args.sudoers:
+            if args.validate or args.destination is None:
+                parser.error("--sudoers needs a destination and excludes --validate")
+            args.destination.write_text(
+                render_sudoers(args.source.read_text(encoding="utf-8"), getpass.getuser()),
+                encoding="utf-8",
+            )
+            print(f"Rendered {args.destination} for {getpass.getuser()}")
+            return 0
         data = plistlib.loads(args.source.read_bytes())
         if args.validate:
             provider = validate_plist(data)
@@ -138,7 +204,10 @@ def main(argv: list[str] | None = None) -> int:
             if args.destination is None:
                 parser.error("destination is required unless --validate is set")
             result = render_plist(
-                data, os.environ, python_executable=args.python_executable
+                data,
+                os.environ,
+                python_executable=args.python_executable,
+                substitutions=default_substitutions(),
             )
             args.destination.write_bytes(plistlib.dumps(result, sort_keys=False))
             mode = (
