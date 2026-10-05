@@ -393,6 +393,33 @@ class AccessProfileTests(unittest.TestCase):
                 scope.readable(self.root / "raw" / directory / "public.md"), directory
             )
 
+    def test_letter_case_never_reopens_denied_or_protected_paths(self) -> None:
+        # APFS is case-insensitive by default: wiki/Reports is wiki/reports.
+        self.profiles["raw-read"] = {"read": ["raw", "wiki"]}
+        self.write_policy()
+        scope = self.resolve("raw-read", capability="read")
+        for variant in (
+            "raw/Review-Inbox/consent.md",
+            "RAW/REVIEW-INBOX/consent.md",
+            "wiki/.ENV",
+            "wiki/ID_RSA",
+            "wiki/Credentials.json",
+            "wiki/x.PEM",
+            "wiki/.Git/config",
+            "wiki/.OBSIDIAN/app.json",
+        ):
+            with self.subTest(variant=variant):
+                self.assertTrue(access.forbidden(self.root / variant, self.root))
+        reader = self.resolve("wiki-read")
+        for variant in ("wiki/Reports/agents/prior.md", "wiki/PRIVATE/hidden.md"):
+            with self.subTest(variant=variant):
+                self.assertFalse(reader.readable(self.root / variant))
+        writer = self.resolve("wiki-write", capability="wiki-write")
+        for variant in ("wiki/_Templates/source.md", "wiki/agents.md", "wiki/Agents.MD"):
+            with self.subTest(variant=variant):
+                self.assertFalse(writer.writable(self.root / variant))
+        self.assertTrue(writer.writable(self.root / "wiki/concepts/new.md"))
+
     def test_research_domains_are_opt_in_and_reports_stay_dedicated(self) -> None:
         self.assertEqual(self.resolve().research_domains, ())
         for domain in (

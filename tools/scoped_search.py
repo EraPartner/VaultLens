@@ -18,7 +18,7 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import TextIO, cast
 
-from local_access import PROTECTED_NAMES, JsonObject, RunScope
+from local_access import JsonObject, RunScope, protected_name
 
 MAX_MANIFEST_BYTES = 1024 * 1024
 MAX_DOCUMENT_BYTES = 1024 * 1024
@@ -121,7 +121,7 @@ def _read_document(scope: RunScope, path: Path) -> str:
     """Walk directory descriptors without following links, including race swaps."""
     if (
         path.suffix not in {".md", ".txt"}
-        or path.name in PROTECTED_NAMES
+        or protected_name(path.name)
         or not scope.readable(path)
     ):
         raise ValueError("Document is unavailable in this access profile")

@@ -64,6 +64,13 @@ PROTECTED_NAMES = {"AGENTS.md", "AGENTS.override.md", "CLAUDE.md", ".mcp.json"}
 # Obsidian Templater executes code from these templates on the host, outside the
 # sandbox, so no write grant may reach them.
 PROTECTED_SUBTREES = ("wiki/_templates",)
+_PROTECTED_FOLDED = {name.casefold() for name in PROTECTED_NAMES}
+
+
+def protected_name(name: str) -> bool:
+    """True for instruction files, in any letter case."""
+    return name.casefold() in _PROTECTED_FOLDED
+
 PROFILE_KEYS = {
     "extends",
     "description",
@@ -192,15 +199,22 @@ def _relative(value: str, project: str | None) -> str:
     return value
 
 
+def _folded(path: Path) -> Path:
+    """Compare paths as APFS does by default: letter case is not significant."""
+    return Path(str(path).casefold())
+
+
 def forbidden(path: Path, root: Path) -> bool:
     try:
         relative = path.relative_to(root)
     except ValueError:
         return True
+    parts = tuple(part.casefold() for part in relative.parts)
+    name = path.name.casefold()
     return (
-        any(part in FORBIDDEN_DIRS for part in relative.parts)
-        or relative.parts[:2] == ("raw", "review-inbox")
-        or any(fnmatch.fnmatch(path.name, pattern) for pattern in SECRET_NAMES)
+        any(part in FORBIDDEN_DIRS for part in parts)
+        or parts[:2] == ("raw", "review-inbox")
+        or any(fnmatch.fnmatchcase(name, pattern) for pattern in SECRET_NAMES)
     )
 
 
@@ -252,10 +266,8 @@ class RunScope:
             concrete = _inside(path, self.root)
         except (ValueError, OSError):
             return False
-        if any(
-            concrete == deny or concrete.is_relative_to(deny)
-            for deny in self.denied_paths
-        ):
+        folded = _folded(concrete)
+        if any(folded.is_relative_to(_folded(deny)) for deny in self.denied_paths):
             return False
         return any(
             concrete == grant or concrete.is_relative_to(grant)
@@ -268,10 +280,12 @@ class RunScope:
         # so wiki/../raw/x would pass both checks. Reject traversal outright.
         if ".." in path.parts:
             return False
-        if path.name in PROTECTED_NAMES or not self.readable(path):
+        if protected_name(path.name) or not self.readable(path):
             return False
+        folded = _folded(path)
         if any(
-            path.is_relative_to(self.root / subtree) for subtree in PROTECTED_SUBTREES
+            folded.is_relative_to(_folded(self.root / subtree))
+            for subtree in PROTECTED_SUBTREES
         ):
             return False
         return any(
@@ -306,7 +320,7 @@ class RunScope:
             result.update(
                 path
                 for path in candidates
-                if self.readable(path) and path.name not in PROTECTED_NAMES
+                if self.readable(path) and not protected_name(path.name)
             )
         return sorted(result)
 
