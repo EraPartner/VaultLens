@@ -58,7 +58,6 @@ _WEEKDAYS = {
     "sat": 5,
     "sun": 6,
 }
-_WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 # Stacking guard: if a project's runner has applied edits on this many consecutive
 # nights without an operator `project agenda ack`, the builder skips it (paused)
@@ -296,13 +295,11 @@ def _next_weekday(today: dt.date, weekdays: list[int]) -> dt.date:
     return min(candidates)
 
 
-def compute_next_due(
-    schedule: str, _last_run: dt.date | None, today: dt.date
-) -> dt.date | None:
+def compute_next_due(schedule: str, today: dt.date) -> dt.date | None:
     """Next due date AFTER a run on `today`. None for one-shot tasks.
 
-    Recurring cadences are computed from the run date (`today`), not from the previous run
-    (`_last_run`, accepted for call-site symmetry and unused), so a project that was asleep for a week resumes its cadence instead of firing
+    Recurring cadences are computed from the run date (`today`), not from the previous run,
+    so a project that was asleep for a week resumes its cadence instead of firing
     every night to "catch up".
     """
     kind, param = parse_schedule(schedule)
@@ -362,7 +359,7 @@ def due_projects(projects_dir: str | Path, today: dt.date) -> list[str]:
         try:
             if project_is_due(agenda_path, today):
                 out.append(agenda_path.parent.name)
-        except Exception:
+        except (OSError, ValueError):  # unreadable or undecodable agenda
             continue
     return out
 
@@ -373,17 +370,32 @@ def due_projects(projects_dir: str | Path, today: dt.date) -> list[str]:
 def _task_block_range(lines: list[str], task_id: str) -> tuple[int, int] | None:
     """[start, end) line range of a real (non-commented) `### [id]` block."""
     search = _search_view(lines)
-    start = None
+    # Same scope as `parse_tasks`: only `### [id]` blocks under `## Tasks`.
+    tasks_start = None
+    tasks_end = len(search)
     for i, line in enumerate(search):
-        m = _TASK_HEADING.match(line)
+        m = _SECTION_HEADING.match(line)
+        if m is None:
+            continue
+        if tasks_start is None:
+            if m.group(1).strip().lower() == "tasks":
+                tasks_start = i
+        else:
+            tasks_end = i
+            break
+    if tasks_start is None:
+        return None
+    start = None
+    for i in range(tasks_start + 1, tasks_end):
+        m = _TASK_HEADING.match(search[i])
         if m and m.group(1).strip() == task_id:
             start = i
             break
     if start is None:
         return None
-    end = len(search)
-    for j in range(start + 1, len(search)):
-        if search[j].startswith("### ") or search[j].startswith("## "):
+    end = tasks_end
+    for j in range(start + 1, tasks_end):
+        if search[j].startswith("### "):
             end = j
             break
     return (start, end)
@@ -500,7 +512,7 @@ def complete(path: str | Path, task_id: str, today: dt.date | None = None) -> bo
     lines = p.read_text(encoding="utf-8").split("\n")
     _set_task_field(lines, task_id, "last_run", today.isoformat())
     try:
-        nxt = compute_next_due(task.schedule, today, today)
+        nxt = compute_next_due(task.schedule, today)
     except ValueError:
         nxt = None
     if nxt is None:
@@ -530,7 +542,7 @@ def resolve(path: str | Path, task_id: str, today: dt.date | None = None) -> boo
     _drop_task_field(lines, task_id, "questions")
     _remove_clarification_entry(lines, task_id)
     _append_run_log(
-        lines, f"{today.isoformat()} [{task_id}] resolved via /project-clarify → clear"
+        lines, f"{today.isoformat()} [{task_id}] resolved via wiki-project-clarify → clear"
     )
     _stamp_updated(lines, today)
     _write_lines(p, lines)
@@ -555,20 +567,6 @@ def _drop_task_field(lines: list[str], task_id: str, key: str) -> None:
             end -= j - i
             continue
         i += 1
-
-
-def set_status(
-    path: str | Path, task_id: str, status: str, today: dt.date | None = None
-) -> bool:
-    if status not in STATUSES:
-        raise ValueError(f"bad status: {status!r}")
-    p = Path(path)
-    lines = p.read_text(encoding="utf-8").split("\n")
-    if not _set_task_field(lines, task_id, "status", status):
-        return False
-    _stamp_updated(lines, today)
-    _write_lines(p, lines)
-    return True
 
 
 def new_id(path: str | Path) -> str:
@@ -808,7 +806,7 @@ tags: [agenda, project-runner]
 > project-runner grooms them into **## Tasks** with a stable id, a schedule, and an
 > acceptance line, then executes the tasks that are 100% clear and due. Anything
 > ambiguous is filed under **## Clarifications** for you to resolve with
-> `/project-clarify` (it never guesses overnight). Set `enabled: true` in the
+> the `wiki-project-clarify` skill (it never guesses overnight). Set `enabled: true` in the
 > frontmatter to turn nightly runs on (off by default). The runner edits this
 > project's files for real but **never commits**; a morning roll-up at
 > `wiki/reports/agents/scheduled/scheduled-project-runner-<date>.md` lists every change and a one-line
@@ -835,7 +833,7 @@ tags: [agenda, project-runner]
 -->
 
 ## Clarifications
-<!-- One entry per needs-clarification task; resolve with `/project-clarify {slug}`. -->
+<!-- One entry per needs-clarification task; resolve with the `wiki-project-clarify` skill for {slug}. -->
 
 ## Run log
 <!-- Append-only, newest at bottom: "YYYY-MM-DD [Tn] action → result". -->

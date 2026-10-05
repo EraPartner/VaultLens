@@ -17,6 +17,10 @@ from wiki import WIKI_DIR
 
 LOG_NOTES_DIR = WIKI_DIR / "log"
 
+# Same shape `validate_log` enforces, so `append-log` never writes what it rejects.
+OPERATION_RE = re.compile(r"\w+")
+ENTRY_RE = re.compile(r"^## \[\d{4}-\d{2}-\d{2}\] \w+ \| .+$")
+
 
 def _render_frontmatter(frontmatter: dict[str, str | list[str]]) -> str:
     """Render this module's small YAML subset without a third-party dependency.
@@ -74,6 +78,19 @@ def append_log_entry(
     sources: list[str],
     notes: str,
 ) -> int:
+    if not OPERATION_RE.fullmatch(operation):
+        print(f"Invalid operation {operation!r}: use letters, digits and underscores only")
+        return 1
+    fields = {"title": title, "summary": summary, "notes": notes}
+    fields.update({f"pages[{i}]": v for i, v in enumerate(pages)})
+    fields.update({f"sources[{i}]": v for i, v in enumerate(sources)})
+    if not title.strip():
+        print("Invalid title: must not be empty")
+        return 1
+    for name, value in fields.items():
+        if "\n" in value or "\r" in value:
+            print(f"Invalid {name}: must be a single line")
+            return 1
     date = dt.datetime.now().strftime("%Y-%m-%d")
     log_path = WIKI_DIR / "log.md"
     if not log_path.exists():
@@ -111,7 +128,7 @@ def validate_log() -> int:
         return 1
 
     text = log_path.read_text(encoding="utf-8")
-    entry_re = re.compile(r"^## \[\d{4}-\d{2}-\d{2}\] \w+ \| .+$")
+    entry_re = ENTRY_RE
     entries = 0
     malformed: list[str] = []
 

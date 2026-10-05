@@ -35,6 +35,8 @@ LINK_RE = re.compile(r"\[\[([^\]|#]+)(#[^\]|]+)?(\|[^\]]+)?\]\]")
 # A markdown mirror immediately following `]]` (with optional leading space):
 #   ([Name](path))  — used to detect links that are already dual-linked.
 MIRROR_RE = re.compile(r"^\s*\(\[[^\]]*\]\([^)]*\)\)")
+# An inline code span: a backtick run closed by a run of the same length.
+CODE_SPAN_RE = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 
 
 @dataclass
@@ -76,7 +78,12 @@ def _process_line(
     rewrite: bool,
 ) -> str:
     """Tally (and optionally rewrite) wikilinks on a single non-code line."""
-    matches = list(LINK_RE.finditer(line))
+    code_spans = [m.span() for m in CODE_SPAN_RE.finditer(line)]
+    matches = [
+        m
+        for m in LINK_RE.finditer(line)
+        if not any(start <= m.start() < end for start, end in code_spans)
+    ]
     if not matches:
         return line
     for match in reversed(matches):
@@ -107,7 +114,16 @@ def _process_page(
     stats = LinkStats()
     out: list[str] = []
     in_code = False
-    for line in page.text.splitlines():
+    lines = page.text.splitlines()
+    # Leave the YAML block alone: a mirror there would break the frontmatter.
+    start = 0
+    if lines and lines[0].strip() == "---":
+        for index in range(1, len(lines)):
+            if lines[index].strip() == "---":
+                start = index + 1
+                break
+    out.extend(lines[:start])
+    for line in lines[start:]:
         if line.strip().startswith("```"):
             in_code = not in_code
             out.append(line)
