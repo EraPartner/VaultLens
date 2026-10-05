@@ -674,14 +674,6 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 17,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
                     "startColumn": 13,
@@ -690,23 +682,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 18,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 19,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 19,
@@ -798,23 +774,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 20,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 17,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 17,
@@ -838,23 +798,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 20,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 17,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 17,
@@ -870,23 +814,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 21,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 20,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 20,
@@ -904,23 +832,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 20,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 19,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 19,
@@ -934,30 +846,6 @@
                 "range": {
                     "startColumn": 13,
                     "endColumn": 17,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 17,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 21,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 19,
                     "lineCount": 1
                 }
             }
@@ -996,23 +884,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 17,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 22,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 22,
@@ -1036,14 +908,6 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 20,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
                     "startColumn": 13,
@@ -1052,23 +916,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 18,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 16,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 16,
@@ -1462,14 +1310,6 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 19,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportPrivateLocalImportUsage",
                 "range": {
                     "startColumn": 43,
@@ -1486,23 +1326,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 22,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 17,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 17,
@@ -1656,23 +1480,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 17,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 17,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 17,
@@ -1688,23 +1496,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 20,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 18,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 18,
@@ -1720,14 +1512,6 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 21,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
                     "startColumn": 13,
@@ -1736,23 +1520,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 16,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 18,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 18,
@@ -1778,23 +1546,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 17,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 18,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 18,
@@ -1810,23 +1562,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 18,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 22,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 22,
@@ -1908,23 +1644,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 17,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 16,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 16,
@@ -1966,23 +1686,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 17,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 18,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 18,
@@ -2040,23 +1744,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 20,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 17,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 17,
@@ -2072,23 +1760,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 19,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 24,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 24,
@@ -2104,14 +1776,6 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 25,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
                     "startColumn": 13,
@@ -2120,23 +1784,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 21,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 21,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 21,
@@ -2154,23 +1802,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 17,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 22,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 22,
@@ -2188,23 +1820,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 22,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 17,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 17,
@@ -2220,14 +1836,6 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 19,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
                     "startColumn": 13,
@@ -2236,23 +1844,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 22,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 25,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 25,
@@ -2294,14 +1886,6 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 17,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
                 "range": {
                     "startColumn": 13,
@@ -2310,39 +1894,7 @@
                 }
             },
             {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 20,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 19,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 21,
-                    "lineCount": 1
-                }
-            },
-            {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 24,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 24,
@@ -2459,14 +2011,6 @@
         "./tests/test_schedule_recovery.py": [
             {
                 "code": "reportUnannotatedClassAttribute",
-                "range": {
-                    "startColumn": 13,
-                    "endColumn": 16,
-                    "lineCount": 1
-                }
-            },
-            {
-                "code": "reportUninitializedInstanceVariable",
                 "range": {
                     "startColumn": 13,
                     "endColumn": 16,

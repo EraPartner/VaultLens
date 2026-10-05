@@ -17,11 +17,10 @@ FISH = shutil.which("fish")
 
 @unittest.skipUnless(FISH, "fish required for root discovery tests")
 class RootDiscoveryTests(unittest.TestCase):
-    # Fixture state is built per test in setUp, which basedpyright does not count as initialisation.
-    fixture: tempfile.TemporaryDirectory[str]  # pyright: ignore[reportUninitializedInstanceVariable]
-    root: Path  # pyright: ignore[reportUninitializedInstanceVariable]
-    fallback: Path  # pyright: ignore[reportUninitializedInstanceVariable]
-    unrelated: Path  # pyright: ignore[reportUninitializedInstanceVariable]
+    fixture: tempfile.TemporaryDirectory[str]
+    root: Path
+    fallback: Path
+    unrelated: Path
 
     def setUp(self) -> None:
         self.fixture = tempfile.TemporaryDirectory(prefix="brain root ")
