@@ -16,9 +16,11 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from local_access import RunScope  # noqa: E402
 from scoped_search import (  # noqa: E402
+    DEFAULT_SNIPPET_CHARS,
     MAX_DOCUMENT_BYTES,
     MAX_GET_CHARS,
     MAX_RESULTS,
+    MAX_SNIPPET_CHARS,
     ScopedSearch,
     load_scope,
     serve_mcp,
@@ -221,6 +223,49 @@ class ScopedSearchTests(unittest.TestCase):
         result = self.search.get({"path": "wiki/concepts/current.md"})
         self.assertTrue(result["truncated"])
         self.assertEqual(len(result["text"]), MAX_GET_CHARS)
+
+    def test_snippets_are_bounded_and_adjustable(self) -> None:
+        self.note.write_text(
+            "# Current note\n" + "filler " * 100 + "alpha " + "tail " * 500,
+            encoding="utf-8",
+        )
+        result = self.search.search({"query": "alpha"})["results"][0]
+        self.assertEqual(len(result["snippet"]), DEFAULT_SNIPPET_CHARS)
+        self.assertIn("alpha", result["snippet"])
+        wide = self.search.search({"query": "alpha", "snippet_chars": MAX_SNIPPET_CHARS})
+        self.assertEqual(len(wide["results"][0]["snippet"]), MAX_SNIPPET_CHARS)
+        for value in (0, MAX_SNIPPET_CHARS + 1, True):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.search.search({"query": "alpha", "snippet_chars": value})
+
+    def test_search_covers_every_document_in_a_large_vault(self) -> None:
+        # The old 4,096-document cap silently skipped later paths.
+        for index in range(4200):
+            self.write(f"wiki/bulk/{index:05d}.md", f"bulk note {index}")
+        self.write("wiki/zz-last/final.md", "Approved last-path corpus marker.")
+        payload = self.search.search({"query": "last-path"})
+        self.assertEqual(
+            [result["file"] for result in payload["results"]],
+            ["wiki/zz-last/final.md"],
+        )
+        self.assertEqual(payload["skipped_documents"], 0)
+        self.assertGreater(self.search.status()["documents"], 4200)
+
+    def test_cached_approval_still_refuses_later_link_swaps(self) -> None:
+        self.assertEqual(len(self.search.search({"query": "alpha"})["results"]), 1)
+        self.note.unlink()
+        self.note.symlink_to(self.outside / "global-index.md")
+        self.assertEqual(self.search.search({"query": "Denied-index"})["results"], [])
+        self.note.unlink()
+        secret = self.root / "wiki/private/secret.md"
+        os.link(secret, self.note)
+        self.assertEqual(
+            self.search.search({"query": "Denied-private"})["results"], []
+        )
+        self.write("wiki/concepts/new.md", "Approved fresh-file corpus marker.")
+        self.assertEqual(
+            len(self.search.search({"query": "fresh-file"})["results"]), 1
+        )
 
     def test_manifest_is_explicit_and_rejects_external_selections(self) -> None:
         with patch.dict(

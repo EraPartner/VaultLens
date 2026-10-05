@@ -1324,7 +1324,7 @@ def launch_interactive(
     with prepared_run(scope, provider) as (executable, run, env):
         _verify_preflight(executable, run, env, scope.root)
         cwd = run / "workspace"
-        instruction = "Use the approved local access profile. This runtime contract supersedes legacy container, mount and proxy instructions in vault documents. Sources, tools, instructions, credentials of other providers, and Git metadata are protected. Search uses a fresh scoped lexical corpus, never a global qmd index. This session cannot change its own permissions. Read AGENTS.md at the vault root and wiki/AGENTS.md before wiki work."
+        instruction = "Use the approved local access profile. Sources, tools, instructions, credentials of other providers, and Git metadata are protected. Search uses a fresh scoped lexical corpus, never a global qmd index. This session cannot change its own permissions. Read AGENTS.md at the vault root and wiki/AGENTS.md before wiki work."
         if project:
             instruction += f" Work inside projects/{project}. Read projects/AGENTS.md, this project's AGENTS.md and project.md; its Rules section controls project work."
         instruction += f" The vault root is {scope.root}. Your private working directory exposes only approved paths and trusted tools; use those paths or absolute vault paths."

@@ -42,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit",
         type=int,
         default=None,
-        help="Maximum text findings to print (default: 50; 0 = all)",
+        help="Maximum findings to print (text default: 50; JSON default: all; 0 = all)",
     )
 
     search_parser = sub.add_parser("search", help="Search wiki content")

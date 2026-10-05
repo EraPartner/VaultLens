@@ -10,6 +10,7 @@ import runpy
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 
 if sys.version_info < (3, 11):
@@ -60,7 +61,11 @@ class Page:
     frontmatter: dict[str, str | list[str]]
     body: str
     text: str
-    links: list[str]
+
+    @cached_property
+    def links(self) -> list[str]:
+        # Lazy: search, stats and tags never need the link scan.
+        return extract_wikilinks(self.text)
 
     def scalar(self, key: str) -> str:
         value = self.frontmatter.get(key, "")
@@ -310,14 +315,12 @@ def wiki_files() -> list[Path]:
 def load_page(path: Path) -> Page:
     text = path.read_text(encoding="utf-8")
     fm, body = parse_frontmatter(text)
-    links = extract_wikilinks(text)
     return Page(
         path=path,
         rel=path.relative_to(WIKI_DIR),
         frontmatter=fm,
         body=body,
         text=text,
-        links=links,
     )
 
 
