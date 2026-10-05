@@ -26,7 +26,6 @@ from llm_provider import load_config, load_profile_models  # noqa: E402
 
 # One alias per private name the suite exercises (tests legitimately touch internals).
 _env_flag = dispatch._env_flag  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
-_slugify = dispatch._slugify  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
 _select_ingest_pdfs = dispatch._select_ingest_pdfs  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
 _agent_output = dispatch._agent_output  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
 _record = dispatch._record  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
@@ -166,6 +165,33 @@ def main() -> int:
     st = led4["accounts"][dispatch.ACCOUNTS[0]]
     check("cleared limit + backoff", st["limited_until"] is None and st["backoff"] == 0)
 
+    print("classify_failure ignores trace noise:")
+    frame_429 = 'Traceback (most recent call last):\n  File "/x/y.py", line 429, in run\nValueError: bad'
+    check(
+        "line number 429 in a traceback frame is not a rate limit",
+        dispatch.classify_failure(1, frame_429) == "transient",
+    )
+    frame_quota = (
+        'Traceback (most recent call last):\n  File "/x/y.py", line 7, in check_quota\n'
+        "    check_quota()\nValueError: bad"
+    )
+    check(
+        "an identifier in a traceback frame is not a quota hit",
+        dispatch.classify_failure(1, frame_quota) == "transient",
+    )
+    check(
+        "429 inside a longer number is not a rate limit",
+        dispatch.classify_failure(1, "processed 14290 files") == "transient",
+    )
+    check(
+        "provider error code insufficient_quota is a quota hit",
+        dispatch.classify_failure(1, "error code: insufficient_quota") == "quota",
+    )
+    check(
+        "HTTP 429 after a traceback is still a rate limit",
+        dispatch.classify_failure(1, frame_429 + "\nHTTP 429") == "ratelimit",
+    )
+
     print("step_due:")
     steps = {s.name: s for s in dispatch.build_steps()}
     led5 = fresh_ledger()
@@ -203,12 +229,121 @@ def main() -> int:
         dispatch.step_due(weekly, led6, weekday) is True,
     )
 
-    print("ingest target selection:")
+    print("weekly cadence keeps its weekday:")
+    # Ran Sunday 04:00; the next Sunday's first tick is 01:30, i.e. 6 days 21.5 hours
+    # later. Elapsed-time age (6) used to skip it and slip every run to Tuesday.
+    sunday_ran = datetime(2026, 6, 7, 4, 0).astimezone()
+    led7 = fresh_ledger()
+    led7["jobs"]["contradict"] = {"last_ok": dispatch.iso(sunday_ran)}
+    next_sunday_early = (sunday_ran + timedelta(days=7)).replace(hour=1, minute=30)
     check(
-        "slugify matches source-text convention",
-        _slugify("Cryptology and Error Correction")
-        == "cryptology-and-error-correction",
+        "weekly due on the next Sunday's first tick",
+        dispatch.step_due(weekly, led7, next_sunday_early) is True,
     )
+    check(
+        "weekly not due the Saturday before",
+        dispatch.step_due(weekly, led7, next_sunday_early - timedelta(days=1)) is False,
+    )
+    probe = sunday_ran
+    weekdays: list[int] = []
+    for _ in range(5):
+        probe = (probe + timedelta(days=1)).replace(hour=1, minute=30)
+        while not dispatch.step_due(weekly, led7, probe):
+            probe += timedelta(days=1)
+        weekdays.append(probe.weekday())
+        led7["jobs"]["contradict"] = {"last_ok": dispatch.iso(probe.replace(minute=45))}
+    check("five consecutive weekly runs stay on Sunday", weekdays == [6] * 5, str(weekdays))
+    led7["jobs"]["contradict"] = {"last_ok": dispatch.iso(sunday_ran)}
+    check(
+        "missed Sunday still catches up on Monday after 8 days",
+        dispatch.step_due(
+            weekly, led7, (sunday_ran + timedelta(days=8)).replace(hour=1, minute=30)
+        )
+        is True,
+    )
+
+    print("ledger timestamps are validated:")
+    with tempfile.TemporaryDirectory() as raw:
+        state = Path(raw) / "schedule-state.json"
+        original_state = dispatch.STATE_FILE
+        dispatch.STATE_FILE = state
+        try:
+            def refused(ledger: object) -> bool:
+                state.write_text(json.dumps(ledger), encoding="utf-8")
+                try:
+                    dispatch.load_ledger()
+                except RuntimeError as exc:
+                    return "timezone-aware ISO time" in str(exc)
+                return False
+
+            check(
+                "malformed last_ok is refused with a recovery message",
+                refused({"jobs": {"lint": {"last_ok": "yesterday"}}}),
+            )
+            check(
+                "naive last_ok is refused",
+                refused({"jobs": {"lint": {"last_ok": "2026-06-07T04:00:00"}}}),
+            )
+            check(
+                "non-string limited_until is refused",
+                refused({"accounts": {"claude": {"limited_until": 5}}}),
+            )
+            state.write_text(
+                json.dumps(
+                    {
+                        "jobs": {"lint": {"last_ok": dispatch.iso(now)}},
+                        "accounts": {"claude": {"limited_until": None}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            check("valid timestamps load", "lint" in dispatch.load_ledger()["jobs"])
+        finally:
+            dispatch.STATE_FILE = original_state
+
+    print("dispatcher log pruning:")
+    with tempfile.TemporaryDirectory() as raw:
+        logs = Path(raw)
+        old = datetime.now().timestamp() - 40 * 86400
+        names = {
+            "schedule-2026-01-01.log": True,
+            "agent-ab12_cd.stdout.log": True,
+            "agent-ab12_cd.stderr.log": True,
+            "launchd.err.log": False,
+            "notes.txt": False,
+        }
+        for name in names:
+            (logs / name).write_text("x", encoding="utf-8")
+            os.utime(logs / name, (old, old))
+        (logs / "schedule-2026-06-07.log").write_text("fresh", encoding="utf-8")
+        outside = Path(raw) / "outside.log"
+        outside.write_text("x", encoding="utf-8")
+        os.utime(outside, (old, old))
+        (logs / "schedule-2026-01-02.log").symlink_to(outside)
+        (logs / "agent-link.stdout.log").symlink_to(outside)
+        os.utime(logs / "schedule-2026-01-02.log", (old, old), follow_symlinks=False)
+        removed = dispatch._prune_logs(logs)  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+        left = sorted(p.name for p in logs.iterdir())
+        check("three old dispatcher logs removed", removed == 3, str(removed))
+        check(
+            "fresh, foreign and linked files survive",
+            "schedule-2026-06-07.log" in left
+            and "launchd.err.log" in left
+            and "notes.txt" in left
+            and outside.exists(),
+            str(left),
+        )
+        for name in ("agent-qq.stdout.log", "schedule-2026-01-03.log"):
+            (logs / name).write_text("x", encoding="utf-8")
+            os.utime(logs / name, (old, old))
+        removed = dispatch._prune_logs(logs, keep_agent_logs=True)  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+        check(
+            "unresolved cancellation keeps agent captures",
+            removed == 1 and (logs / "agent-qq.stdout.log").exists(),
+            str(removed),
+        )
+
+    print("ingest target selection:")
     check(
         "PDF with a wiki source page is skipped",
         _select_ingest_pdfs(
@@ -595,34 +730,17 @@ def main() -> int:
         len(_reports_to_prune(names, 0)) == 22,
     )
 
-    print("cos proposal parsing (CoS→AGENDA seam):")
+    print("legacy CoS proposal block (stripped, never routed):")
     brief = (
         "## Chief of Staff Brief — 2026-06-29 (Monday)\n"
         "### Today's focus\n- do the thing\n\n"
         "## Proposals\n"
         "proposal:: vision | Triage the 3 failed CSV imports | time-sensitive\n"
-        "proposal::assistant|Draft reply to supervisor|overdue commitment\n"
-        "proposal:: alpha | only two fields\n"  # one pipe -> malformed -> skipped
-        "garbage line, not a proposal\n"
-        "proposal:: | | \n"  # empty target/task/why -> skipped
-    )
-    props = dispatch.parse_cos_proposals(brief)
-    check("parses only the 2 well-formed proposals", len(props) == 2)
-    check(
-        "first proposal target+task",
-        props[0]["target"] == "vision" and props[0]["task"].startswith("Triage"),
     )
     check(
-        "pipes without surrounding spaces still parse",
-        props[1]["target"] == "assistant"
-        and props[1]["task"] == "Draft reply to supervisor",
-    )
-    check(
-        "malformed one-pipe line skipped",
-        all("only two fields" not in p["task"] for p in props),
-    )
-    check(
-        "brief with no block => []", dispatch.parse_cos_proposals("no block here") == []
+        "no proposal parser/router remains",
+        not hasattr(dispatch, "parse_cos_proposals")
+        and not hasattr(dispatch, "route_cos_proposals"),
     )
     stripped = dispatch.strip_cos_proposals(brief)
     check(
