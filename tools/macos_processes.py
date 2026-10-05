@@ -30,9 +30,9 @@ from pathlib import Path
 from types import FrameType
 from typing import IO, Any, ClassVar, TextIO, TypeGuard, cast, final
 
-# Isolated Python guardian execution still imports only its trusted neighbour.
+# Isolated Python guardian execution still imports only its trusted neighbour (process_errors).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from process_control import ProcessCleanupError  # noqa: E402
+from process_errors import ProcessCleanupError  # noqa: E402
 
 MAX_PROCESSES = 16384
 MAX_DOCUMENT = 2 * 1024 * 1024

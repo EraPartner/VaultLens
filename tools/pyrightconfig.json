@@ -9,7 +9,6 @@
   "reportImplicitOverride": false,
   "reportImplicitRelativeImport": false,
   "reportImplicitStringConcatenation": false,
-  "baselineFile": "typing-baseline.json",
   "executionEnvironments": [
     {
       "root": "tests",

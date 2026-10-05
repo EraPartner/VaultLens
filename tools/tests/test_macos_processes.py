@@ -25,6 +25,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import macos_processes as supervision
 import process_control
+import process_errors
 
 
 # Tests exercise these module internals directly; one alias per private name.
@@ -204,6 +205,16 @@ class AuditKernelTests(unittest.TestCase):
         )
         with self.assertRaises(process_control.ProcessCleanupError):
             self.kernel.signal(token(101), signal.SIGKILL)
+
+
+class SharedErrorTests(unittest.TestCase):
+    def test_cleanup_error_is_one_class_everywhere(self) -> None:
+        self.assertIs(process_control.ProcessCleanupError, process_errors.ProcessCleanupError)
+
+    def test_guardian_imports_only_the_leaf_module(self) -> None:
+        source = Path(supervision.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("process_control", source)
+        self.assertIn("from process_errors import ProcessCleanupError", source)
 
 
 class FreezeTests(unittest.TestCase):
