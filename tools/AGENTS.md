@@ -50,7 +50,7 @@ Run from the repository root. CI uses Python 3.12, `ruff==0.15.17` and `basedpyr
 ```bash
 .githooks/install.sh                                 # enable local hooks (once per clone)
 ruff check tools/                                    # lint (rules in tools/ruff.toml)
-basedpyright --project tools/pyrightconfig.json     # typing gate ("all" mode, baselined)
+basedpyright --project tools/pyrightconfig.json     # typing gate ("all" mode, no baseline)
 python3 -m compileall -q tools                       # syntax gate
 for t in tools/tests/test_*.py; do python3 "$t"; done  # all tooling suites
 python3 tools/tests/test_wiki.py                     # one suite

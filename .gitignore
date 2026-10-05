@@ -18,11 +18,6 @@ wiki-log-*.json
 # VaultLens skeleton exposes the shared implementation but never owns this tree.
 .brain-local/
 
-# The container launcher is retired and nothing in the repo uses .devcontainer/.
-# Kept ignored so leftover operator-local files there (mount roots, launchers,
-# iCloud conflict copies) are never committed to the public repo.
-.devcontainer/
-
 # Agent config: track canonical AGENTS.md/.agents/, generated provider adapters,
 # and shared settings. Only machine-local Claude state stays ignored.
 .claude/settings.local.json
