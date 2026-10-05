@@ -199,6 +199,22 @@ def _relative(value: str, project: str | None) -> str:
     return value
 
 
+_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
+
+
+def _research_domain(domain: str) -> bool:
+    """A named public HTTPS host: no IP literal, local name, or TLD-wide wildcard."""
+    labels = domain.casefold().removesuffix(":443").removeprefix("*.").split(".")
+    return (
+        len(labels) >= 2
+        and all(_LABEL.fullmatch(label) for label in labels)
+        # A numeric last label is an IPv4 literal or a decimal/octal IP alias.
+        and any(character.isalpha() for character in labels[-1])
+        and labels[-1] not in {"localhost", "local", "internal", "localdomain"}
+        and "localhost" not in labels
+    )
+
+
 def _folded(path: Path) -> Path:
     """Compare paths as APFS does by default: letter case is not significant."""
     return Path(str(path).casefold())
@@ -422,11 +438,7 @@ def resolve_scope(
         extra.extend(_expand(root, value, project))
     domains = tuple(profile.get("research_domains", []))
     for domain in domains:
-        if (
-            not re.fullmatch(r"(?:\*\.)?[A-Za-z0-9][A-Za-z0-9.-]*(?::443)?", domain)
-            or domain == "*"
-            or domain.startswith(("localhost", "127."))
-        ):
+        if not isinstance(domain, str) or not _research_domain(domain):
             raise ValueError(f"Research must name explicit HTTPS domains: {domain!r}")
     report_value = profile.get("reports", "wiki/reports/agents")
     if not isinstance(report_value, str) or any(c in report_value for c in "*?["):

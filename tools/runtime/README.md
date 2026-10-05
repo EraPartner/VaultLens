@@ -233,6 +233,9 @@ or automatically promote an inbox document.
 
 Ordinary analysis exposes only the selected provider's model and login endpoints. Web research is
 opt-in through a separate profile's explicit `research_domains` and local shell networking.
+Each domain must be a named public host (`example.org`, `*.example.org`, optional `:443`); IP
+literals, local names and TLD-wide wildcards are refused, and private, link-local, multicast,
+IPv4-mapped and NAT64 address ranges stay denied after DNS resolution.
 Hosted provider WebSearch/WebFetch tools remain disabled because server-side browsing cannot
 enforce this local domain list. Model choice and native tool approval cannot widen that
 process-level network or filesystem policy.

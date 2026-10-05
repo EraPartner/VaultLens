@@ -429,6 +429,16 @@ class AccessProfileTests(unittest.TestCase):
             "https://example.org",
             "example.org:80",
             "../example.org",
+            "com",
+            "*.com",
+            "LOCALHOST",
+            "*.localhost",
+            "api.localhost",
+            "169.254.169.254",
+            "2130706433",
+            "0x7f.0.0.1",
+            "printer.local",
+            "-bad.example.org",
         ):
             with self.subTest(domain=domain):
                 self.write_policy(
@@ -436,10 +446,13 @@ class AccessProfileTests(unittest.TestCase):
                 )
                 with self.assertRaisesRegex(ValueError, "explicit HTTPS"):
                     self.resolve("research")
-        self.profiles["research"] = {"research_domains": ["example.org:443"]}
+        self.profiles["research"] = {
+            "research_domains": ["example.org:443", "*.example.org", "docs.python.org"]
+        }
         self.write_policy()
         self.assertEqual(
-            self.resolve("research").research_domains, ("example.org:443",)
+            self.resolve("research").research_domains,
+            ("example.org:443", "*.example.org", "docs.python.org"),
         )
         for reports in (
             "projects/alpha",
