@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import io
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -23,6 +24,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import wiki  # noqa: E402
+import wiki_cli  # noqa: E402
 import wiki_index  # noqa: E402
 import wiki_lint  # noqa: E402
 import wiki_links  # noqa: E402
@@ -686,8 +688,8 @@ def test_source_id_stats_and_sampling() -> None:
 
 
 def test_bounded_cli_output_defaults() -> None:
-    parsed_lint = wiki.build_parser().parse_args(["lint"])
-    parsed_tags = wiki.build_parser().parse_args(["tags"])
+    parsed_lint = wiki_cli.build_parser().parse_args(["lint"])
+    parsed_tags = wiki_cli.build_parser().parse_args(["tags"])
     check("lint uses a bounded human-output default", parsed_lint.limit is None)
     check("tags selects its output-aware default at runtime", parsed_tags.limit is None)
 
@@ -747,6 +749,27 @@ def test_log_frontmatter_is_stdlib_and_yaml_safe() -> None:
     )
 
 
+def test_script_entry_point() -> None:
+    """`python3 tools/wiki.py` still dispatches through the CLI module and keeps exit codes."""
+    script = Path(wiki.__file__).resolve()
+    next_id = subprocess.run(
+        [sys.executable, str(script), "next-id"], capture_output=True, text=True, timeout=60
+    )
+    check(
+        "script entry runs a command",
+        next_id.returncode == 0 and next_id.stdout.startswith("src-"),
+        next_id.stderr,
+    )
+    no_command = subprocess.run(
+        [sys.executable, str(script)], capture_output=True, text=True, timeout=60
+    )
+    check(
+        "script entry reports a missing command with exit 2",
+        no_command.returncode == 2 and "wiki.py" in no_command.stderr,
+        no_command.stderr,
+    )
+
+
 def main() -> int:
     test_golden()
     test_reports_excluded()
@@ -766,6 +789,7 @@ def main() -> int:
     test_search_uses_body_words()
     test_source_id_stats_and_sampling()
     test_bounded_cli_output_defaults()
+    test_script_entry_point()
     test_log_frontmatter_is_stdlib_and_yaml_safe()
     print(f"\n{passed} passed, {failed} failed")
     return 1 if failed else 0

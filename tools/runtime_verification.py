@@ -37,6 +37,7 @@ PUBLIC_SOURCES = (
     "tools/local_access.py",
     "tools/local_runtime.py",
     "tools/runtime_maintenance.py",
+    "tools/process_errors.py",
     "tools/process_control.py",
     "tools/macos_processes.py",
     "tools/runtime_verification.py",
