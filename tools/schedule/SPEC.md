@@ -352,6 +352,9 @@ and replaces the whole project tree. This restores removed files and removes run
 files from the active tree while preserving current operator edits in the retained backup.
 Copy failures leave the current project untouched; installation failures attempt to restore
 it immediately. Retained restore backups are never pruned by the dispatcher.
+After a successful restore the helper pauses that project's runner (as if its unreviewed
+edits had stacked up), so the restored clear and due tasks are not redone the next night.
+`wiki.py project agenda ack <slug>` resumes it.
 **Egress note:** research domains belong to an explicit access-profile policy.
 An ordinary note-analysis run permits only configured provider/login endpoints.
 A task requiring another host stays blocked until an approved research profile

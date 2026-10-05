@@ -812,8 +812,8 @@ def _project_runner_header(slugs: list[str], now: datetime) -> str:
         )
     lines.append("")
     lines.append(
-        "Once reviewed, resume a project's nightly runs with "
-        "`python3 tools/wiki.py project agenda ack <slug>`."
+        "A restore also pauses that project's nightly runs. Once reviewed, resume "
+        "them with `python3 tools/wiki.py project agenda ack <slug>`."
     )
     return "\n".join(lines)
 
