@@ -267,11 +267,6 @@ def _project_new(slug: str) -> int:
         return 1
     project_dir.mkdir(parents=True)
     (project_dir / "queries").mkdir()
-    claude_dir = project_dir / ".claude"
-    claude_dir.mkdir()
-    (claude_dir / "settings.local.json").write_text(
-        '{\n  "enabledMcpjsonServers": [\n    "qmd"\n  ]\n}\n', encoding="utf-8"
-    )
     today = dt.datetime.now().strftime("%Y-%m-%d")
     title = slug_to_title(cleaned)
     (project_dir / "project.md").write_text(
@@ -297,9 +292,6 @@ def _project_new(slug: str) -> int:
     )
     print(
         "  - queries/       (default Q&A artifact dir; redefine in ## Rules if you want)"
-    )
-    print(
-        "  - .claude/settings.local.json (enables qmd for Claude; Codex uses root .codex/config.toml)"
     )
     print(
         f"\nNext steps:\n"
