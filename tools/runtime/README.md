@@ -241,6 +241,8 @@ and Model Context Protocol (MCP) server search that corpus inside the same proce
 runtime does not reuse a shared vault index, host MCP configuration, or vector-model cache.
 Blocking an original file is insufficient if an index retains a copy; the isolated corpus prevents
 that leak. Hybrid full-vault qmd search remains an explicit operator workflow.
+Results rank by the share of query terms a document contains, weighted toward terms that few
+documents contain, so common words in a natural-language query do not outrank the distinctive ones.
 
 `tools/scripts/provider-smoke.py --root <vault> --profile wiki-read` checks the whole-process
 preflight and scoped lexical search without a model call. `--provider claude|codex --run-provider`

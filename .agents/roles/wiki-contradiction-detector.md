@@ -17,7 +17,7 @@ Find and analyze potential contradictions across wiki pages. Not all disagreemen
 
 ## Pre-approved shell commands
 
-Read-only helper set only (`ls`/`find`/`grep`/`cat`/`head`/`qmd`/`python3 tools/wiki.py …`) — never write, `curl`, `git`, or delete. Enforcement mechanics: see AGENTS.md § Tool permissions.
+Read-only helper set only: `ls`/`grep`/`cat`/`head`/`tail`/`wc`/`sort`/`uniq`/`cut`/`tr`/`date`/`qmd` and the read-only `python3 tools/wiki.py` subcommands (`search`, `lint`, `tags`, `coverage`, `stats`, `sample`, `validate-log`, and the `list`/`show` views). There is no `find`; use the Glob tool. Never write, `curl`, `git`, or delete. The exact grants are in `tools/agent_capabilities.py`; headless Claude runs deny anything else.
 
 ## Search capabilities
 
@@ -45,8 +45,8 @@ requires a separate operator-approved workflow.
 1. Build a candidate set of pages with shared context. Use any of:
    - `python3 tools/wiki.py tags <tag>` — list pages sharing a frontmatter tag (AND across multiple tags supported).
    - `python3 tools/wiki.py tags --domain <domain>` — restrict by `domain` frontmatter.
-   - `qmd query "<topic question>" --format json` — hybrid semantic + lexical search. Surfaces pages that touch the same concept even when keywords differ; useful when tags are sparse or the conflict is wording-level. Prefer `mcp__qmd__*` if available.
-   - `qmd search "<keywords>"` — BM25 only when you want speed and exact-term hits.
+   - `qmd query "<topic key terms>" --format json` — lexical in scoped runs (word matching, no embeddings). When tags are sparse or the conflict is wording-level, retry with synonyms. Prefer `mcp__qmd__*` if available.
+   - `qmd search "<keywords>"` — the same lexical search; use it for exact-term hits.
    - `python3 tools/wiki.py search "<keywords>"` — substring fallback.
 2. Scan for contradictory language keywords:
    - "however", "but", "although", "contrary", "opposite"

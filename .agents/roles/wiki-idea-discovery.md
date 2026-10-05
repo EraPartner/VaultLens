@@ -17,7 +17,7 @@ Enumerate candidate next-directions from real vault material, rank them by a sta
 
 ## Pre-approved shell commands
 
-Read-only helper set only (`ls`/`find`/`grep`/`cat`/`head`/`qmd`/`python3 tools/wiki.py …`) — never write, `curl`, `git`, or delete. Enforcement mechanics: see AGENTS.md § Tool permissions.
+Read-only helper set only: `ls`/`grep`/`cat`/`head`/`tail`/`wc`/`sort`/`uniq`/`cut`/`tr`/`date`/`qmd` and the read-only `python3 tools/wiki.py` subcommands (`search`, `lint`, `tags`, `coverage`, `stats`, `sample`, `validate-log`, and the `list`/`show` views). There is no `find`; use the Glob tool. Never write, `curl`, `git`, or delete. The exact grants are in `tools/agent_capabilities.py`; headless Claude runs deny anything else.
 
 ## Scope
 
