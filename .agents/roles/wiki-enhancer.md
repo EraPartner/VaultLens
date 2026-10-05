@@ -60,7 +60,7 @@ Take the file with fewest lines (excluding `total`). Stubs benefit most from ful
 
 **B) Random page** — for "random" / "any page" / "mix it up" / "periodically enhance":
 ```bash
-python3 -c "import random, glob; print(random.choice(glob.glob('wiki/concepts/*.md')))"
+python3 tools/wiki.py sample concept
 ```
 Glance at recent activity first to avoid repeating recent work:
 ```bash
@@ -80,7 +80,7 @@ Process:
 1. **Pick a source document** (`wiki/sources/src-*.md`). Two acceptable modes — pick whichever fits the moment, but commit to a source before looking at any concept pages:
    - **Random source** — uniformly sample an ingested source.
      ```bash
-     python3 -c "import random, glob; print(random.choice(glob.glob('wiki/sources/src-*.md')))"
+     python3 tools/wiki.py sample source
      ```
    - **Reasoned source** — glance at `tail -40 wiki/log.md` and `ls wiki/sources/src-*.md`, then prefer a source that is dense, broad in scope, AND under-mined: e.g. least-recently-enhanced, or one whose `## Coverage Notes` admit large untouched chapters, or one with a small `## Core Concepts` list relative to the size of its raw text. Briefly state your reason in the eventual log entry.
 
@@ -91,7 +91,7 @@ Process:
 4. **For each enumerated topic, cross-check the wiki** and classify it:
    ```bash
    ls wiki/concepts/ | grep -iE "topic-fragment"
-   qmd query "<topic question>" --format json     # semantic match — catches synonyms
+   qmd query "<topic key terms>" --format json     # lexical in scoped runs — retry with synonyms
    python3 tools/wiki.py search "<keywords>"
    ```
    Classify each topic as one of:
@@ -122,8 +122,8 @@ Before changing anything, understand what already exists:
 
 - Read the target source/topic/concept page fully.
 - **Search the wiki for related material** (preferred order):
-  - `qmd query "<topic question or keywords>" --format json` — hybrid BM25 + vector + LLM reranking. Best for surfacing semantically related pages even when keywords differ. Prefer `mcp__qmd__*` tools when available.
-  - `qmd search "<topic-keywords>"` — BM25 only. Fast and free.
+  - `qmd query "<topic keywords>" --format json` — lexical in scoped runs (word matching, no embeddings); retry with synonyms to find related pages worded differently. Prefer `mcp__qmd__*` tools when available.
+  - `qmd search "<topic-keywords>"` — the same lexical search; good for exact terms.
   - `python3 tools/wiki.py search "<topic-keywords>"` — substring fallback.
 - Run `python3 tools/wiki.py tags <tag>` (AND across multiple tags supported) to find every page sharing the current page's frontmatter tags — fastest way to surface siblings by topic membership.
 - Build a mental map: which concepts are covered, how deeply, and where the links are missing.
