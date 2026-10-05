@@ -25,10 +25,15 @@ import brain_launch as planner  # noqa: E402
 from _loader import load_module  # noqa: E402
 
 # JSON the fixture CLI records about its own invocation; read by key and index only.
-Captured = dict[str, Any]
+Captured = dict[str, Any]  # pyright: ignore[reportExplicitAny] -- see comment above
 
 
 class PlannerTests(unittest.TestCase):
+    def __init__(self, methodName: str = "runTest") -> None:
+        super().__init__(methodName)
+        self.fixture: tempfile.TemporaryDirectory[str]
+        self.root: Path
+
     def setUp(self) -> None:
         self.fixture = tempfile.TemporaryDirectory()
         self.addCleanup(self.fixture.cleanup)
@@ -254,7 +259,7 @@ class PlannerTests(unittest.TestCase):
 
     def test_execute_deterministic_command_uses_selected_python_and_root(self) -> None:
         plan = self.plan(["project", "list"])
-        with mock.patch.object(planner.subprocess, "run") as run:
+        with mock.patch.object(subprocess, "run") as run:
             run.return_value.returncode = 4
             self.assertEqual(planner.execute_launch(plan, root=self.root), 4)
         run.assert_called_once_with(
@@ -349,6 +354,13 @@ class PlannerTests(unittest.TestCase):
 
 @unittest.skipUnless(FISH is not None, "fish must be installed to test shell wrappers")
 class FishWrapperTests(unittest.TestCase):
+    def __init__(self, methodName: str = "runTest") -> None:
+        super().__init__(methodName)
+        self.fixture: tempfile.TemporaryDirectory[str]
+        self.root: Path
+        self.wrappers: Path
+        self.capture: Path
+
     def setUp(self) -> None:
         self.fixture = tempfile.TemporaryDirectory(prefix="brain launch ")
         self.addCleanup(self.fixture.cleanup)

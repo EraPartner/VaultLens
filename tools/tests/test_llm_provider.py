@@ -17,6 +17,11 @@ import llm_provider as providers  # noqa: E402
 
 
 class ProviderTests(unittest.TestCase):
+    def __init__(self, methodName: str = "runTest") -> None:
+        super().__init__(methodName)
+        self.fixture: tempfile.TemporaryDirectory[str]
+        self.config: Path
+
     def setUp(self) -> None:
         self.fixture = tempfile.TemporaryDirectory()
         self.addCleanup(self.fixture.cleanup)

@@ -26,7 +26,7 @@ from typing import Any, cast
 # Deployment plans, journals and manifests are JSON documents that round-trip through
 # files and are re-validated field by field (_validate_plan, _operator_apply_locked)
 # before use, so their values are typed Any at this boundary only.
-JsonObject = dict[str, Any]
+JsonObject = dict[str, Any]  # pyright: ignore[reportExplicitAny] -- see comment above
 
 ROOT = Path(__file__).resolve().parents[2]
 SHELL_FILES = (

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import contextlib
+import fcntl
 import io
 import os
 import json
@@ -16,7 +17,7 @@ import unittest
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
-from typing import IO, Any
+from typing import IO
 from unittest import mock
 from unittest.mock import patch
 
@@ -24,7 +25,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "schedule"))
 
 import dispatch  # noqa: E402
-import context_sources  # noqa: E402
 from context_budget import CONSENT, gather_context, select_context  # noqa: E402
 from context_evaluation import BASELINE, TODAY, evaluate, load_agent, write_fixture  # noqa: E402
 from local_access import RunScope  # noqa: E402
@@ -295,7 +295,7 @@ class ContextTests(AgentUnitTests):
                         newline: str | None = None,
                         closefd: bool = True,
                         opener: Callable[[str, int], int] | None = None,
-                    ) -> IO[Any]:
+                    ) -> IO[str] | IO[bytes]:
                         info = os.fstat(fd)
                         self.assertNotEqual(
                             (info.st_dev, info.st_ino),
@@ -328,7 +328,7 @@ class ContextTests(AgentUnitTests):
                     with (
                         patch.object(agent, "ROOT", root),
                         patch.dict(os.environ, {"VAULTLENS_COS_CONTEXT_CHARS": budget}),
-                        patch.object(context_sources.os, "fdopen", checked_fdopen),
+                        patch.object(os, "fdopen", checked_fdopen),
                         patch.object(Path, "read_text", checked_read_text),
                     ):
                         result = agent._gather_cos_context("inbox", None)
@@ -708,7 +708,7 @@ class TimeoutTests(AgentUnitTests):
             for name, command in (("first", ["first"]), ("later", ["later"]))
         ]
 
-        def runner(command: list[str], timeout: int) -> tuple[int, str]:
+        def runner(command: list[str], _timeout: int) -> tuple[int, str]:
             if command == ["later"]:
                 raise RuntimeError("fixture crash")
             return 0, "ok"
@@ -870,15 +870,15 @@ class TimeoutTests(AgentUnitTests):
         process.wait.side_effect = [interruption, None, None]
         with (
             tempfile.TemporaryDirectory() as temporary,
-            patch.object(dispatch.subprocess, "Popen", return_value=process),
-            patch.object(dispatch.os, "killpg") as kill,
+            patch.object(subprocess, "Popen", return_value=process),
+            patch.object(os, "killpg") as kill,
         ):
             with self.assertRaises(KeyboardInterrupt) as raised:
                 _run_agent_process(["fixture"], 10, {}, Path(temporary))
             self.assertIs(raised.exception, interruption)
             self.assertEqual(
                 [call.args[1] for call in kill.call_args_list],
-                [dispatch.signal.SIGTERM, dispatch.signal.SIGKILL],
+                [agent_signal.SIGTERM, agent_signal.SIGKILL],
             )
             self.assertIn("Partial stdout:", " ".join(interruption.__notes__))
 
@@ -900,7 +900,7 @@ class TimeoutTests(AgentUnitTests):
             patch.object(dispatch, "acquire_lock", return_value=lock),
             patch.object(dispatch, "load_ledger", return_value=ledger),
             patch.object(dispatch, "save_ledger") as save,
-            patch.object(dispatch.fcntl, "flock"),
+            patch.object(fcntl, "flock"),
         ):
             self.assertEqual(dispatch.acknowledge_cancellation(), 0)
             self.assertNotIn("cancellation_pending", ledger)

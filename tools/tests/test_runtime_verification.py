@@ -8,6 +8,7 @@ No provider, authentication, Node, helper executable or OS probe is invoked.
 import copy
 import json
 import os
+import platform
 import stat
 import subprocess
 import sys
@@ -15,7 +16,6 @@ import tempfile
 import unittest
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -31,8 +31,16 @@ probe_executable = verification._executable  # pyright: ignore[reportPrivateUsag
 
 
 class RuntimeVerificationTests(unittest.TestCase):
-    VERSION = "public-fixture-version"
-    CHECKS = expected_checks()
+    VERSION: str = "public-fixture-version"
+    CHECKS: tuple[str, ...] = expected_checks()
+
+    def __init__(self, methodName: str = "runTest") -> None:
+        super().__init__(methodName)
+        self.root: Path
+        self.receipt: Path
+        self.report: JsonObject
+        self.evidence: JsonObject
+        self.fingerprint: mock.MagicMock | mock.AsyncMock
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="vaultlens-verification-test-")
@@ -40,11 +48,11 @@ class RuntimeVerificationTests(unittest.TestCase):
         self.root = Path(temporary.name).resolve()
         (self.root / "tools").mkdir()
         self.receipt = self.root / "tools/runtime-state/verification.json"
-        self.report: JsonObject = {
+        self.report = {
             "os_isolation_verified": True,
             "checks": [{"check": name, "status": "passed"} for name in self.CHECKS],
         }
-        self.evidence: JsonObject = {
+        self.evidence = {
             "public_synthetic_fixture": "not-operating-system-evidence",
             "runtime_version": self.VERSION,
             "artifacts": {"public.js": "public-original-hash"},
@@ -59,13 +67,13 @@ class RuntimeVerificationTests(unittest.TestCase):
     def record(
         self,
         report: JsonObject | None = None,
-        expected: Iterable[Any] | None = None,  # tests pass deliberately invalid shapes
+        expected: Iterable[object] | None = None,  # tests pass deliberately invalid shapes
     ) -> Path:
         return verification.record_verified_probe(
             self.root,
             self.VERSION,
             self.report if report is None else report,
-            self.CHECKS if expected is None else expected,
+            self.CHECKS if expected is None else expected,  # pyright: ignore[reportArgumentType]  # deliberately invalid shapes
         )
 
     def rewrite(self, data: JsonObject) -> None:
@@ -213,7 +221,7 @@ class RuntimeVerificationTests(unittest.TestCase):
         self.assertFalse(self.receipt.exists())
 
     def test_expected_names_must_be_nonempty_unique_and_exact(self) -> None:
-        cases: tuple[Iterable[Any], ...] = (  # deliberately invalid shapes
+        cases: tuple[Iterable[object], ...] = (  # deliberately invalid shapes
             [],
             [""],
             "public.check",
@@ -386,7 +394,7 @@ class RuntimeVerificationTests(unittest.TestCase):
         self.record()
         before = self.receipt.read_bytes()
         with mock.patch.object(
-            verification.os,
+            os,
             "replace",
             side_effect=OSError("public failed atomic replacement"),
         ):
@@ -448,16 +456,16 @@ class RuntimeVerificationTests(unittest.TestCase):
             mock.patch.object(
                 verification, "_executable", return_value=public_versions
             ) as versions,
-            mock.patch.object(verification.sys, "executable", str(executable)),
-            mock.patch.object(verification.platform, "system", return_value="Linux"),
+            mock.patch.object(sys, "executable", str(executable)),
+            mock.patch.object(platform, "system", return_value="Linux"),
             mock.patch.object(
-                verification.platform, "release", return_value="public-os-release"
+                platform, "release", return_value="public-os-release"
             ),
             mock.patch.object(
-                verification.platform, "machine", return_value="public-architecture"
+                platform, "machine", return_value="public-architecture"
             ),
             mock.patch.object(
-                verification.platform,
+                platform,
                 "python_version",
                 return_value="public-python-version",
             ),
@@ -503,7 +511,7 @@ class RuntimeVerificationTests(unittest.TestCase):
         executable.write_text("Public executable fixture; never executed\n")
         executable.chmod(0o755)
         with mock.patch.object(
-            verification.subprocess,
+            subprocess,
             "run",
             return_value=subprocess.CompletedProcess([], 0, "v22.public\n", ""),
         ) as invoke:

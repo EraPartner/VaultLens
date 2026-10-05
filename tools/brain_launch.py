@@ -7,9 +7,9 @@ import argparse
 import os
 import subprocess
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
 
 from llm_provider import ROOT, load_config, resolve_provider
 from agent_profiles import AGENT_FILES, resolve_role_settings
