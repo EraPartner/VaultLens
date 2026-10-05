@@ -70,8 +70,10 @@ Beyond the folder skeleton, the template ships a working agent operating model:
   Broad nightly wiki enhancement is paused by default and requires explicit opt-in; when enabled,
   it runs five alternating iterations across the whole wiki.
 - **Scoped search** — agent CLI and MCP search use a fresh lexical corpus of approved files with
-  qmd-compatible tool names. Explicit operator search can still use qmd's full hybrid index;
-  `python3 tools/wiki.py search "…"` is the substring fallback.
+  qmd-compatible tool names. `qmd query` ranks with the operator's qmd index through a host-side
+  bridge that returns only approved paths (when `qmd` is on the launcher's `PATH`; turn it off
+  with `VAULTLENS_QMD_BRIDGE=off`). Explicit operator search can still use qmd's full hybrid
+  index; `python3 tools/wiki.py search "…"` is the substring fallback.
 - **Local agent runs** — interactive, headless, and scheduled agents run the native Claude or Codex
   CLI inside Anthropic's whole-process sandbox runtime. Access profiles govern read, write, and
   network access. Each provider uses separate login state. No container is launched.

@@ -17,11 +17,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from local_access import RunScope  # noqa: E402
 from scoped_search import (  # noqa: E402
     DEFAULT_SNIPPET_CHARS,
+    MAX_BRIDGE_MESSAGE_BYTES,
     MAX_DOCUMENT_BYTES,
     MAX_GET_CHARS,
     MAX_RESULTS,
     MAX_SNIPPET_CHARS,
+    QmdBridge,
     ScopedSearch,
+    bridge_query,
+    load_bridge,
     load_scope,
     serve_mcp,
 )
@@ -29,7 +33,7 @@ from scoped_search import (  # noqa: E402
 SCRIPT = Path(__file__).resolve().parents[1] / "scoped_search.py"
 
 
-class ScopedSearchTests(unittest.TestCase):
+class VaultCase(unittest.TestCase):
     temporary: tempfile.TemporaryDirectory[str]
     root: Path
     note: Path
@@ -80,6 +84,8 @@ class ScopedSearchTests(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return path
 
+
+class ScopedSearchTests(VaultCase):
     def test_search_results_contain_only_approved_current_documents(self) -> None:
         payload = self.search.search({"query": "corpus marker", "limit": 50})
         serialized = json.dumps(payload)
@@ -376,6 +382,164 @@ class ScopedSearchTests(unittest.TestCase):
         self.assertFalse(
             json.loads(result.stdout)["result"]["structuredContent"]["persistent_index"]
         )
+
+
+class QmdBridgeTests(VaultCase):
+    """The host bridge passes back approved paths only, and never qmd's text."""
+
+    host: Path
+    run_dir: Path
+    bridge: QmdBridge
+
+    def setUp(self) -> None:
+        super().setUp()
+        temporary = Path(self.temporary.name).resolve()
+        self.host = temporary / "host"
+        self.host.mkdir()
+        fake = self.host / "qmd"
+        fake.write_text(
+            f"#!{sys.executable}\n"
+            "import json, os, sys\n"
+            "from pathlib import Path\n"
+            "here = Path(__file__).parent\n"
+            "(here / 'call.json').write_text(json.dumps({'argv': sys.argv[1:], 'cwd': os.getcwd()}))\n"
+            "sys.stdout.write((here / 'output.json').read_text())\n"
+            "status = here / 'status'\n"
+            "sys.exit(int(status.read_text()) if status.exists() else 0)\n",
+            encoding="utf-8",
+        )
+        fake.chmod(0o700)
+        self.run_dir = temporary / "run"
+        self.run_dir.mkdir()
+        self.bridge = QmdBridge(self.scope, QmdBridge.prepare(self.run_dir), fake, timeout=10)
+        alias = temporary / "alias"
+        alias.symlink_to(self.root, target_is_directory=True)
+        (self.root / "wiki/concepts/linked.md").symlink_to(
+            self.outside / "global-index.md"
+        )
+        self.qmd_output(
+            [
+                {"file": str(self.root / "wiki/private/secret.md"), "score": 0.99},
+                {"file": str(self.root / "raw/review-inbox/consent.md"), "score": 0.98},
+                {"file": str(self.root / "projects/sibling/notes/other.md"), "score": 0.97},
+                {"file": str(self.root / "wiki/concepts/AGENTS.md"), "score": 0.96},
+                {"file": str(self.root / "wiki/concepts/credentials.txt"), "score": 0.95},
+                {"file": str(self.root / "wiki/concepts/linked.md"), "score": 0.94},
+                {"file": str(self.outside / "global-index.md"), "score": 0.93},
+                {"file": str(self.root / "wiki/concepts/../private/secret.md"), "score": 0.92},
+                {"file": "wiki/concepts/current.md", "score": 0.91},
+                {"file": "qmd://wiki/concepts/current.md", "score": 0.9},
+                "not an object",
+                {
+                    "file": str(alias / "wiki/concepts/current.md"),
+                    "score": 0.8,
+                    "snippet": "QMD-SNIPPET-LEAK",
+                    "title": "QMD-TITLE-LEAK",
+                },
+                {"file": str(self.root / "wiki/concepts/current.md"), "score": 0.7},
+                {"file": str(self.root / "raw/sources/approved.txt"), "score": 0.6},
+            ]
+        )
+
+    def qmd_output(self, items: list[object]) -> None:
+        (self.host / "output.json").write_text(json.dumps(items), encoding="utf-8")
+
+    def test_host_returns_only_approved_paths_without_qmd_text(self) -> None:
+        results = self.bridge.query("alpha", 10)
+        self.assertEqual(
+            results,
+            [
+                {"path": "wiki/concepts/current.md", "score": 0.8},
+                {"path": "raw/sources/approved.txt", "score": 0.6},
+            ],
+        )
+        call = json.loads((self.host / "call.json").read_text())
+        # Run from "/" so no vault-local qmd configuration applies.
+        self.assertEqual(call["cwd"], "/")
+        self.assertEqual(call["argv"][:4], ["query", "--format", "json", "--full-path"])
+
+    def test_query_text_is_never_read_as_an_option(self) -> None:
+        self.bridge.query("--index /elsewhere", 1)
+        argv = json.loads((self.host / "call.json").read_text())["argv"]
+        self.assertEqual(argv[-2:], ["--", "--index /elsewhere"])
+
+    def test_round_trip_rereads_files_inside_the_run(self) -> None:
+        self.bridge.start()
+        self.addCleanup(self.bridge.stop)
+        search = ScopedSearch(self.scope, self.bridge.directory)
+        payload = search.call("query", {"query": "alpha", "limit": 5})
+        serialized = json.dumps(payload)
+        self.assertEqual(payload["mode"], "qmd")
+        self.assertNotIn("fallback", payload)
+        self.assertEqual(
+            [result["file"] for result in payload["results"]],
+            ["wiki/concepts/current.md", "raw/sources/approved.txt"],
+        )
+        self.assertIn("Approved alpha corpus marker", serialized)
+        self.assertNotIn("LEAK", serialized)
+        self.assertNotIn("Denied-", serialized)
+        self.assertEqual(search.status()["query_mode"], "qmd")
+
+    def test_malformed_oversized_and_linked_requests_get_errors(self) -> None:
+        requests = self.bridge.directory / "requests"
+        responses = self.bridge.directory / "responses"
+        names = [f"{index:032x}.json" for index in range(6)]
+        (requests / names[0]).write_text("not json")
+        (requests / names[1]).write_bytes(b" " * (MAX_BRIDGE_MESSAGE_BYTES + 1))
+        (requests / names[2]).symlink_to(self.root / "wiki/concepts/current.md")
+        (requests / names[3]).mkdir()
+        (requests / names[4]).write_text(json.dumps({"query": "alpha", "limit": 0}))
+        (requests / names[5]).write_text(json.dumps({"query": ""}))
+        (requests / "ignored.json").write_text(json.dumps({"query": "alpha"}))
+        self.assertEqual(self.bridge.handle_pending(limit=10), 6)
+        for name in names:
+            with self.subTest(name=name):
+                answer = json.loads((responses / name).read_text())
+                self.assertEqual(answer["status"], "error")
+        # A request that cannot be removed is answered once, not on every pass.
+        self.assertEqual(self.bridge.handle_pending(), 0)
+        self.assertFalse((responses / "ignored.json").exists())
+        self.assertFalse((self.host / "call.json").exists())
+
+    def test_qmd_failure_and_timeout_fall_back_to_lexical(self) -> None:
+        (self.host / "status").write_text("3")
+        self.assertEqual(
+            self.bridge.answer(json.dumps({"query": "alpha"}).encode())["status"],
+            "error",
+        )
+        with self.assertRaisesRegex(ValueError, "timed out"):
+            bridge_query(self.bridge.directory, "alpha", 1, timeout=0.1)
+        search = ScopedSearch(self.scope, self.bridge.directory)
+        with patch(
+            "scoped_search.bridge_query",
+            side_effect=ValueError("qmd bridge timed out"),
+        ):
+            payload = search.query({"query": "alpha"})
+        self.assertEqual(payload["mode"], "lexical")
+        self.assertEqual(payload["fallback"], "qmd bridge timed out")
+        self.assertEqual(payload["results"][0]["file"], "wiki/concepts/current.md")
+        plain = ScopedSearch(self.scope).query({"query": "alpha"})
+        self.assertEqual(plain["fallback"], "qmd is not enabled for this run")
+        self.assertEqual(ScopedSearch(self.scope).status()["query_mode"], "lexical")
+
+    def test_manifest_bridge_must_be_the_runs_own_folder(self) -> None:
+        manifest = self.scope.manifest()
+        path = self.run_dir / "scope.json"
+        path.write_text(json.dumps(manifest))
+        self.assertIsNone(load_bridge(path))
+        manifest["qmd_bridge"] = str(self.bridge.directory)
+        path.write_text(json.dumps(manifest))
+        self.assertEqual(load_bridge(path), self.bridge.directory)
+        elsewhere = self.host / "qmd-bridge"
+        elsewhere.mkdir()
+        alias = self.run_dir / "alias"
+        alias.symlink_to(self.bridge.directory, target_is_directory=True)
+        for value in (str(elsewhere), str(self.run_dir / "requests"), "qmd-bridge", 3):
+            with self.subTest(value=value):
+                manifest["qmd_bridge"] = value
+                path.write_text(json.dumps(manifest))
+                with self.assertRaises(ValueError):
+                    load_bridge(path)
 
 
 if __name__ == "__main__":
