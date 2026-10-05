@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -115,6 +116,26 @@ class MaintenanceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "pins disagree"):
                 maintenance.maintain(self.root)
             run.assert_not_called()
+
+    def test_installer_names_the_missing_tool(self) -> None:
+        installer = self.root / "tools/runtime/install.sh"
+        installer.write_text(
+            (TOOLS / "runtime/install.sh").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        bin_dir = self.root / "minimal-bin"
+        bin_dir.mkdir()
+        for name in ("dirname", "mkdir", "chmod"):
+            (bin_dir / name).symlink_to(shutil.which(name) or name)
+        result = subprocess.run(
+            ["/bin/sh", str(installer)],
+            env={"PATH": str(bin_dir)},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("node was not found", result.stderr)
 
     def test_non_object_registry_metadata_is_a_value_error(self) -> None:
         for payload in (b"[1]", b"null", b"{}", b'{"version": 3}'):

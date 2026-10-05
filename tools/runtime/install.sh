@@ -5,8 +5,8 @@ runtime_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 runtime_state="$runtime_root/tools/runtime-state"
 mkdir -p "$runtime_state/npm-home"
 chmod 700 "$runtime_state" "$runtime_state/npm-home"
-command -v node >/dev/null
-command -v npm >/dev/null
+command -v node >/dev/null || { printf 'Node.js 22.12 or newer is required but node was not found\n' >&2; exit 1; }
+command -v npm >/dev/null || { printf 'npm is required but was not found\n' >&2; exit 1; }
 node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 22 || major === 22 && minor < 12) { process.stderr.write("Node.js 22.12 or newer is required\n"); process.exit(1); }'
 cd "$runtime_state/npm-home"
 env -i PATH="$PATH" HOME="$runtime_state/npm-home" \
