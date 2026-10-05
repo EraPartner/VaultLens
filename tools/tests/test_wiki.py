@@ -719,6 +719,30 @@ def test_bounded_cli_output_defaults() -> None:
             rendered,
         )
 
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            rc = wiki_lint.run_lint(False, True, False, limit=None)
+        full = __import__("json").loads(output.getvalue())
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            rc = wiki_lint.run_lint(False, True, False, limit=2)
+        capped = __import__("json").loads(output.getvalue())
+        listed = sum(
+            len(rows)
+            for group in ("errors", "warnings")
+            for rows in capped[group].values()
+        )
+        check("lint JSON stays complete by default", "omitted" not in full)
+        check(
+            "lint JSON honours an explicit limit and keeps full counts",
+            rc == 1
+            and listed == 2
+            and capped["omitted"]
+            == full["error_count"] + full["warning_count"] - 2
+            and capped["error_count"] == full["error_count"],
+            str(capped),
+        )
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / "wiki"
         for index in range(55):
