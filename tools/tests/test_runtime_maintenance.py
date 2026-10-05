@@ -20,6 +20,10 @@ maintenance = load_module("sandbox_maintain", TOOLS / "runtime/maintain.py")
 
 
 class MaintenanceTests(unittest.TestCase):
+    def __init__(self, methodName: str = "runTest") -> None:
+        super().__init__(methodName)
+        self.root: Path
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="vaultlens-maintenance-test-")
         self.addCleanup(temporary.cleanup)
@@ -33,9 +37,9 @@ class MaintenanceTests(unittest.TestCase):
         (self.root / "tools/runtime/macos-process-guard.mjs").write_text(
             f"const VERSION = '{version}';"
         )
-        self.processes = mock.patch.object(maintenance, "check_process_records")
-        self.processes.start()
-        self.addCleanup(self.processes.stop)
+        processes = mock.patch.object(maintenance, "check_process_records")
+        processes.start()
+        self.addCleanup(processes.stop)
 
     def test_agents_share_lock_but_block_maintenance(self) -> None:
         with runtime_lock(self.root), runtime_lock(self.root):

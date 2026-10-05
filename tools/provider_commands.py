@@ -174,7 +174,7 @@ def _toml(value: object) -> str:
 
 
 class ClaudeAdapter:
-    name = "claude"
+    name: str = "claude"
 
     def build_command(
         self, request: ProviderCommandRequest, *, executable: str
@@ -228,7 +228,7 @@ class ClaudeAdapter:
 
 
 class CodexAdapter:
-    name = "codex"
+    name: str = "codex"
 
     def build_command(
         self, request: ProviderCommandRequest, *, executable: str

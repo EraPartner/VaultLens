@@ -24,6 +24,12 @@ from _loader import load_module  # noqa: E402
 
 
 class RoleProfileTests(unittest.TestCase):
+    def __init__(self, methodName: str = "runTest") -> None:
+        super().__init__(methodName)
+        self.root: Path
+        self.roles: Path
+        self.config: Path
+
     def setUp(self) -> None:
         fixture = tempfile.TemporaryDirectory()
         self.addCleanup(fixture.cleanup)
