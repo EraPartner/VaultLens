@@ -8,7 +8,8 @@ paths:
 ## Required frontmatter
 
 All content pages need at least: `title`, `type` (page/source/entity/concept/topic/synthesis/
-comparison/query/project/inventory), `status` (active/superseded/archived/draft), `created`
+comparison/query/project/inventory), `status` (active/superseded/archived/draft; `inventory/` pages use their own set:
+proposed/active/blocked/ingested/superseded/archived), `created`
 (`YYYY-MM-DD`), `updated`, `summary` (one falsifiable sentence). Optional: `domain`
 (personal/research/work/learning), `tags`, `confidence` (high/medium/low — evidential trust),
 `volatility` (hot/warm/cold — refresh cadence; drives staleness thresholds 60/180/365 days).

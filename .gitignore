@@ -14,21 +14,14 @@ Icon?
 *.json.done
 wiki-log-*.json
 
-# iCloud sync conflict copies of sandbox files (e.g. ".devcontainer/squid 2.conf").
-# Scoped to .devcontainer so it can't swallow legit vault notes like "Chapter 2.md".
-# The git remote is the source of truth for these scripts.
-.devcontainer/* [0-9].*
-.devcontainer/* [0-9]
-
-# Operator-only sandbox mount roots: real host paths bin/agent may bind-mount into
-# the sandbox. Personal, so it never leaves this machine; the committed
-# mount-roots.local.example documents the format. (The .example is NOT ignored.)
-.devcontainer/mount-roots.local
-
 # Private, separately versioned adapter for this live Brain instance. The public
 # VaultLens skeleton exposes the shared implementation but never owns this tree.
 .brain-local/
-.devcontainer/bin/agent
+
+# The container launcher is retired and nothing in the repo uses .devcontainer/.
+# Kept ignored so leftover operator-local files there (mount roots, launchers,
+# iCloud conflict copies) are never committed to the public repo.
+.devcontainer/
 
 # Agent config: track canonical AGENTS.md/.agents/, generated provider adapters,
 # and shared settings. Only machine-local Claude state stays ignored.

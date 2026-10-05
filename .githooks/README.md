@@ -2,8 +2,7 @@
 
 Self-contained git hooks for this vault. They depend only on `git` and
 `python3` (no `pre-commit` framework, no `ruff`/`pytest` requirement, no network
-fetches), so they run identically on the host and inside the egress-locked
-devcontainer. `ruff` is used only if it happens to be installed.
+fetches). `ruff` is used only if it happens to be installed.
 
 ## Install
 
@@ -11,12 +10,9 @@ devcontainer. `ruff` is used only if it happens to be installed.
 .githooks/install.sh
 ```
 
-This sets `core.hooksPath` to this directory (a relative path, so it resolves on
-both the host and at `/workspaces/repo` in the sandbox) and marks the hooks
-executable. `.git/config` is shared between host and container, so one run
-activates the hooks everywhere. It replaces the stale
-`/workspaces/repo/.git/hooks` value that pinned hooks to a path that does not
-exist on the host.
+This sets `core.hooksPath` to this directory (a relative path, so it resolves from
+any checkout location) and marks the hooks executable. A previous `core.hooksPath`
+value is reported and replaced.
 
 ## `pre-commit`
 
@@ -43,9 +39,11 @@ chars warn but do not block.
 
 ## `pre-push`
 
-The heavier gate before code leaves the machine — mirrors the CI jobs
-(`.github/workflows/ci.yml`) so failures surface locally, not after a push.
-Same self-contained philosophy (git + `python3`; `ruff` only if installed).
+The heavier gate before code leaves the machine. It is a subset of the CI jobs
+(`.github/workflows/ci.yml`): CI additionally runs every other test suite, the
+basedpyright typing gate, `generate-adapters.py --check`,
+`context_evaluation.py --check` and the secrets scan. Same self-contained
+philosophy (git + `python3`; `ruff` only if installed).
 
 | Check | Action |
 |---|---|
@@ -55,10 +53,11 @@ Same self-contained philosophy (git + `python3`; `ruff` only if installed).
 
 ## CI
 
-`.github/workflows/` mirrors these hooks server-side and is the backstop when a
+`.github/workflows/` runs these checks and more server-side and is the backstop when a
 hook is bypassed or `ruff` isn't installed locally: `ci.yml` (gitleaks secret
-scan, `ruff check`, the unittest suites, behind a `CI Complete` gate),
-`codeql.yml` (weekly Python scan), `auto-merge.yml` + `dependabot.yml` (weekly
+scan, `ruff check`, basedpyright `all` with no baseline, compileall, the adapter and
+context-baseline checks and every unittest suite, behind a `CI Complete` gate),
+`codeql.yml` (weekly Python and Actions scan), `auto-merge.yml` + `dependabot.yml` (weekly
 GitHub-Actions pin bumps). Harmonised with the Vision/Watchman pipelines.
 
 ## Escape hatches

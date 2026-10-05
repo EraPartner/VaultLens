@@ -16,7 +16,7 @@ description: Add source material to the wiki — ingest a PDF, article, paper, v
    pre-extract text: `python3 tools/wiki.py preprocess` (writes `raw/sources/*.pdf` →
    `raw/sources-text/*.md`).
 3. **Run the ingest agent** (preferred): `python3 tools/agents/wiki-agent.py ingest --source raw/sources/x.pdf`
-   — on the host invoke via `brain-wiki ingest …` (wiki-agent.py refuses to run on the host directly).
+   — `wiki-agent.py` wraps itself in the sandbox runtime, so direct runs are scoped; `brain-wiki ingest …` is the usual host entry point.
    It does extraction, source-page creation, concept/topic updates, lint, and the log entry.
 4. **Manual flow** (when doing it inline): create `wiki/sources/src-YYYY-MM-DD-NNN.md`
    (`python3 tools/wiki.py next-id` for the ID) with required frontmatter — the base set
@@ -29,8 +29,8 @@ description: Add source material to the wiki — ingest a PDF, article, paper, v
 5. **Finish:** write bare `[[...]]` wikilinks then run `python3 tools/wiki.py links --fix --write`
    (adds the portable markdown mirrors deterministically — never hand-write them); append a
    `wiki/log.md` entry (`python3 tools/wiki.py append-log …`, heading format
-   `## [YYYY-MM-DD] operation | title`); run `python3 tools/wiki.py lint`; re-index search with
-   `qmd update`.
+   `## [YYYY-MM-DD] operation | title`); run `python3 tools/wiki.py lint`. Re-indexing search
+   (`qmd update`) is an explicit operator action; scoped agent runs do not run it.
 
 Track not-yet-ingested intentions in the inventory instead of leaving loose notes:
 `python3 tools/wiki.py inventory new ingest-candidate <slug> --priority p2 --summary "…"`.

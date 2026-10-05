@@ -25,17 +25,19 @@ lives in the maintainer's head, so review catches issues automatically (see `AGE
 
 ## Tests & validation
 - [ ] `ruff check tools/` clean (config `tools/ruff.toml`, pinned `ruff==0.15.17` in CI).
+- [ ] `basedpyright --project tools/pyrightconfig.json` reports 0 findings (`all` mode, no
+      baseline, pinned `basedpyright==1.40.2` in CI). Fix findings; do not suppress them.
 - [ ] `python3 -m compileall -q tools` passes (syntax gate).
 - [ ] Tooling tests pass — run each `python3 tools/tests/test_*.py` with Python 3.12 as in CI
-      (CI discovers every suite; the git hooks run `test_wiki.py` + `test_schedule.py`).
-- [ ] Context baseline matches (`python3 tools/context_evaluation.py --check`); no model-quality
-      claim is inferred from fixture character counts.
-- [ ] Generated provider adapters match (`python3 tools/agents/generate-adapters.py --check`).
+      (CI discovers every suite; the git hooks run only `test_wiki.py` + `test_schedule.py`).
+- [ ] Context baseline matches (`python3 tools/context_evaluation.py --check`; CI runs it); no
+      model-quality claim is inferred from fixture character counts.
+- [ ] Generated provider adapters match (`python3 tools/agents/generate-adapters.py --check`; CI runs it).
       A provider directory that cannot be read is unverified, not evidence of drift.
 - [ ] Preview commands leave source files and scheduler state unchanged. Recovery tests
       restore edited projects and defer writes when a snapshot cannot be created.
-- [ ] CI (the `CI` workflow, required check `CI Complete`: secrets-scan + lint + test) expected green on every tracked path;
-      weekly `codeql.yml` Python scan also runs.
+- [ ] CI (the `CI` workflow, required check `CI Complete`: secrets-scan + lint + typing + test) expected green on every tracked path;
+      weekly `codeql.yml` Python and Actions scan also runs.
 
 ## Hygiene
 - [ ] Conventional Commit subject (`type(scope): summary`, ≤ 72 chars) — the `commit-msg` hook
