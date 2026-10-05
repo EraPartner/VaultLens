@@ -76,7 +76,9 @@ Do not claim isolation is verified from a cloud run.
   not enforced. Do not reformat unrelated code.
 - Typing is `basedpyright` in `all` mode (`tools/pyrightconfig.json`), with
   `reportAny`, `reportUnusedCallResult`, `reportImplicitOverride`, `reportImplicitRelativeImport`
-  and `reportImplicitStringConcatenation` switched off, checked against
+  and `reportImplicitStringConcatenation` switched off (and `reportUninitializedInstanceVariable`
+  off for `tools/tests` only, through `executionEnvironments`, because unittest `setUp` state is
+  never counted as initialised), checked against
   `tools/typing-baseline.json`. The baseline holds the findings that predate the switch from
   `strict`; any new finding fails CI. Shrink the baseline as you fix code
   (`basedpyright --project tools/pyrightconfig.json --writebaseline` after fixing, never to admit

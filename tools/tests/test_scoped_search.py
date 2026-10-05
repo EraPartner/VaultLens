@@ -28,6 +28,14 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scoped_search.py"
 
 
 class ScopedSearchTests(unittest.TestCase):
+    temporary: tempfile.TemporaryDirectory[str]
+    root: Path
+    note: Path
+    outside: Path
+    scope: RunScope
+    search: ScopedSearch
+    manifest: Path
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

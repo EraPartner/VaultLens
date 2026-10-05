@@ -9,5 +9,16 @@
   "reportImplicitOverride": false,
   "reportImplicitRelativeImport": false,
   "reportImplicitStringConcatenation": false,
-  "baselineFile": "typing-baseline.json"
+  "baselineFile": "typing-baseline.json",
+  "executionEnvironments": [
+    {
+      "root": "tests",
+      "extraPaths": [".", "schedule", "runtime", "scripts"],
+      "reportUninitializedInstanceVariable": false
+    },
+    {
+      "root": ".",
+      "extraPaths": [".", "schedule", "runtime", "scripts"]
+    }
+  ]
 }

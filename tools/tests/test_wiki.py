@@ -92,7 +92,8 @@ def use_wiki(root: Path) -> None:
     wiki.WIKI_DIR = root
     wiki.PROJECTS_DIR = root.parent / "projects"
     wiki.PROJECTS_DIR.mkdir(exist_ok=True)
-    wiki_index.WIKI_DIR = root
+    # Like the two assignments above, this patch is never undone.
+    mock.patch.object(wiki_index, "WIKI_DIR", root).start()
 
 
 def report_for(root: Path, strict: bool = True) -> wiki_lint.LintReport:
@@ -392,32 +393,24 @@ def test_raw_source_links() -> None:
 
 def test_project_provider_scaffold() -> None:
     print("project-provider-scaffold:")
-    saved_root = wiki_projects.ROOT
-    saved_projects = wiki_projects.PROJECTS_DIR
-    rebuild_patch = mock.patch.object(
-        wiki_projects, "_rebuild_projects_todo", lambda: None
-    )
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as patches:
         root = Path(tmp)
         projects = root / "projects"
         projects.mkdir()
-        wiki_projects.ROOT = root
-        wiki_projects.PROJECTS_DIR = projects
-        rebuild_patch.start()
-        try:
-            rc = project_new("model-agnostic")
-            project = projects / "model-agnostic"
-            agents_text = (project / "AGENTS.md").read_text(encoding="utf-8")
-            check("project scaffold succeeds", rc == 0)
-            check("project gets neutral AGENTS.md", "read\n`project.md`" in agents_text)
-            check(
-                "project scaffold adds no CLAUDE.md that would hide AGENTS.md",
-                not (project / "CLAUDE.md").exists(),
-            )
-        finally:
-            wiki_projects.ROOT = saved_root
-            wiki_projects.PROJECTS_DIR = saved_projects
-            rebuild_patch.stop()
+        patches.enter_context(mock.patch.object(wiki_projects, "ROOT", root))
+        patches.enter_context(mock.patch.object(wiki_projects, "PROJECTS_DIR", projects))
+        patches.enter_context(
+            mock.patch.object(wiki_projects, "_rebuild_projects_todo", lambda: None)
+        )
+        rc = project_new("model-agnostic")
+        project = projects / "model-agnostic"
+        agents_text = (project / "AGENTS.md").read_text(encoding="utf-8")
+        check("project scaffold succeeds", rc == 0)
+        check("project gets neutral AGENTS.md", "read\n`project.md`" in agents_text)
+        check(
+            "project scaffold adds no CLAUDE.md that would hide AGENTS.md",
+            not (project / "CLAUDE.md").exists(),
+        )
 
 
 def test_provider_adapter_generation() -> None:
@@ -512,13 +505,7 @@ def test_provider_adapter_generation() -> None:
 
 def test_project_freeze() -> None:
     print("project-freeze:")
-    saved_root = wiki_projects.ROOT
-    saved_projects = wiki_projects.PROJECTS_DIR
-    saved_wiki_projects = wiki.PROJECTS_DIR
-    rebuild_patch = mock.patch.object(
-        wiki_projects, "_rebuild_projects_todo", lambda: None
-    )
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as patches:
         root = Path(tmp)
         projects = root / "projects"
         project = projects / "cryptopals"
@@ -543,56 +530,52 @@ def test_project_freeze() -> None:
             "```tasks\nnot done\nfolder includes projects\nhas due date\n```\n",
             encoding="utf-8",
         )
-        wiki_projects.ROOT = root
-        wiki_projects.PROJECTS_DIR = projects
-        wiki.PROJECTS_DIR = projects
-        rebuild_patch.start()
-        try:
-            check(
-                "freeze command succeeds",
-                project_freeze("cryptopals", True) == 0,
-            )
-            frozen = find_project("cryptopals")
-            check(
-                "project status becomes frozen",
-                frozen is not None and frozen.status == "frozen",
-            )
-            visible = io.StringIO()
-            with contextlib.redirect_stdout(visible):
-                project_list(False, slugs_only=True)
-            check("default project list excludes frozen", visible.getvalue() == "")
-            all_projects = io.StringIO()
-            with contextlib.redirect_stdout(all_projects):
-                project_list(False, include_frozen=True, slugs_only=True)
-            check(
-                "administrative list can include frozen",
-                all_projects.getvalue().strip() == "cryptopals",
-            )
-            rebuild_deadlines()
-            check(
-                "deadline query is created from tracked template",
-                deadlines.is_file(),
-            )
-            check(
-                "deadline query excludes frozen TODO",
-                "path does not include projects/cryptopals/TODO.md"
-                in deadlines.read_text(encoding="utf-8"),
-            )
-            check(
-                "unfreeze command succeeds",
-                project_freeze("cryptopals", False) == 0,
-            )
-            rebuild_deadlines()
-            check(
-                "unfreeze removes deadline exclusion",
-                "path does not include projects/cryptopals/TODO.md"
-                not in deadlines.read_text(encoding="utf-8"),
-            )
-        finally:
-            wiki_projects.ROOT = saved_root
-            wiki_projects.PROJECTS_DIR = saved_projects
-            wiki.PROJECTS_DIR = saved_wiki_projects
-            rebuild_patch.stop()
+        patches.enter_context(mock.patch.object(wiki_projects, "ROOT", root))
+        patches.enter_context(mock.patch.object(wiki_projects, "PROJECTS_DIR", projects))
+        patches.enter_context(mock.patch.object(wiki, "PROJECTS_DIR", projects))
+        patches.enter_context(
+            mock.patch.object(wiki_projects, "_rebuild_projects_todo", lambda: None)
+        )
+        check(
+            "freeze command succeeds",
+            project_freeze("cryptopals", True) == 0,
+        )
+        frozen = find_project("cryptopals")
+        check(
+            "project status becomes frozen",
+            frozen is not None and frozen.status == "frozen",
+        )
+        visible = io.StringIO()
+        with contextlib.redirect_stdout(visible):
+            project_list(False, slugs_only=True)
+        check("default project list excludes frozen", visible.getvalue() == "")
+        all_projects = io.StringIO()
+        with contextlib.redirect_stdout(all_projects):
+            project_list(False, include_frozen=True, slugs_only=True)
+        check(
+            "administrative list can include frozen",
+            all_projects.getvalue().strip() == "cryptopals",
+        )
+        rebuild_deadlines()
+        check(
+            "deadline query is created from tracked template",
+            deadlines.is_file(),
+        )
+        check(
+            "deadline query excludes frozen TODO",
+            "path does not include projects/cryptopals/TODO.md"
+            in deadlines.read_text(encoding="utf-8"),
+        )
+        check(
+            "unfreeze command succeeds",
+            project_freeze("cryptopals", False) == 0,
+        )
+        rebuild_deadlines()
+        check(
+            "unfreeze removes deadline exclusion",
+            "path does not include projects/cryptopals/TODO.md"
+            not in deadlines.read_text(encoding="utf-8"),
+        )
 
 
 def test_frontmatter_list_parsing() -> None:
