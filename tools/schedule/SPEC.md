@@ -1,10 +1,19 @@
 # Scheduled agents — design spec
 
 Status: **implemented 2026-06-01.** Files: `dispatch.py` (the dispatcher),
-`com.brain.schedule.plist` (LaunchAgent), `brain-schedule.sudoers` (least-privilege
-power rule), `install.sh` (installer), `../tests/test_schedule.py` (dispatcher tests).
+`com.brain.schedule.plist` (LaunchAgent template), `brain-schedule.sudoers`
+(least-privilege power rule template), `render_plist.py` (fills the templates and
+validates the result), `install.sh` (installer), `restore_project.py` (undo helper
+for project-runner snapshots), and the tests `../tests/test_schedule.py`,
+`../tests/test_schedule_recovery.py` and `../tests/test_render_plist.py`.
 Activate with `tools/schedule/install.sh` + the `sudo pmset repeat wake` and
 sudoers commands it prints. This file remains the design rationale.
+
+**Templates.** The tracked plist and sudoers files carry no host-specific value.
+`@BRAIN_ROOT@` (the checkout that holds `render_plist.py`), `@BRAIN_HOME@` (the
+rendering account's home) and `@BRAIN_USER@` (that account's name) are filled in by
+`render_plist.py`; an unresolved placeholder is an error. The sudoers account name
+must be a plain non-root login name, so a hostile value cannot add rules.
 
 **2026-10-03 — native runtime migration.** Scheduled model jobs invoke the
 repository's Python launcher directly. Claude and Codex share named access
@@ -29,7 +38,9 @@ clamshell mode irrelevant. Per tick:
 
 **Least privilege:** the entire root surface is three exact pmset argument vectors
 (`-a disablesleep 1`, `-a disablesleep 0`, `sleepnow`), granted via
-`brain-schedule.sudoers` -> `/etc/sudoers.d/brain-schedule`. pmset is
+`brain-schedule.sudoers`, rendered for the operator's account by
+`install.sh --render-sudoers`, validated with `visudo -cf`, then installed as
+`/etc/sudoers.d/brain-schedule`. pmset is
 power-management only (no code exec / file access / user change), and any other
 pmset call still needs a password. `sudo -n` is used so a missing rule fails fast
 (lid-closed nights are skipped + caught up on next AC open) rather than hanging.
@@ -59,8 +70,9 @@ pmset call still needs a password. `sudo -n` is used so a missing rule fails fas
    LLM batch**, caught up on the next eligible window. There is no automatic
    cross-provider or cross-account failover.
 7. **Nothing LLM runs per tick.** All LLM work happens in **one nightly batch**;
-   the only daily-morning LLM job is the cos brief. The ~30-min tick is purely the
-   catch-up gate-checker, never an LLM trigger.
+   the only daily-morning LLM job is the cos brief. A tick (launchd calendar
+   anchors plus one run at load) is purely the catch-up gate-checker, never an LLM
+   trigger.
 8. **Nightly `enhance` is paused by default.** Set
    `VAULTLENS_SCHEDULE_ENHANCE=1` when installing to opt in. When enabled, it is
    capped at `--iterations 5` across the whole wiki per night (not `--forever`).
@@ -83,7 +95,8 @@ pmset call still needs a password. `sudo -n` is used so a missing rule fails fas
   variables unset. Broad nightly wiki enhancement has a separate opt-in,
   `VAULTLENS_SCHEDULE_ENHANCE=1`; changing that installed flag requires preparation again.
 - Preview only: `tools/schedule/install.sh --render /tmp/brain-schedule.plist` validates and
-  renders a plist without installing or loading it. Invalid provider configuration fails
+  renders a plist (placeholders filled for this checkout and account) without installing
+  or loading it. `--render-sudoers OUTPUT` renders the sudoers template the same way. Invalid provider configuration fails
   before the installer changes an existing job. Validation reads `tools/llm.local.json`
   beside the dispatcher targeted by `ProgramArguments`, even when the installer runs
   from another checkout. Missing or ambiguous dispatcher targets are rejected.
@@ -140,9 +153,13 @@ The dispatcher classifies CLI exit output and recovery state as follows:
 |---|---|---|
 | Transient / network | 5xx or ordinary CLI failure | retry next tick (ledger not advanced) |
 | **Unconfirmed cancellation** | deadline, signal death, interruption, or unresolved prior invocation | cancel the host process group when possible; preserve logs; persist a latch blocking remaining and later LLM work |
-| Short rate-limit | 429 / "rate limit" | mark backend identity `limited_until` (backoff 30m -> 1h -> 2h); defer |
-| **Quota exhausted** | "quota" / "premium request" / "upgrade", Claude session/weekly/usage limits, "hit your limit", or spend/credit limits | mark backend identity `limited_until` (probe again in ~24h; do not compute an exact reset); defer |
+| Short rate-limit | whole-token `429` / "rate limit" / "too many requests" | mark backend identity `limited_until` (backoff 30m -> 1h -> 2h); defer |
+| **Quota exhausted** | "quota" (also inside codes such as `insufficient_quota`) / "premium request" / "upgrade", Claude session/weekly/usage limits, "hit your limit", or spend/credit limits | mark backend identity `limited_until` (probe again in ~24h; do not compute an exact reset); defer |
 | **Backend limited** | selected identity is cooling down | defer the job and rest of the LLM batch; notify |
+
+Classification ignores Python traceback frame lines (and the source line under each) and
+matches `quota` and `429` only as whole tokens, so a line number or identifier in a crash
+trace cannot start a cooldown for the whole LLM batch.
 
 There is one configured backend identity. The dispatcher never switches provider
 or credentials automatically.
@@ -160,7 +177,8 @@ failure/timeout captures remain available for operator review.
 An in-flight marker is persisted before every model launch and cleared only after normal wrapper
 completion. A dispatcher interruption or restart with that marker blocks unattended model work;
 a signal-terminated wrapper also retains the block. An existing unreadable or corrupt ledger
-fails closed instead of resetting scheduler state. Recover that ledger explicitly before resuming.
+fails closed instead of resetting scheduler state, as does a ledger whose `last_ok` or
+`limited_until` is not a timezone-aware ISO time. Recover that ledger explicitly before resuming.
 
 Host process exit alone does not establish that every descendant stopped. The
 dispatcher therefore keeps the same conservative latch for the remaining batch
@@ -186,9 +204,10 @@ Budget-shaping (build into the job table):
 
 ## Concrete schedule
 
-The dispatcher ticks every ~30 min only to check gates + the ledger. Actual work:
+The dispatcher ticks at the plist's calendar anchors (01:30, 04:00, 07:05, 09:00, 10:00,
+plus once at load) only to check gates + the ledger. Actual work:
 
-**Nightly batch — once per night, ~01:30 (pmset wake 01:25), AC-gated, in order:**
+**Nightly batch — once per night, window 01:00-11:00, first anchor 01:30 (pmset wake 01:25), AC-gated, in order:**
 1. `lint` + `index` + `qmd update` (offline, host-native pre-check), then weekly
    `qmd cleanup` for inactive documents and orphan chunks on AC power. Semantic
    embedding is manual because it is too resource-intensive for the scheduled host.
@@ -207,10 +226,13 @@ All LLM steps use the configured `--cli` and optional `--model`, and defer if a
 usage limit is hit or if offline. The whole batch runs at most once per night; if a night is missed
 (battery / asleep), the ledger catches it up on the next AC night.
 
-**Daily morning — ~07:00 window, battery OK:**
+**Daily morning — 07:00-12:00 window, battery OK:**
 - `cos brief` (`--effort low`). The only LLM job outside the nightly batch.
 
-Weekly digests land Sunday night so Monday's brief can reference them.
+Weekly digests land Sunday night so Monday's brief can reference them. A weekly job is
+due once at least 7 calendar days have passed since its last success and the tick falls on
+a Sunday, or at 8 or more days if that Sunday was missed. Days are counted as local
+calendar dates, so an early-in-the-day tick does not push the job to a later weekday.
 
 ## Monitoring
 
@@ -220,14 +242,17 @@ Weekly digests land Sunday night so Monday's brief can reference them.
 - Domain-specific (preferred): **`python3 tools/schedule/dispatch.py status`** ->
   table of job | last run | next due | last result | cooldown/quota. Raw ledger:
   `jq . ~/.brain/schedule-state.json`.
-- Logs: `~/.brain/logs/`.
+- Logs: `~/.brain/logs/`. The dispatcher deletes its own `schedule-<date>.log` and
+  `agent-*.stdout.log`/`agent-*.stderr.log` files older than `LOG_RETENTION_DAYS` (30)
+  each tick. It keeps agent captures while a cancellation is unresolved, because the
+  recovery message points at them, and never touches launchd's own `launchd.*.log`.
 - Optional GUI: LaunchControl (third-party) browses all LaunchAgents/Daemons.
 
 ## Why a dispatcher and not calendar jobs
 
 A laptop is asleep, offline, or lid-closed exactly when a fixed-time job is due.
-Instead of N calendar jobs that silently miss, one dispatcher runs often and
-asks per job: *overdue? in window? gates pass?* Missed windows just run at the
+Instead of N calendar jobs that silently miss, one dispatcher runs at several
+anchors a day and asks per job: *overdue? in window? gates pass?* Missed windows just run at the
 next eligible tick. Sleep / offline / closed-lid become non-events.
 
 ## Components
@@ -236,8 +261,8 @@ next eligible tick. Sleep / offline / closed-lid become non-events.
 |---|---|---|---|
 | 1 | LaunchAgent plist | `~/Library/LaunchAgents/com.brain.schedule.plist` | User LaunchAgent in the GUI session for provider login and iCloud access. `RunAtLoad` + `StartCalendarInterval` anchors span the nightly and morning windows. launchd reruns missed anchors on wake; later anchors permit same-day gate retries. |
 | 2 | Dispatcher | `tools/schedule/dispatch.py` | stdlib only (matches the rest of `tools/`). Reads job table, checks gates, runs due jobs, writes ledger, captures + files output. |
-| 3 | Ledger + lock | `~/.brain/schedule-state.json` | per-job last-run timestamps + a `flock` so dispatcher ticks never overlap. Outside the iCloud vault to avoid sync conflict copies. |
-| 4 | Job table | inline in `dispatch.py` (or sibling `jobs.json`) | declarative: command, cadence, window, gates, invocation path. |
+| 3 | Ledger + lock | `~/.brain/schedule-state.json`, `~/.brain/schedule.lock` | per-job last-run timestamps in the ledger; a `flock` on the separate lock file so dispatcher ticks never overlap. Outside the iCloud vault to avoid sync conflict copies. |
+| 4 | Job table | `build_steps()` in `dispatch.py` | declarative: command, cadence, window, gates, invocation path. |
 | 5 | pmset wake | one-time `sudo pmset repeat wakeorpoweron MTWRFSU 01:25:00` | wakes the Mac before the overnight heavy window; AC gate in the dispatcher decides whether to actually run. |
 
 ## Invocation paths
@@ -276,16 +301,16 @@ lifetime to manage between scheduled jobs.
 | Job | Command | Cadence / window | Gates | Output |
 |---|---|---|---|---|
 | lint | `wiki.py lint --json` | **nightly** (batch step 1) | offline-ok, host-native | notify only on errors |
-| index | `wiki.py index` (→ `--rebuild` if stale) | **nightly** (batch step 1) | offline-ok, host-native | log |
+| index | `wiki.py index --rebuild` | **nightly** (batch step 1) | offline-ok, host-native | log |
 | qmd update | `qmd update` | **nightly** (batch step 1) | offline-ok, host-native | lexical search index |
 | qmd cleanup | `qmd cleanup` | **weekly**, after update | offline-ok, host-native, **AC** | remove inactive documents/orphan chunks; compact derived index |
 | qmd embed | `qmd embed` | **manual only** | run explicitly on a suitable machine | semantic vectors |
 | links | `wiki.py links --fix` | weekly *(manual — not in the dispatcher; writes wiki/, needs the author profile)* | offline-ok, host-native | log |
 | coverage snapshot | `wiki.py coverage --json` | weekly *(manual — not in the dispatcher)* | offline-ok, host-native | feeds enhance |
-| **cos brief** | native `cos --mode brief` | daily, 07:00 window | online, runtime, icloud, battery-ok | `wiki/reports/agents/scheduled/` + macOS notify |
+| **cos brief** | native `cos --mode brief` | daily, 07:00-12:00 window | online, runtime, icloud, battery-ok | `wiki/reports/agents/scheduled/` + macOS notify |
 | contradict | native `contradict` | weekly, overnight AC window | online, runtime, icloud, **AC** | `wiki/reports/agents/scheduled/` |
-| emerge | native `emerge` | weekly | online, runtime, icloud | `wiki/reports/agents/scheduled/` + notify |
-| discover | native `discover` | weekly | online, runtime, icloud | `wiki/reports/agents/scheduled/` + notify |
+| emerge | native `emerge` | weekly | online, runtime, icloud, **AC** | `wiki/reports/agents/scheduled/` + notify |
+| discover | native `discover` | weekly | online, runtime, icloud, **AC** | `wiki/reports/agents/scheduled/` + notify |
 | verify *(optional)* | native `verify --source <changed>` | weekly, on recently-changed source pages | online, runtime, icloud | report |
 | ingest | native `ingest --source <new>` | nightly, only if approved source/inbox files are unprocessed | online, runtime, icloud, **AC** | wiki changes; source protected |
 | project-runner | native `project-run --project <slug>` (one per due, opted-in project) | nightly, after the digests | online, runtime, icloud, **AC** | one project (applied without commit; pre-run snapshot) + roll-up |
@@ -304,7 +329,7 @@ review-paused projects, and emits one `project-run --project <slug>` arg-vector 
 enabled project that is **due** (capped at `MAX_PROJECTS_PER_NIGHT`). A project is due
 when it is enabled AND has either a clear, due task **or** loose `## Inbox` content
 awaiting grooming (`agenda.project_is_due` / `inbox_has_groomable_content`) — so routed
-CoS proposals and ad-hoc Inbox dumps are picked up the next night even before they have
+handoffs and ad-hoc Inbox dumps are picked up the next night even before they have
 been groomed into Tasks. The dispatcher
 clones each project to `~/.brain/project-snapshots/<date>/` before the run (the apply-don't-commit
 undo, since `projects/` is gitignored) and writes one aggregated roll-up. Snapshots are staged
@@ -337,12 +362,11 @@ running these, but never auto-fire them.
 |---|---|---|
 | online | `nc -z -G 5 $VAULTLENS_LLM_HEALTH_HOST 443` (provider default if unset) | **defer** LLM jobs (ledger not advanced → retried next tick). Tier 0 unaffected. |
 | runtime | `local_runtime.runtime_available(root=ROOT, cli=CLI)` validates the installed native boundary | Defer model jobs; never auto-install, start a service or fall back. Host maintenance still runs. |
-| icloud | `find <input> -flags +dataless` empty, else `brctl download <path>` | defer until materialized. |
-| AC | `pmset -g batt` shows `AC Power` | heavy jobs (enhance, contradict) defer; light jobs proceed. |
-| battery-ok | battery ≥ ~20% | defer heavy; allow light (cos brief, lint). |
-| idle | `ioreg`/`HIDIdleTime` over threshold | enhance only; pause if the user is active. |
-| not-already-done | ledger: `now ≥ last_run + period` | skip if recently run. |
-| no-overlap | `flock` on the ledger | At most one dispatcher run. Manual `brain-wiki enhance` processes do not acquire this host lock and can overlap scheduled enhancement; do not run them during the nightly window. |
+| icloud | `wiki/` exists; a normal tick asks `brctl download wiki/reports` (best effort, not awaited), a dry run only checks that `wiki/reports/` exists | defer when `wiki/` is missing; materialization is not verified. |
+| AC | `pmset -g batt` shows `AC Power` | qmd cleanup, ingest, contradict, emerge, discover, project-runner and enhance defer; lint, index, qmd update and the cos brief proceed. |
+| battery-ok | battery ≥ 20% (`MIN_BATTERY_PCT`); desktops and unreadable output pass | only the cos brief carries this gate; it defers below the threshold. |
+| not-already-done | ledger: daily = no success yet on today's local date; weekly = see Concrete schedule | skip if recently run. |
+| no-overlap | `flock` on `~/.brain/schedule.lock` | At most one dispatcher run. Manual `brain-wiki enhance` processes do not acquire this host lock and can overlap scheduled enhancement; do not run them during the nightly window. |
 
 ### Behavior in the three named scenarios
 
@@ -353,7 +377,7 @@ running these, but never auto-fire them.
 - **Sleep cycles:** the idempotent ledger means any wake triggers exactly one
   catch-up of whatever is overdue. Forced wakes (`pmset repeat wake`) exist only
   to guarantee the overnight heavy window; the AC gate means a battery wake
-  (e.g. in a bag) does nothing and the Mac re-sleeps. PowerNap micro-wakes are
+  (e.g. in a bag) does nothing and the Mac re-sleeps. PowerNap micro-wakes
   do not create extra runs; the ledger still controls whether work is due.
 
 ## Output, notifications, failure
@@ -378,8 +402,11 @@ running these, but never auto-fire them.
   only the metadata status page uses the parent directory. Directory descriptors
   and atomic replacement reject linked directories and report targets. Model
   output cannot choose a filename or redirect a host report write.
-- **Notifications:** `osascript -e 'display notification …'` (or `terminal-notifier`
-  if present) on completion of cos brief / emerge / discover, and on any job error.
+- **Notifications:** `osascript -e 'display notification …'` when a step that files a
+  report finishes (contradict, emerge, discover, project-runner, cos brief), when lint
+  reports findings, when handoffs are routed, when a usage limit defers the batch, and
+  once when a job has failed `FAIL_STREAK_ALERT` (3) runs in a row. Other single failures
+  appear only in the log and `schedule-status.md`.
 - **Logs:** `~/.brain/logs/schedule-<date>.log`; LaunchAgent `StandardOutPath` /
   `StandardErrorPath` to the same dir.
 - **Retry semantics:** a failed or gated job does **not** advance its ledger
@@ -407,7 +434,8 @@ Items carry `[from:<source>]` provenance. A handoff only queues into an inbox
 picked up by an already-scheduled project run; it never triggers another ad-hoc
 agent run.
 
-Tested: successful-output selection, Chief of Staff proposal stripping,
+Tested: successful-output selection, Chief of Staff proposal stripping (the proposal
+parser and router were removed with the unused routing path),
 `parse_handoffs`, `resolve_proposal_dest`, `format_work_item`, and `RoutingGuard`
 in `test_schedule.py`; inbox append and due-state behavior in `test_agenda.py`.
 
