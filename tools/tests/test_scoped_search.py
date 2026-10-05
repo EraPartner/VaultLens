@@ -176,7 +176,7 @@ class ScopedSearchTests(unittest.TestCase):
             {"paths": ["wiki/concepts/current.md", "raw/sources/approved.txt"]},
         )
         self.assertEqual(len(documents["documents"]), 2)
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "raw/review-inbox/consent.md"):
             self.search.multi_get(
                 {"paths": ["wiki/concepts/current.md", "raw/review-inbox/consent.md"]}
             )
@@ -188,6 +188,22 @@ class ScopedSearchTests(unittest.TestCase):
         ):
             with self.subTest(args=args), self.assertRaises(ValueError):
                 self.search.search(args)
+
+    def test_rare_terms_outrank_common_words_in_natural_language_queries(
+        self,
+    ) -> None:
+        self.write(
+            "wiki/concepts/scheduler.md",
+            "# Scheduler retries\nThe dispatcher backs off retries after a quota error.\n",
+        )
+        for index in range(5):
+            self.write(
+                f"wiki/concepts/filler{index}.md",
+                f"# Filler {index}\nHow does the operator handle this? What it does.\n",
+            )
+        payload = self.search.search({"query": "how does the scheduler handle retries"})
+        self.assertEqual(payload["results"][0]["file"], "wiki/concepts/scheduler.md")
+        self.assertTrue(payload["results"][0]["snippet"].startswith("# Scheduler"))
 
     def test_oversized_and_nonregular_documents_are_never_read(self) -> None:
         self.write(
