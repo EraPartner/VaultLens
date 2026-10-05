@@ -314,6 +314,22 @@ class SchedulerRecoveryTests(unittest.TestCase):
             for name, data in files.items():
                 self.assertEqual((inbox / name).read_bytes(), data)
 
+    def test_angle_bracket_citation_with_square_brackets_marks_ingested(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sources = root / "raw" / "sources"
+            wiki_sources = root / "wiki" / "sources"
+            sources.mkdir(parents=True)
+            wiki_sources.mkdir(parents=True)
+            pdf = sources / "Smith [2024] Report.pdf"
+            pdf.write_bytes(b"fixture")
+            with patch.object(dispatch, "ROOT", root):
+                self.assertEqual(_ingest_targets(), [["ingest", "--source", str(pdf)]])
+                (wiki_sources / "smith.md").write_text(
+                    "Source: [PDF](<../../raw/sources/Smith [2024] Report.pdf>)\n"
+                )
+                self.assertEqual(_ingest_targets(), [])
+
     def test_handoff_routes_only_to_real_opted_in_projects(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

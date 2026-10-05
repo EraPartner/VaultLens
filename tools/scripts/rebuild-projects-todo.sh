@@ -43,7 +43,7 @@ WIDGET="$PROJECTS_DIR/TODO-widget.md"
 
 # Build both views in temp files and replace the real ones only after every step
 # succeeded, so a failing project CLI leaves the previous views intact.
-SLUGS="$(python3 "$ROOT/tools/wiki.py" project list --slugs)"
+SLUGS="$("${BRAIN_PYTHON:-python3}" "$ROOT/tools/wiki.py" project list --slugs)"
 LIVE_TMP="$(mktemp "$PROJECTS_DIR/.TODO.md.XXXXXX")"
 WIDGET_TMP="$(mktemp "$PROJECTS_DIR/.TODO-widget.md.XXXXXX")"
 trap 'rm -f "$LIVE_TMP" "$WIDGET_TMP"' EXIT

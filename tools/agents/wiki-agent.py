@@ -428,7 +428,10 @@ def _resolve_strategy(strategy: str | None, iteration_index: int) -> str | None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    # No abbreviations: brain_launch matches full flag names when it injects
+    # --cli/--model/--effort, so `--eff low` would be silently overridden.
     parser = argparse.ArgumentParser(
+        allow_abbrev=False,
         description="Wiki agent wrapper - invoke AI agents with configurable CLI/model/effort",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -766,9 +769,12 @@ def invoke_agent(
         return 1
 
     system_text = _prepare_system_prompt(agent_file, system_addon)
-    system_text += "\n\n" + (ROOT / ".agents" / "context-policy.md").read_text(
-        encoding="utf-8"
-    )
+    policy_file = ROOT / ".agents" / "context-policy.md"
+    try:
+        system_text += "\n\n" + policy_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        print(f"Error: cannot read {policy_file.relative_to(ROOT)}: {exc}")
+        return 1
     system_text += "\n\nRuntime contract: Sources remain immutable at their actual paths, including raw/inbox. Use qmd for scoped lexical search; global indexes and hosted web tools are unavailable. Mark tasks needing unapproved endpoints as blocked. Reports and edits must stay in the approved scope."
     perms = _agent_permissions(agent)
     task_prompt = prompt
@@ -1120,12 +1126,19 @@ _STOP_REQUESTED = False  # mutable flag; tests and handlers use this name
 
 
 def _install_signal_handlers() -> None:
-    """Stop between iterations, or cancel the owned process group during a run."""
+    """Stop between iterations, or cancel the owned process group during a run.
+
+    SIGUSR1 is the graceful stop: the current run finishes, so nothing is
+    interrupted and no cancellation gate is written. SIGINT/SIGTERM stop now.
+    """
 
     def _handler(signum: int, _frame: FrameType | None) -> None:
         global _STOP_REQUESTED
         _STOP_REQUESTED = True  # pyright: ignore[reportConstantRedefinition]
         name = signal.Signals(signum).name
+        if signum == signal.SIGUSR1:
+            print(f"\n[wiki-agent] {name} received; stopping after the current run.")
+            return
         if _ACTIVE_AGENT_PROCESS is not None:
             print(f"\n[wiki-agent] {name} received; stopping agent and its tools.")
             # _run_agent_command catches this and cleans up before propagating.
@@ -1134,6 +1147,7 @@ def _install_signal_handlers() -> None:
 
     signal.signal(signal.SIGINT, _handler)
     signal.signal(signal.SIGTERM, _handler)
+    signal.signal(signal.SIGUSR1, _handler)
 
 
 def _redirect_output_to_log(log_path: Path) -> bool:

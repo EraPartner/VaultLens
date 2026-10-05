@@ -242,6 +242,14 @@ def _split_frontmatter(text: str) -> tuple[str, str] | None:
     return text[4:end], text[body_start:]
 
 
+_BLOCK_ITEM_RE = re.compile(r"^\s*-\s+(.*\S)\s*$")
+
+
+def _is_block_continuation(line: str) -> bool:
+    """A line that belongs to the previous key's value (block list or nested map)."""
+    return bool(line) and (line[:1].isspace() or line.startswith("- "))
+
+
 def parse_frontmatter(text: str) -> tuple[dict[str, str | list[str]], str]:
     normalized = text.replace("\r\n", "\n")
     split = _split_frontmatter(normalized)
@@ -249,14 +257,27 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str | list[str]], str]:
         return {}, text
     block, body = split
     result: dict[str, str | list[str]] = {}
+    list_key: str | None = None
     for line in block.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
+        # YAML block list (`tags:` then `  - a`), as Obsidian's Properties UI writes.
+        item = _BLOCK_ITEM_RE.match(line)
+        if item and list_key is not None:
+            items = result[list_key]
+            if not isinstance(items, list):
+                items = result[list_key] = []
+            items.append(item.group(1).strip().strip('"').strip("'"))
+            continue
+        list_key = None
         if ":" not in line:
             continue
         key, value = line.split(":", 1)
-        result[key.strip()] = _parse_frontmatter_value(value)
+        key = key.strip()
+        result[key] = _parse_frontmatter_value(value)
+        if result[key] == "" and not line[:1].isspace():
+            list_key = key
     return result, body
 
 
@@ -420,9 +441,14 @@ def list_projects() -> list[Project]:
     return projects
 
 
+def _render_list_item(item: str) -> str:
+    # Quote items with whitespace so `_split_inline_list` never splits them.
+    return f'"{item}"' if re.search(r"\s", item) else item
+
+
 def _render_frontmatter_value(value: str | list[str]) -> str:
     if isinstance(value, list):
-        return "[" + ", ".join(value) + "]"
+        return "[" + ", ".join(_render_list_item(item) for item in value) + "]"
     return str(value)
 
 
@@ -436,11 +462,16 @@ def set_frontmatter_field(text: str, key: str, value: str | list[str]) -> str:
     pattern = re.compile(rf"^{re.escape(key)}\s*:")
     new_lines: list[str] = []
     found = False
+    replacing = False
     for line in block.splitlines():
         if pattern.match(line):
             new_lines.append(f"{key}: {rendered}")
             found = True
+            replacing = True
+        elif replacing and _is_block_continuation(line):
+            continue  # drop the old block value; the new inline value replaces it
         else:
+            replacing = False
             new_lines.append(line)
     if not found:
         new_lines.append(f"{key}: {rendered}")

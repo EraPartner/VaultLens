@@ -144,6 +144,24 @@ class ProviderPermissionsTests(AgentUnitTests):
         command = agent.build_cli_command("codex", "", None, "ROLE", "TASK", perms)
         self.assertNotIn("sandbox_workspace_write.network_access=true", command)
 
+    def test_parser_rejects_abbreviated_flags(self) -> None:
+        # brain_launch injects full --cli/--effort names; an abbreviation would lose to them.
+        agent = self.fixture_agent()
+        with patch("sys.stderr"), self.assertRaises(SystemExit):
+            agent.build_parser().parse_args(["quality", "--eff", "low"])
+
+    def test_missing_context_policy_is_an_error_not_a_traceback(self) -> None:
+        agent = self.fixture_agent()
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(agent, "ROOT", Path(temporary)),
+            patch.object(agent, "_run_agent_command") as run,
+            patch("sys.stdout"),
+        ):
+            rc = agent.invoke_agent("quality", "claude", "", "low", "TASK", "", [])
+        self.assertEqual(rc, 1)
+        run.assert_not_called()
+
     def test_explicit_native_model_and_unspecified_effort_are_forwarded(self) -> None:
         agent = self.fixture_agent()
         args = agent.build_parser().parse_args(["quality"])
@@ -834,6 +852,44 @@ class TimeoutTests(AgentUnitTests):
                     process.kill()
                     process.wait()
                 self._cleanup_tool(root)
+
+    def test_usr1_lets_the_active_run_finish_then_stops(self) -> None:
+        agent = self.fixture_agent()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            ready = root / "ready"
+            tool = [
+                sys.executable,
+                "-c",
+                f"import pathlib, time; pathlib.Path({str(ready)!r}).touch(); time.sleep(1)",
+            ]
+            script = (
+                "import importlib.util, sys\n"
+                f"spec = importlib.util.spec_from_file_location('agent', {agent.__file__!r})\n"
+                "agent = importlib.util.module_from_spec(spec)\n"
+                "spec.loader.exec_module(agent)\n"
+                "agent._install_signal_handlers()\n"
+                f"rc = agent._run_agent_command({tool!r}, cwd=agent.ROOT, timeout=60)\n"
+                "print('stop', agent._STOP_REQUESTED)\n"
+                "sys.exit(rc)\n"
+            )
+            process = subprocess.Popen(
+                [sys.executable, "-c", script], stdout=subprocess.PIPE, text=True
+            )
+            try:
+                deadline = time.monotonic() + 5
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(ready.exists())
+                process.send_signal(agent_signal.SIGUSR1)
+                stdout, _ = process.communicate(timeout=10)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+            # The run completed normally (no interrupt, so no cancellation gate).
+            self.assertEqual(process.returncode, 0)
+            self.assertIn("stop True", stdout)
 
     def test_completed_step_is_persisted_before_later_crash(self) -> None:
         now = dt.datetime(2026, 9, 5, 2, tzinfo=dt.timezone.utc)

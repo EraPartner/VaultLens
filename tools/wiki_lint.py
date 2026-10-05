@@ -340,7 +340,7 @@ def build_report(pages: list[Page], strict: bool) -> LintReport:
 
 
 def _print_section(label: str, rows: list[str], remaining: int | None) -> int:
-    if rows:
+    if rows and remaining != 0:
         print(f"\n{label}:")
         shown = rows if remaining is None else rows[:remaining]
         for row in shown:
