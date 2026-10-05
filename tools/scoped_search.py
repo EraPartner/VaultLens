@@ -25,6 +25,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import Counter
 from pathlib import Path
 from collections.abc import Callable
 from typing import TextIO, cast
@@ -611,16 +612,24 @@ class ScopedSearch:
             scanned += 1
             relative = path.relative_to(self.scope.root).as_posix()
             title = _title(text, path)
-            corpus = f"{relative}\n{title}\n{text}".casefold()
-            counts = [corpus.count(term) for term in terms]
+            # Count whole words: a substring count ranks "maintenance" for "ai".
+            tokens = Counter(
+                TOKEN.findall(f"{relative}\n{title}\n{text}".casefold())
+            )
+            counts = [tokens[term] for term in terms]
             for index, count in enumerate(counts):
                 document_frequency[index] += count > 0
             if any(counts):
                 lowered = text.casefold()
                 snippets: dict[int, str] = {}
                 for index, count in enumerate(counts):
-                    position = lowered.find(terms[index]) if count else -1
-                    if position >= 0:
+                    found = (
+                        re.search(rf"(?<!\w){re.escape(terms[index])}(?!\w)", lowered)
+                        if count
+                        else None
+                    )
+                    if found is not None:
+                        position = found.start()
                         start = max(0, position - snippet_chars // 8)
                         snippets[index] = text[start : start + snippet_chars]
                 # Terms found only in the path or title fall back to the start.

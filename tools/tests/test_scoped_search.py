@@ -213,6 +213,15 @@ class ScopedSearchTests(VaultCase):
         self.assertEqual(payload["results"][0]["file"], "wiki/concepts/scheduler.md")
         self.assertTrue(payload["results"][0]["snippet"].startswith("# Scheduler"))
 
+    def test_terms_match_whole_words_not_substrings(self) -> None:
+        self.write("wiki/concepts/ai.md", "# AI\nAI systems and AI agents.\n")
+        self.write(
+            "wiki/concepts/upkeep.md",
+            "# Maintenance\nMaintain, maintained, maintaining: plain upkeep.\n",
+        )
+        payload = self.search.search({"query": "AI"})
+        self.assertEqual([r["file"] for r in payload["results"]], ["wiki/concepts/ai.md"])
+
     def test_oversized_and_nonregular_documents_are_never_read(self) -> None:
         self.write(
             "wiki/concepts/large.md", "Denied-oversize " + "x" * MAX_DOCUMENT_BYTES
