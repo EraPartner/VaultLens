@@ -748,6 +748,22 @@ def test_log_frontmatter_is_stdlib_and_yaml_safe() -> None:
     )
 
 
+def test_search_limit_zero_returns_all() -> None:
+    print("search --limit 0:")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "wiki"
+        for name in ("a", "b", "c"):
+            write_page(root, f"concepts/{name}.md", "needle", **base_fields(title=name))
+        use_wiki(root)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            wiki_query.search("needle", 0)
+        shown = [line for line in out.getvalue().splitlines() if "concepts/" in line]
+        check("limit 0 shows every match", len(shown) == 3, out.getvalue())
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            wiki_query.search("needle", 2)
+        check("positive limit still truncates", len(out.getvalue().splitlines()) == 2)
+
+
 def test_inventory_records_pass_lint() -> None:
     print("inventory records vs lint:")
     with tempfile.TemporaryDirectory() as tmp:
@@ -902,6 +918,7 @@ def main() -> int:
     test_source_id_stats_and_sampling()
     test_bounded_cli_output_defaults()
     test_log_frontmatter_is_stdlib_and_yaml_safe()
+    test_search_limit_zero_returns_all()
     test_inventory_records_pass_lint()
     test_links_skip_frontmatter_and_code()
     test_index_nested_links()

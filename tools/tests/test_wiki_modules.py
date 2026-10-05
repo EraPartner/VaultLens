@@ -6,6 +6,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -219,10 +220,99 @@ def test_inventory() -> None:
         )
 
 
+def test_archive_registry_safety() -> None:
+    print("wiki_archive registry safety:")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "wiki"
+        page = write_page(root, "concepts/live.md", status="active")
+        registry = root / "system" / "archive-registry.json"
+        registry.parent.mkdir(parents=True)
+        corrupt = '{"archived": {"concepts/kept": {"archived_on": "2026-01-01", "reason": "x"}'
+        registry.write_text(corrupt, encoding="utf-8")
+        with (
+            patch.object(wiki, "WIKI_DIR", root),
+            patch.object(wiki_archive, "WIKI_DIR", root),
+            patch.object(wiki_archive, "REGISTRY_PATH", registry),
+            contextlib.redirect_stdout(io.StringIO()) as out,
+        ):
+            archived = wiki_archive.archive_page("concepts/live", "why")
+            listed = wiki_archive.list_archived(as_json=False)
+        check("archive refuses while the registry is corrupt", archived == 1, out.getvalue())
+        check("corrupt registry is not overwritten", registry.read_text(encoding="utf-8") == corrupt)
+        check("page status untouched when archive is refused", "status: active" in page.read_text())
+        check("list reports the corrupt registry", listed == 1)
+
+        registry.write_text(json.dumps({"archived": {}}), encoding="utf-8")
+        with (
+            patch.object(wiki, "WIKI_DIR", root),
+            patch.object(wiki_archive, "WIKI_DIR", root),
+            patch.object(wiki_archive, "REGISTRY_PATH", registry),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            wiki_archive.archive_page("concepts/live", "why")
+        data = json.loads(registry.read_text(encoding="utf-8"))
+        check("archive writes a valid registry", "concepts/live" in data["archived"], str(data))
+        check("no temp files left beside the registry", [p.name for p in registry.parent.iterdir()] == [registry.name])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "wiki"
+        draft = write_page(root, "concepts/draft.md", status="draft")
+        registry = root / "system" / "archive-registry.json"
+        with (
+            patch.object(wiki, "WIKI_DIR", root),
+            patch.object(wiki_archive, "WIKI_DIR", root),
+            patch.object(wiki_archive, "REGISTRY_PATH", registry),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            rc = wiki_archive.restore_page("concepts/draft")
+        check("restore of a non-archived page succeeds", rc == 0)
+        check("restore leaves a non-archived page's status alone", "status: draft" in draft.read_text(), draft.read_text())
+
+
+def test_projects_todo_script_is_atomic() -> None:
+    print("rebuild-projects-todo.sh failure handling:")
+    script_src = Path(__file__).resolve().parents[1] / "scripts" / "rebuild-projects-todo.sh"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "tools" / "scripts").mkdir(parents=True)
+        (root / "projects").mkdir()
+        script = root / "tools" / "scripts" / "rebuild-projects-todo.sh"
+        shutil.copy(script_src, script)
+        # A wiki.py that fails, as when python or the project CLI breaks.
+        (root / "tools" / "wiki.py").write_text("import sys\nsys.exit(3)\n", encoding="utf-8")
+        live = root / "projects" / "TODO.md"
+        widget = root / "projects" / "TODO-widget.md"
+        live.write_text("PREVIOUS LIVE\n", encoding="utf-8")
+        widget.write_text("PREVIOUS WIDGET\n", encoding="utf-8")
+        result = subprocess.run(
+            ["bash", str(script)], capture_output=True, text=True, timeout=60, env=dict(os.environ)
+        )
+        check("script exits non-zero when the project CLI fails", result.returncode != 0, result.stderr)
+        check("live view keeps its previous content", live.read_text() == "PREVIOUS LIVE\n", live.read_text())
+        check("widget view keeps its previous content", widget.read_text() == "PREVIOUS WIDGET\n", widget.read_text())
+        check(
+            "no temp files left behind",
+            sorted(p.name for p in (root / "projects").iterdir()) == ["TODO-widget.md", "TODO.md"],
+        )
+
+        # A working project CLI still produces both views.
+        (root / "tools" / "wiki.py").write_text("print('alpha')\n", encoding="utf-8")
+        (root / "projects" / "alpha").mkdir()
+        (root / "projects" / "alpha" / "TODO.md").write_text(
+            "- [ ] Ship it 📅 2026-12-01\n", encoding="utf-8"
+        )
+        ok = subprocess.run(["bash", str(script)], capture_output=True, text=True, timeout=60)
+        check("script succeeds when the CLI works", ok.returncode == 0, ok.stderr)
+        check("live view embeds the project", "![[projects/alpha/TODO]]" in live.read_text())
+        check("widget view lists the dated task", "Ship it" in widget.read_text())
+
+
 def main() -> int:
     test_ingest()
     test_archive_reconciliation()
     test_inventory()
+    test_archive_registry_safety()
+    test_projects_todo_script_is_atomic()
     print(f"\n{passed} passed, {failed} failed")
     return 1 if failed else 0
 

@@ -3,15 +3,13 @@
 
 Agents cannot open binary PDFs, so before a source can be ingested its text is
 pre-extracted into a markdown sibling under `raw/sources-text/`. This module owns
-that pipeline (pdftotext, qpdf fallback for copy-protected PDFs) plus the
-inbox->sources promotion step. Everything here is reachable via
+that pipeline (pdftotext, qpdf fallback for copy-protected PDFs). Everything here is reachable via
 `python3 tools/wiki.py preprocess`.
 """
 
 from __future__ import annotations
 
 import datetime as dt
-import re
 import shutil
 import subprocess
 from enum import Enum
@@ -21,7 +19,6 @@ from wiki import ROOT
 
 RAW_SOURCES_DIR = ROOT / "raw" / "sources"
 RAW_SOURCES_TEXT_DIR = ROOT / "raw" / "sources-text"
-RAW_INBOX_DIR = ROOT / "raw" / "inbox"
 PDF_TOOL_TIMEOUT = 300
 
 
@@ -155,59 +152,6 @@ def extract_pdf_to_markdown(
 
     text_path.write_text(header + body, encoding="utf-8")
     return text_path, status
-
-
-def promote_inbox_pdf(pdf_path: Path) -> Path | None:
-    """Move a freshly ingested PDF out of raw/inbox/ into raw/sources/.
-
-    raw/sources/ is the canonical home for ingested source PDFs; raw/inbox/ is
-    only a staging area for files awaiting ingest. Call this after a successful
-    ingest so the source no longer shows up in inbox triage.
-
-    Returns the new path on a move, or None when nothing was moved (the PDF is
-    not under raw/inbox/, or a different file already occupies the destination).
-    Re-points the extracted sibling's `source_pdf:` header to the new location.
-    Raises FileNotFoundError if the PDF does not exist.
-    """
-    pdf_path = pdf_path.resolve()
-    if not pdf_path.exists():
-        raise FileNotFoundError(f"PDF not found: {pdf_path}")
-
-    # Only promote files that actually live in raw/inbox/. Anything already in
-    # raw/sources/ (or elsewhere) is left untouched — "if not already there".
-    try:
-        pdf_path.relative_to(RAW_INBOX_DIR.resolve())
-    except ValueError:
-        return None
-
-    dest = RAW_SOURCES_DIR / pdf_path.name
-    if dest.exists():
-        # Don't clobber a different source that already claims this name.
-        print(
-            f"Warning: {dest.relative_to(ROOT)} already exists; "
-            f"leaving {pdf_path.name} in raw/inbox/ to avoid overwriting it."
-        )
-        return None
-
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(pdf_path), str(dest))
-
-    # Keep the extracted sibling's provenance header pointing at the new home.
-    text_path = text_path_for_pdf(dest)
-    if text_path.exists():
-        contents = text_path.read_text(encoding="utf-8", errors="replace")
-        new_ref = dest.relative_to(ROOT).as_posix()
-        updated = re.sub(
-            r'^(source_pdf:\s*").*?(")\s*$',
-            rf"\g<1>{new_ref}\g<2>",
-            contents,
-            count=1,
-            flags=re.MULTILINE,
-        )
-        if updated != contents:
-            text_path.write_text(updated, encoding="utf-8")
-
-    return dest
 
 
 def preprocess_pdfs(pdf: str | None, force: bool) -> int:
