@@ -795,10 +795,10 @@ class TimeoutTests(AgentUnitTests):
             link.symlink_to(target)
             saved = os.dup(1), os.dup(2)
             try:
-                self.assertFalse(agent._redirect_output_to_log(link))  # pyright: ignore[reportPrivateUsage] -- unit under test
+                self.assertFalse(agent._redirect_output_to_log(link))
                 self.assertFalse(target.exists())
                 fresh = root / "new/bg.log"
-                self.assertTrue(agent._redirect_output_to_log(fresh))  # pyright: ignore[reportPrivateUsage] -- unit under test
+                self.assertTrue(agent._redirect_output_to_log(fresh))
                 self.assertEqual(stat.S_IMODE(fresh.stat().st_mode), 0o600)
                 self.assertEqual(stat.S_IMODE(fresh.parent.stat().st_mode), 0o700)
             finally:
