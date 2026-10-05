@@ -42,11 +42,11 @@ _verify_preflight = runtime._verify_preflight  # pyright: ignore[reportPrivateUs
 
 
 class RuntimeTests(unittest.TestCase):
-    root: Path  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
-    auth_home: Path  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
-    run_dir: Path  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
-    scope: access.RunScope  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
-    env: dict[str, str]  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
+    root: Path
+    auth_home: Path
+    run_dir: Path
+    scope: access.RunScope
+    env: dict[str, str]
 
     def setUp(self) -> None:
         # These unit fixtures exercise preparation, not operating-system evidence.

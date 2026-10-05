@@ -17,7 +17,7 @@ from typing import Any, Protocol, cast
 class LoadedModule(Protocol):
     """A dynamically loaded module: any attribute can be read and tests may rebind them."""
 
-    def __getattr__(self, name: str) -> Any: ...  # noqa: ANN401 - contents are unknowable statically
+    def __getattr__(self, name: str) -> Any: ...  # noqa: ANN401  # pyright: ignore[reportExplicitAny] - contents are unknowable statically
 
     def __setattr__(self, name: str, value: object) -> None: ...
 
@@ -38,5 +38,6 @@ def load_module(name: str, path: Path, *, register: bool = False) -> LoadedModul
         sys.modules[name] = module
     spec.loader.exec_module(module)
     # ModuleType rejects attribute assignment under strict typing; LoadedModule models what
-    # tests actually do with these modules (read and rebind arbitrary attributes).
-    return cast(LoadedModule, module)
+    # tests actually do with these modules (read and rebind arbitrary attributes). The
+    # intermediate object cast is needed because the two types do not overlap structurally.
+    return cast(LoadedModule, cast(object, module))

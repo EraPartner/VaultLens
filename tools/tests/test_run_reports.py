@@ -35,8 +35,8 @@ def retained_bytes(recorder: reports.Recorder) -> int:
 
 
 class ReportTests(unittest.TestCase):
-    root: Path  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
-    scope: RunScope  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
+    root: Path
+    scope: RunScope
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="vaultlens-report-test-")

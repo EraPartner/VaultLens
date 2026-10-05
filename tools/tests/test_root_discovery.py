@@ -17,6 +17,11 @@ FISH = shutil.which("fish")
 
 @unittest.skipUnless(FISH, "fish required for root discovery tests")
 class RootDiscoveryTests(unittest.TestCase):
+    fixture: tempfile.TemporaryDirectory[str]
+    root: Path
+    fallback: Path
+    unrelated: Path
+
     def setUp(self) -> None:
         self.fixture = tempfile.TemporaryDirectory(prefix="brain root ")
         self.addCleanup(self.fixture.cleanup)

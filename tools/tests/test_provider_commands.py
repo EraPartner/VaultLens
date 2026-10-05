@@ -19,7 +19,8 @@ from typing import IO, Any, cast
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from _loader import load_module  # noqa: E402
+from _loader import LoadedModule, load_module  # noqa: E402
+from local_access import RunScope  # noqa: E402
 from provider_commands import (  # noqa: E402
     ProviderCommandRequest,
     build_provider_command,
@@ -28,7 +29,7 @@ from provider_commands import (  # noqa: E402
 )
 
 # Parsed TOML overrides are dynamically typed; tests index them with string keys.
-TomlTable = dict[str, Any]
+TomlTable = dict[str, Any]  # pyright: ignore[reportExplicitAny] -- see comment above
 
 
 def request(**changes: object) -> ProviderCommandRequest:
@@ -93,7 +94,7 @@ class ProviderCommandsTests(unittest.TestCase):
 
     def test_registry_extensions_keep_launcher_provider_independent(self) -> None:
         class FixtureAdapter:
-            name = "fixture-native"
+            name: str = "fixture-native"
 
             # The parameter is named `request` to match the ProviderAdapter protocol.
             def build_command(
@@ -350,9 +351,17 @@ class ProviderCommandsTests(unittest.TestCase):
 class HeadlessDelegationTests(unittest.TestCase):
     """Command construction uses real manifest parsing and simulated OS denials."""
 
-    def setUp(self) -> None:
-        from local_access import RunScope
+    def __init__(self, methodName: str = "runTest") -> None:
+        super().__init__(methodName)
+        self.root: Path
+        self.note: Path
+        self.run_dir: Path
+        self.scope: RunScope
+        self.canaries: set[Path]
+        self.env: dict[str, str]
+        self.agent: LoadedModule
 
+    def setUp(self) -> None:
         fixture = tempfile.TemporaryDirectory(prefix="vaultlens-command-boundary-")
         self.addCleanup(fixture.cleanup)
         self.root = Path(fixture.name).resolve()
@@ -405,7 +414,7 @@ class HeadlessDelegationTests(unittest.TestCase):
             encoding: str | None = None,
             errors: str | None = None,
             newline: str | None = None,
-        ) -> IO[Any]:
+        ) -> IO[str]:
             if path in paths:
                 raise PermissionError("Public simulated OS confinement")
             return original(path, mode, buffering, encoding, errors, newline)

@@ -37,7 +37,7 @@ def _noop_log(_: str) -> None:
 
 
 class SchedulerRecoveryTests(unittest.TestCase):
-    now: datetime  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
+    now: datetime
 
     def setUp(self) -> None:
         self.now = datetime(2026, 10, 3, 3, tzinfo=timezone.utc)

@@ -17,9 +17,9 @@ from scoped_search import ScopedSearch
 
 
 class AccessProfileTests(unittest.TestCase):
-    root: Path  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
-    profiles: dict[str, JsonObject]  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
-    policy: JsonObject  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
+    root: Path
+    profiles: dict[str, JsonObject]
+    policy: JsonObject
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="vaultlens-access-test-")

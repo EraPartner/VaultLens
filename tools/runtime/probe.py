@@ -34,7 +34,7 @@ from collections.abc import Callable, Generator, Iterator, Mapping
 from http.client import HTTPMessage
 from pathlib import Path
 from types import FrameType
-from typing import IO, TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, final
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -757,9 +757,11 @@ def _macos_guard_checks(metadata: JsonObject) -> list[Check]:
     """Attempt finite escapes using public kernel metadata and empty jobs only."""
     import ctypes
 
+    @final
     class Mask(ctypes.Structure):
         _fields_ = [("success", ctypes.c_uint), ("failure", ctypes.c_uint)]
 
+    @final
     class Terminal(ctypes.Structure):
         _fields_ = [
             ("port", ctypes.c_int),
@@ -767,6 +769,7 @@ def _macos_guard_checks(metadata: JsonObject) -> list[Check]:
             ("address", ctypes.c_uint * 4),
         ]
 
+    @final
     class AuditInfo(ctypes.Structure):
         _fields_ = [
             ("user", ctypes.c_uint),

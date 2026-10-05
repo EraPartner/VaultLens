@@ -297,12 +297,12 @@ def _next_weekday(today: dt.date, weekdays: list[int]) -> dt.date:
 
 
 def compute_next_due(
-    schedule: str, last_run: dt.date | None, today: dt.date
+    schedule: str, _last_run: dt.date | None, today: dt.date
 ) -> dt.date | None:
     """Next due date AFTER a run on `today`. None for one-shot tasks.
 
-    Recurring cadences are computed from the run date (`today`), not `last_run`,
-    so a project that was asleep for a week resumes its cadence instead of firing
+    Recurring cadences are computed from the run date (`today`), not from the previous run
+    (`_last_run`, accepted for call-site symmetry and unused), so a project that was asleep for a week resumes its cadence instead of firing
     every night to "catch up".
     """
     kind, param = parse_schedule(schedule)

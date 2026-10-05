@@ -26,8 +26,8 @@ from local_access import RunScope  # noqa: E402
 
 
 class ProviderSmokeTests(unittest.TestCase):
-    root: Path  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
-    env: dict[str, str]  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
+    root: Path
+    env: dict[str, str]
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()

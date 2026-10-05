@@ -28,10 +28,10 @@ IngestProvider = Callable[..., int]
 
 
 class ProviderRegressionTests(unittest.TestCase):
-    root: Path  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
-    roles: Path  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
-    agent: LoadedModule  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
-    generator: LoadedModule  # pyright: ignore[reportUninitializedInstanceVariable] - assigned in setUp
+    root: Path
+    roles: Path
+    agent: LoadedModule
+    generator: LoadedModule
 
     def setUp(self) -> None:
         fixture = tempfile.TemporaryDirectory(prefix="vaultlens-provider-")

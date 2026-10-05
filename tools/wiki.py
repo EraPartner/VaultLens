@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 if sys.version_info < (3, 11):
-    sys.stderr.write(
+    # Unreachable under the 3.11 typing target; the guard exists for older hosts.
+    sys.stderr.write(  # pyright: ignore[reportUnreachable]
         "VaultLens requires Python 3.11 or newer. Use Homebrew Python or set BRAIN_PYTHON for host wrappers.\n"
     )
     raise SystemExit(2)
