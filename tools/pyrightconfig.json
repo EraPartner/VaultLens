@@ -6,5 +6,8 @@
   "typeCheckingMode": "all",
   "reportAny": false,
   "reportUnusedCallResult": false,
+  "reportImplicitOverride": false,
+  "reportImplicitRelativeImport": false,
+  "reportImplicitStringConcatenation": false,
   "baselineFile": "typing-baseline.json"
 }
