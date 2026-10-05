@@ -24,15 +24,13 @@ deploy = load_module("runtime_deployment", TOOLS / "runtime/deploy.py")
 
 
 class DeploymentTests(unittest.TestCase):
-    def __init__(self, methodName: str = "runTest") -> None:
-        super().__init__(methodName)
-        self.fixture: tempfile.TemporaryDirectory[str]
-        self.root: Path
-        self.source: Path
-        self.destination: Path
-        self.instructions: Path
-        self.adapters: Path
-        self.old_tool: Path
+    fixture: tempfile.TemporaryDirectory[str]
+    root: Path
+    source: Path
+    destination: Path
+    instructions: Path
+    adapters: Path
+    old_tool: Path
 
     def setUp(self) -> None:
         self.fixture = tempfile.TemporaryDirectory(prefix="native deployment ")

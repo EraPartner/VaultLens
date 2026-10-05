@@ -74,9 +74,7 @@ class SyntheticOwner(supervision.AuditSessionProcess):
 
 
 class AuditKernelTests(unittest.TestCase):
-    def __init__(self, methodName: str = "runTest") -> None:
-        super().__init__(methodName)
-        self.kernel: supervision.AuditKernel
+    kernel: supervision.AuditKernel
 
     def setUp(self) -> None:
         # Deliberately bypass ctypes initialization: these are fake public IDs.
@@ -239,10 +237,8 @@ class FreezeTests(unittest.TestCase):
 
 
 class PrivateStateTests(unittest.TestCase):
-    def __init__(self, methodName: str = "runTest") -> None:
-        super().__init__(methodName)
-        self.directory: Path
-        self.path: Path
+    directory: Path
+    path: Path
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="vaultlens-public-audit-unit-")

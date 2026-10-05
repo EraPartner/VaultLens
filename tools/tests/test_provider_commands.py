@@ -351,15 +351,13 @@ class ProviderCommandsTests(unittest.TestCase):
 class HeadlessDelegationTests(unittest.TestCase):
     """Command construction uses real manifest parsing and simulated OS denials."""
 
-    def __init__(self, methodName: str = "runTest") -> None:
-        super().__init__(methodName)
-        self.root: Path
-        self.note: Path
-        self.run_dir: Path
-        self.scope: RunScope
-        self.canaries: set[Path]
-        self.env: dict[str, str]
-        self.agent: LoadedModule
+    root: Path
+    note: Path
+    run_dir: Path
+    scope: RunScope
+    canaries: set[Path]
+    env: dict[str, str]
+    agent: LoadedModule
 
     def setUp(self) -> None:
         fixture = tempfile.TemporaryDirectory(prefix="vaultlens-command-boundary-")

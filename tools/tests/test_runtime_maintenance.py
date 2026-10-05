@@ -20,9 +20,7 @@ maintenance = load_module("sandbox_maintain", TOOLS / "runtime/maintain.py")
 
 
 class MaintenanceTests(unittest.TestCase):
-    def __init__(self, methodName: str = "runTest") -> None:
-        super().__init__(methodName)
-        self.root: Path
+    root: Path
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="vaultlens-maintenance-test-")

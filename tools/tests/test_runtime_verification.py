@@ -34,13 +34,11 @@ class RuntimeVerificationTests(unittest.TestCase):
     VERSION: str = "public-fixture-version"
     CHECKS: tuple[str, ...] = expected_checks()
 
-    def __init__(self, methodName: str = "runTest") -> None:
-        super().__init__(methodName)
-        self.root: Path
-        self.receipt: Path
-        self.report: JsonObject
-        self.evidence: JsonObject
-        self.fingerprint: mock.MagicMock | mock.AsyncMock
+    root: Path
+    receipt: Path
+    report: JsonObject
+    evidence: JsonObject
+    fingerprint: mock.MagicMock | mock.AsyncMock
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="vaultlens-verification-test-")
