@@ -134,7 +134,8 @@ Scheduled ingest also grants its exact selected source using `--read-path`.
 Its builder ignores source and inbox links, including linked directories, so a
 link cannot turn consent-queue material into an approved input. A source PDF
 remains due until a wiki source page cites it; ingest does not promote or move
-raw files. Network research is separate policy and is disabled unless explicitly
+raw files. An inbox file (PDF or not) likewise stays due until a source page cites
+its `raw/inbox/` path; `[[raw/inbox/note]]` counts for `note.md`. Network research is separate policy and is disabled unless explicitly
 configured. Every profile's search index must contain only the material exposed
 to that run. Scheduled host `qmd update`/`cleanup` maintain the operator's index;
 they do not grant it to a model session.
@@ -230,9 +231,9 @@ usage limit is hit or if offline. The whole batch runs at most once per night; i
 - `cos brief` (`--effort low`). The only LLM job outside the nightly batch.
 
 Weekly digests land Sunday night so Monday's brief can reference them. A weekly job is
-due once at least 7 calendar days have passed since its last success and the tick falls on
-a Sunday, or at 8 or more days if that Sunday was missed. Days are counted as local
-calendar dates, so an early-in-the-day tick does not push the job to a later weekday.
+due until it succeeds on or after the most recent Sunday (local calendar date). A missed
+Sunday catches up on the next eligible night, and the following Sunday runs again, so a
+catch-up never moves the cadence off Sunday.
 
 ## Monitoring
 
@@ -326,13 +327,17 @@ dispatcher (run manually):** links, coverage snapshot, (optional) verify.
 The `project-runner` builder (`_project_runner_targets`) is pure-python: it reads each
 project's `AGENDA.md` via `tools/agenda.py`, skips frozen projects, dormant (`enabled: false`), and
 review-paused projects, and emits one `project-run --project <slug>` arg-vector per
-enabled project that is **due** (capped at `MAX_PROJECTS_PER_NIGHT`). A project is due
+enabled project that is **due** (capped at `MAX_PROJECTS_PER_NIGHT`, least recently run
+first, so projects past the cap are caught up on later nights). A project that already
+ran successfully tonight is skipped when the step retries. A project is due
 when it is enabled AND has either a clear, due task **or** loose `## Inbox` content
 awaiting grooming (`agenda.project_is_due` / `inbox_has_groomable_content`) — so routed
 handoffs and ad-hoc Inbox dumps are picked up the next night even before they have
 been groomed into Tasks. The dispatcher
 clones each project to `~/.brain/project-snapshots/<date>/` before the run (the apply-don't-commit
-undo, since `projects/` is gitignored) and writes one aggregated roll-up. Snapshots are staged
+undo, since `projects/` is gitignored) and writes one aggregated roll-up. A retry tick adds
+its projects to tonight's roll-up (kept in `<date>/.rollup.json`) instead of replacing it.
+Snapshots are staged
 and published only after a complete copy. A sibling `.<project>.complete.json` marker
 records the published directory's identity; reuse requires that matching marker.
 Existing legacy snapshots without a marker, malformed markers, and marker publication

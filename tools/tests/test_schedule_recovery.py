@@ -29,6 +29,7 @@ _project_runner_targets = dispatch._project_runner_targets  # pyright: ignore[re
 _run_steps = dispatch._run_steps  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
 _snapshot_project = dispatch._snapshot_project  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
 _project_runner_header = dispatch._project_runner_header  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+_accumulate_rollup = dispatch._accumulate_rollup  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
 
 
 def _noop_log(_: str) -> None:
@@ -314,6 +315,20 @@ class SchedulerRecoveryTests(unittest.TestCase):
             for name, data in files.items():
                 self.assertEqual((inbox / name).read_bytes(), data)
 
+    def test_inbox_note_cited_without_extension_is_not_reingested(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inbox = root / "raw" / "inbox"
+            wiki_sources = root / "wiki" / "sources"
+            inbox.mkdir(parents=True)
+            wiki_sources.mkdir(parents=True)
+            (inbox / "article.md").write_text("note")
+            with patch.object(dispatch, "ROOT", root):
+                (wiki_sources / "article.md").write_text(
+                    "Source file: [[raw/inbox/article]]\n"
+                )
+                self.assertEqual(_ingest_targets(), [])
+
     def test_angle_bracket_citation_with_square_brackets_marks_ingested(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -425,6 +440,45 @@ class SchedulerRecoveryTests(unittest.TestCase):
                     _project_runner_targets(),
                     [["project-run", "--project", "enabled"]],
                 )
+
+    def test_project_runner_skips_tonights_successes_and_rotates_past_the_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            slugs = ["pa", "pb", "pc", "pd", "pe", "pf"]
+            for slug in slugs:
+                project = root / "projects" / slug
+                project.mkdir(parents=True)
+                (project / "project.md").write_text("---\nstatus: active\n---\n")
+                (project / "AGENDA.md").write_text(
+                    "---\nenabled: true\n---\n\n## Inbox\n- Review the fixture\n"
+                )
+            state: agenda.RunnerState = {
+                "pa": {"unacked": 0, "last_run": self.now.isoformat()},  # ran tonight
+                "pb": {"unacked": 0, "last_run": "2026-10-02T03:00:00+00:00"},
+                "pc": {"unacked": 0, "last_run": "2026-10-01T03:00:00+00:00"},
+            }
+            with (
+                patch.object(dispatch, "ROOT", root),
+                patch.object(dispatch, "now_local", return_value=self.now),
+                patch.object(agenda, "is_paused_for_review", return_value=False),
+                patch.object(agenda, "load_runner_state", return_value=state),
+                patch.object(dispatch, "MAX_PROJECTS_PER_NIGHT", 4),
+            ):
+                selected = [args[2] for args in _project_runner_targets()]
+        # Never-run projects first, then least recently run; pa already ran tonight.
+        self.assertEqual(selected, ["pd", "pe", "pf", "pc"])
+
+    def test_project_runner_rollup_keeps_earlier_ticks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            snapshots = Path(temporary) / "snapshots"
+            with patch.object(dispatch, "SNAPSHOT_DIR", snapshots):
+                first = _accumulate_rollup(self.now, ["alpha"], ["alpha report"])
+                second = _accumulate_rollup(self.now, ["beta"], ["beta report"])
+                header = _project_runner_header(second[0], self.now)
+        self.assertEqual(first, (["alpha"], ["alpha report"]))
+        self.assertEqual(second, (["alpha", "beta"], ["alpha report", "beta report"]))
+        self.assertIn("- `alpha`:", header)
+        self.assertIn("- `beta`:", header)
 
     def test_host_reports_cannot_follow_directory_or_file_links(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
