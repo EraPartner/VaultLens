@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import email.message
 import errno
 import json
@@ -96,6 +97,55 @@ class ProbeHarnessTests(unittest.TestCase):
             text=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_fixture_wiki_agent_loads_like_the_inner_lifecycle_probe(self) -> None:
+        # inner_lifecycle executes the fixture's wiki-agent.py; a missing copied
+        # module fails that check and stops every later lifecycle check.
+        root, _ = self.fixture()
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                "import importlib.util, sys; "
+                "spec = importlib.util.spec_from_file_location('agent', sys.argv[1]); "
+                "module = importlib.util.module_from_spec(spec); "
+                "spec.loader.exec_module(module)",
+                str(root / "tools/agents/wiki-agent.py"),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_trusted_python_files_import_only_trusted_local_modules(self) -> None:
+        # Static closure: every import statement, including function-local ones,
+        # that names a module under tools/ must itself be copied into the fixture.
+        tools = probe.ROOT / "tools"
+        local = {
+            path.stem: path.relative_to(probe.ROOT).as_posix()
+            for directory in (tools, tools / "runtime", tools / "agents")
+            for path in directory.glob("*.py")
+        }
+        trusted = set(probe.TRUSTED_FILES)
+        missing: dict[str, set[str]] = {}
+        for relative in sorted(trusted):
+            if not relative.endswith(".py"):
+                continue
+            tree = ast.parse((probe.ROOT / relative).read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    self.assertEqual(node.level, 0, f"relative import in {relative}")
+                    names = [node.module or ""]
+                else:
+                    continue
+                for name in names:
+                    module = local.get(name.split(".")[0])
+                    if module is not None and module not in trusted:
+                        missing.setdefault(module, set()).add(relative)
+        self.assertEqual(missing, {}, "add these modules to probe.TRUSTED_FILES")
 
     def test_missing_runtime_stops_before_fixture_network_or_provider_state(self) -> None:
         with (
