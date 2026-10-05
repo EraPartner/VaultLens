@@ -250,6 +250,11 @@ that leak. Hybrid full-vault qmd search remains an explicit operator workflow.
 Results rank by the share of query terms a document contains, weighted toward terms that few
 documents contain, so common words in a natural-language query do not outrank the distinctive ones.
 
+Each query searches every approved document (files over 1 MB are skipped and counted). The grants
+are rewalked per query, so new and edited files appear at once. A path approved once stays approved
+for the run, but every read still refuses symbolic links and hard links. Each hit carries a
+400-character snippet by default; `snippet_chars` raises it to at most 1,600.
+
 `tools/scripts/provider-smoke.py --root <vault> --profile wiki-read` checks the whole-process
 preflight and scoped lexical search without a model call. `--provider claude|codex --run-provider`
 opts into a literal synthetic response and can consume paid usage. This smoke check does not

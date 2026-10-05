@@ -2,7 +2,8 @@
 """Lexical search and stdio MCP over the current run's approved documents only.
 
 The qmd-compatible surface deliberately has no global index, embeddings, model
-calls, network access or persistent cache. Every request rereads selected files.
+calls, network access or persistent cache. Every request rereads selected files;
+a search covers every approved document, however large the vault.
 The whole-process runtime remains responsible for OS access enforcement.
 """
 
@@ -23,10 +24,10 @@ from local_access import JsonObject, RunScope, protected_name
 
 MAX_MANIFEST_BYTES = 1024 * 1024
 MAX_DOCUMENT_BYTES = 1024 * 1024
-MAX_CORPUS_BYTES = 32 * 1024 * 1024
-MAX_DOCUMENTS = 4096
 MAX_QUERY_CHARS = 4096
 MAX_RESULTS = 50
+DEFAULT_SNIPPET_CHARS = 400
+MAX_SNIPPET_CHARS = 1600
 MAX_GET_CHARS = 64 * 1024
 MAX_MESSAGE_CHARS = 128 * 1024
 TOKEN = re.compile(r"\w+", re.UNICODE)
@@ -118,12 +119,17 @@ def load_scope(manifest_path: Path) -> RunScope:
         raise ValueError("Cannot read a valid explicit scope manifest") from exc
 
 
-def _read_document(scope: RunScope, path: Path) -> str:
-    """Walk directory descriptors without following links, including race swaps."""
+def _read_document(scope: RunScope, path: Path, *, approved: bool = False) -> str:
+    """Walk directory descriptors without following links, including race swaps.
+
+    `approved` skips the path-level access check for a path this run already
+    approved. The descriptor walk and hard-link check below still run on every
+    read, so a later symlink or hard-link swap is refused either way.
+    """
     if (
         path.suffix not in {".md", ".txt"}
         or protected_name(path.name)
-        or not scope.readable(path)
+        or not (approved or scope.readable(path))
     ):
         raise ValueError("Document is unavailable in this access profile")
     relative = path.relative_to(scope.root)
@@ -146,7 +152,11 @@ def _read_document(scope: RunScope, path: Path) -> str:
         )
         descriptors.append(descriptor)
         metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_DOCUMENT_BYTES:
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_size > MAX_DOCUMENT_BYTES
+        ):
             raise ValueError("Document is not a regular file within the size limit")
         with os.fdopen(descriptor, "rb", closefd=False) as stream:
             payload = stream.read(MAX_DOCUMENT_BYTES + 1)
@@ -201,9 +211,28 @@ def _title(text: str, path: Path) -> str:
 
 class ScopedSearch:
     scope: RunScope
+    _approved: set[Path]
 
     def __init__(self, scope: RunScope) -> None:
         self.scope = scope
+        self._approved = set()
+
+    def _documents(self) -> list[Path]:
+        """List approved documents, rewalking the grants so new files appear.
+
+        The path-level access check is the slow part of a large search, so a
+        path approved once stays approved for this run; refusals are rechecked.
+        """
+        paths: list[Path] = []
+        for path in sorted(self.scope.document_candidates()):
+            if protected_name(path.name):
+                continue
+            if path not in self._approved:
+                if not self.scope.readable(path):
+                    continue
+                self._approved.add(path)
+            paths.append(path)
+        return paths
 
     def _path(self, identifier: object) -> Path:
         if (
@@ -233,23 +262,23 @@ class ScopedSearch:
         if not terms:
             raise ValueError("Queries must contain searchable words")
         limit = _bounded_int(arguments.get("limit"), default=10, maximum=MAX_RESULTS)
-        paths = self.scope.document_paths()
-        matched: list[tuple[str, str, str, list[int]]] = []
+        snippet_chars = _bounded_int(
+            arguments.get("snippet_chars"),
+            default=DEFAULT_SNIPPET_CHARS,
+            maximum=MAX_SNIPPET_CHARS,
+        )
+        # Keep one candidate snippet per matched term, not whole documents, so
+        # memory stays bounded when a common term matches most of a large vault.
+        matched: list[tuple[str, str, dict[int, str], str, list[int]]] = []
         document_frequency = [0] * len(terms)
         scanned = 0
-        consumed = 0
-        truncated = len(paths) > MAX_DOCUMENTS
         skipped = 0
-        for path in paths[:MAX_DOCUMENTS]:
+        for path in self._documents():
             try:
-                text = _read_document(self.scope, path)
+                text = _read_document(self.scope, path, approved=True)
             except ValueError:
                 skipped += 1
                 continue
-            consumed += len(text.encode("utf-8"))
-            if consumed > MAX_CORPUS_BYTES:
-                truncated = True
-                break
             scanned += 1
             relative = path.relative_to(self.scope.root).as_posix()
             title = _title(text, path)
@@ -258,7 +287,16 @@ class ScopedSearch:
             for index, count in enumerate(counts):
                 document_frequency[index] += count > 0
             if any(counts):
-                matched.append((relative, title, text, counts))
+                lowered = text.casefold()
+                snippets: dict[int, str] = {}
+                for index, count in enumerate(counts):
+                    position = lowered.find(terms[index]) if count else -1
+                    if position >= 0:
+                        start = max(0, position - snippet_chars // 8)
+                        snippets[index] = text[start : start + snippet_chars]
+                # Terms found only in the path or title fall back to the start.
+                lead = "" if snippets else text[:snippet_chars]
+                matched.append((relative, title, snippets, lead, counts))
         # Weight terms by rarity so common words in a natural-language query
         # cannot outrank the one page that has the distinctive terms.
         weights = [
@@ -266,19 +304,13 @@ class ScopedSearch:
         ]
         total_weight = sum(weights) or 1.0
         results: list[JsonObject] = []
-        for relative, title, text, counts in matched:
+        for relative, title, snippets, lead, counts in matched:
             present = [index for index, count in enumerate(counts) if count]
             score = sum(weights[index] for index in present) / total_weight + min(
                 sum(counts), 100
             ) / 1000
-            lowered = text.casefold()
-            anchor = max(
-                (index for index in present if terms[index] in lowered),
-                key=lambda index: weights[index],
-                default=None,
-            )
-            position = 0 if anchor is None else lowered.find(terms[anchor])
-            start = max(0, position - 200)
+            # Anchor the snippet on the rarest term found in the document body.
+            anchor = max(snippets, key=lambda index: weights[index], default=None)
             results.append(
                 {
                     "file": relative,
@@ -286,14 +318,14 @@ class ScopedSearch:
                     "docid": relative,
                     "title": title,
                     "score": round(score, 4),
-                    "snippet": text[start : start + 1600],
+                    "snippet": lead if anchor is None else snippets[anchor],
                 }
             )
         results.sort(key=lambda result: (-result["score"], result["file"]))
         return {
             "mode": "lexical",
             "results": results[:limit],
-            "truncated": truncated or len(results) > limit,
+            "truncated": len(results) > limit,
             "skipped_documents": skipped,
         }
 
@@ -344,12 +376,10 @@ class ScopedSearch:
         return {"documents": documents, "mode": "lexical"}
 
     def status(self, _arguments: JsonObject | None = None) -> JsonObject:
-        paths = self.scope.document_paths()
         return {
             "mode": "lexical",
             "profile": self.scope.name,
-            "documents": min(len(paths), MAX_DOCUMENTS),
-            "truncated": len(paths) > MAX_DOCUMENTS,
+            "documents": len(self._documents()),
             "embeddings": False,
             "persistent_index": False,
         }
@@ -388,12 +418,17 @@ def _tools() -> list[JsonObject]:
                 },
             },
             "limit": {"type": "integer", "minimum": 1, "maximum": MAX_RESULTS},
+            "snippet_chars": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": MAX_SNIPPET_CHARS,
+            },
         },
     }
     definitions: list[tuple[str, str, JsonObject]] = [
         (
             "search",
-            "Lexical search over approved current Markdown/text documents. Matches words, not meaning: pass distinctive key terms and retry with synonyms.",
+            "Lexical search over approved current Markdown/text documents. Matches words, not meaning: pass distinctive key terms and retry with synonyms. Snippets default to 400 characters; set snippet_chars (up to 1600) for more, or use get.",
             query_schema,
         ),
         (
