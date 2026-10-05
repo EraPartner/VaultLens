@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 from pathlib import Path
 import shutil
 import sys
@@ -297,6 +298,59 @@ class ProviderRegressionTests(unittest.TestCase):
                 self.assertFalse(
                     self.agent._verify_ingest_result(self.root / "raw/inbox/example.pdf", {})
                 )
+
+    def test_adapters_ignore_operator_local_model_pins(self) -> None:
+        def manifests() -> list[str]:
+            return [
+                text
+                for role in self.generator.load_roles()
+                for text in (
+                    self.generator.claude_manifest(role),
+                    self.generator.codex_manifest(role),
+                )
+            ]
+
+        with self.generator_paths():
+            tracked = manifests()
+            (self.root / "tools" / "llm.local.json").write_text(
+                json.dumps(
+                    {
+                        "models": {"claude": "pin-claude", "codex": "pin-codex"},
+                        "profiles": {
+                            "claude": {"standard": "pin-std", "deep": "pin-deep"},
+                            "codex": {"standard": "pin-cstd", "deep": "pin-cdeep"},
+                        },
+                    }
+                )
+            )
+            with_local_config = manifests()
+        self.assertEqual(with_local_config, tracked)
+        self.assertFalse(any("pin-" in text for text in with_local_config))
+
+
+    def test_local_models_are_an_export_only_option(self) -> None:
+        (self.root / "tools" / "llm.local.json").write_text(
+            json.dumps({"profiles": {"claude": {"standard": "pin-std", "deep": "pin-deep"}}})
+        )
+        output = self.root / "export"
+        with self.generator_paths(), contextlib.redirect_stdout(io.StringIO()):
+            with (
+                contextlib.redirect_stderr(io.StringIO()) as error,
+                self.assertRaises(SystemExit) as refused,
+            ):
+                self.generator.main(["--local-models"])
+            self.assertEqual(refused.exception.code, 2)
+            self.assertIn("requires --output-dir", error.getvalue())
+            self.assertFalse((self.root / ".claude").exists())
+            self.assertEqual(
+                self.generator.main(
+                    ["--provider", "claude", "--output-dir", str(output), "--local-models"]
+                ),
+                0,
+            )
+        exported = "".join(p.read_text() for p in (output / ".claude" / "agents").iterdir())
+        self.assertIn('model: "pin-std"', exported)
+
 
     def test_export_roundtrip_checks_without_deployed_provider_access(self) -> None:
         output = self.root / "export"

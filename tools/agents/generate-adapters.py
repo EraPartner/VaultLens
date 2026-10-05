@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 from agent_profiles import Role, load_role  # noqa: E402
-from llm_provider import resolve_provider  # noqa: E402
+from llm_provider import Provider, load_profile_models, resolve_provider  # noqa: E402
 from agent_capabilities import (  # noqa: E402
     CAPABILITIES,
     claude_tools,
@@ -54,16 +54,27 @@ def _role_instruction(role: Role) -> str:
     )
 
 
-def claude_manifest(role: Role) -> str:
-    model = (
-        resolve_provider(
-            "claude",
-            path=ROOT / "tools" / "llm.local.json",
-            profile=role.model_profile,
-            environ={},
-        ).model
-        or "inherit"
+def _provider(cli: str, role: Role, local_models: bool) -> Provider:
+    """Resolve a role's provider.
+
+    Tracked adapters are committed, so by default they must not pick up
+    operator-local pins from the gitignored tools/llm.local.json (nor from the
+    environment): the model comes from tools/model-profiles.json alone, and
+    `--check` agrees with CI on every machine. Local mappings apply only to an
+    explicit `--local-models` export outside the checkout.
+    """
+    return resolve_provider(
+        cli,
+        path=ROOT / "tools" / "llm.local.json",
+        config=None if local_models else {},
+        profile=role.model_profile,
+        environ={},
+        profile_models=load_profile_models(ROOT / "tools" / "model-profiles.json"),
     )
+
+
+def claude_manifest(role: Role, *, local_models: bool = False) -> str:
+    model = _provider("claude", role, local_models).model or "inherit"
     return (
         "---\n"
         f"name: {role.name}\n"
@@ -78,13 +89,8 @@ def claude_manifest(role: Role) -> str:
     )
 
 
-def codex_manifest(role: Role) -> str:
-    model = resolve_provider(
-        "codex",
-        path=ROOT / "tools" / "llm.local.json",
-        profile=role.model_profile,
-        environ={},
-    ).model
+def codex_manifest(role: Role, *, local_models: bool = False) -> str:
+    model = _provider("codex", role, local_models).model
     model_setting = f"model = {json.dumps(model)}\n" if model else ""
     instruction = (
         f"{_role_instruction(role)} The role's file scope is an instruction boundary, "
@@ -171,7 +177,15 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Export adapters under this directory instead of the checkout",
     )
+    parser.add_argument(
+        "--local-models",
+        action="store_true",
+        help="With --output-dir: also apply the gitignored tools/llm.local.json model "
+        "mappings. Never used for the tracked adapters.",
+    )
     args = parser.parse_args(argv)
+    if args.local_models and not args.output_dir:
+        parser.error("--local-models requires --output-dir (tracked adapters never use local pins)")
 
     output = args.output_dir.resolve() if args.output_dir else ROOT
     claude_dir = output / ".claude" / "agents" if args.output_dir else CLAUDE_DIR
@@ -185,7 +199,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             for role in roles:
                 ok &= _sync(
-                    claude_dir / f"{role.name}.md", claude_manifest(role), args.check
+                    claude_dir / f"{role.name}.md",
+                    claude_manifest(role, local_models=args.local_models),
+                    args.check,
                 )
         if args.provider in (None, "codex"):
             ok &= _check_adapter_set(
@@ -193,7 +209,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             for role in roles:
                 ok &= _sync(
-                    codex_dir / f"{role.name}.toml", codex_manifest(role), args.check
+                    codex_dir / f"{role.name}.toml",
+                    codex_manifest(role, local_models=args.local_models),
+                    args.check,
                 )
     except AdapterAccessError as exc:
         print(f"BLOCKED adapter verification: {exc}", file=sys.stderr)

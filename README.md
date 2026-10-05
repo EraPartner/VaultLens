@@ -118,8 +118,10 @@ For headless work, explicit `--model` overrides `VAULTLENS_LLM_MODEL`, saved per
 the canonical role effort. Scheduled jobs keep their deliberate effort overrides and freeze
 resolved role models for the batch. Plain interactive sessions retain their native/global default.
 
-Generated interactive adapters are configuration snapshots. They use per-provider settings,
-not the launch-scoped environment model override. Regenerate after changing mappings or roles:
+Generated interactive adapters are configuration snapshots. They use the tracked per-provider
+mappings in `tools/model-profiles.json`, not the launch-scoped environment override or your
+local `llm.local.json` (use `generate-adapters.py --output-dir <dir> --local-models` for a
+personal copy that applies it). Regenerate after changing mappings or roles:
 `python3 tools/agents/generate-adapters.py`. A concrete adapter model/effort takes precedence
 over the parent session; use an empty model mapping to inherit the parent model.
 

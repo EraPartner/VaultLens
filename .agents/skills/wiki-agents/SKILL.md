@@ -74,9 +74,12 @@ Claude uses `--effort`. Supported values depend on the selected model.
 **Interactive subagent runs ignore those flags** — `wiki-agent.py` strips the frontmatter, so the
 CLI values apply only to headless runs. Invoked by name in a session, generated adapters map each
 canonical role's `permission_profile`, `model_profile`, and `reasoning_effort` to provider settings.
-Adapters resolve each provider's profile mapping and set the role's effort and
-permissions. An empty mapping inherits the parent model. Interactive adapters
-are snapshots and do not use launch-scoped environment model overrides.
+Adapters resolve each provider's profile mapping from the tracked
+`tools/model-profiles.json` only and set the role's effort and permissions. Operator-local
+`models` and `profiles` in gitignored `tools/llm.local.json` never reach the tracked adapters,
+so `--check` agrees with CI on every machine. For a personal copy that applies them, export
+with `--output-dir <directory> --local-models`. An empty mapping inherits the parent model.
+Interactive adapters are snapshots and do not use launch-scoped environment model overrides.
 Regenerate adapters after role metadata or mapping changes:
 `python3 tools/agents/generate-adapters.py`.
 
