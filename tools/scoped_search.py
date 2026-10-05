@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import stat
@@ -266,7 +267,11 @@ class ScopedSearch:
             default=DEFAULT_SNIPPET_CHARS,
             maximum=MAX_SNIPPET_CHARS,
         )
-        results: list[JsonObject] = []
+        # Keep one candidate snippet per matched term, not whole documents, so
+        # memory stays bounded when a common term matches most of a large vault.
+        matched: list[tuple[str, str, dict[int, str], str, list[int]]] = []
+        document_frequency = [0] * len(terms)
+        scanned = 0
         skipped = 0
         for path in self._documents():
             try:
@@ -274,19 +279,38 @@ class ScopedSearch:
             except ValueError:
                 skipped += 1
                 continue
+            scanned += 1
             relative = path.relative_to(self.scope.root).as_posix()
-            lowered = text.casefold()
             title = _title(text, path)
-            corpus = f"{relative}\n{title}\n{lowered}".casefold()
+            corpus = f"{relative}\n{title}\n{text}".casefold()
             counts = [corpus.count(term) for term in terms]
-            matches = sum(count > 0 for count in counts)
-            if not matches:
-                continue
-            position = min(
-                (lowered.find(term) for term in terms if term in lowered), default=0
-            )
-            start = max(0, position - snippet_chars // 8)
-            score = matches / len(terms) + min(sum(counts), 100) / 1000
+            for index, count in enumerate(counts):
+                document_frequency[index] += count > 0
+            if any(counts):
+                lowered = text.casefold()
+                snippets: dict[int, str] = {}
+                for index, count in enumerate(counts):
+                    position = lowered.find(terms[index]) if count else -1
+                    if position >= 0:
+                        start = max(0, position - snippet_chars // 8)
+                        snippets[index] = text[start : start + snippet_chars]
+                # Terms found only in the path or title fall back to the start.
+                lead = "" if snippets else text[:snippet_chars]
+                matched.append((relative, title, snippets, lead, counts))
+        # Weight terms by rarity so common words in a natural-language query
+        # cannot outrank the one page that has the distinctive terms.
+        weights = [
+            math.log(1 + scanned / max(frequency, 1)) for frequency in document_frequency
+        ]
+        total_weight = sum(weights) or 1.0
+        results: list[JsonObject] = []
+        for relative, title, snippets, lead, counts in matched:
+            present = [index for index, count in enumerate(counts) if count]
+            score = sum(weights[index] for index in present) / total_weight + min(
+                sum(counts), 100
+            ) / 1000
+            # Anchor the snippet on the rarest term found in the document body.
+            anchor = max(snippets, key=lambda index: weights[index], default=None)
             results.append(
                 {
                     "file": relative,
@@ -294,7 +318,7 @@ class ScopedSearch:
                     "docid": relative,
                     "title": title,
                     "score": round(score, 4),
-                    "snippet": text[start : start + snippet_chars],
+                    "snippet": lead if anchor is None else snippets[anchor],
                 }
             )
         results.sort(key=lambda result: (-result["score"], result["file"]))
@@ -340,10 +364,15 @@ class ScopedSearch:
         max_chars = _bounded_int(
             arguments.get("max_chars"), default=8192, maximum=MAX_GET_CHARS
         )
-        documents = [
-            self.get({"path": path, "max_chars": min(8192, max_chars)})
-            for path in paths
-        ]
+        documents: list[JsonObject] = []
+        for path in paths:
+            try:
+                documents.append(
+                    self.get({"path": path, "max_chars": min(8192, max_chars)})
+                )
+            except ValueError as exc:
+                # Name the caller's own path so it can drop it and retry.
+                raise ValueError(f"{exc}: {str(path)[:200]!r}") from exc
         return {"documents": documents, "mode": "lexical"}
 
     def status(self, _arguments: JsonObject | None = None) -> JsonObject:
@@ -399,12 +428,12 @@ def _tools() -> list[JsonObject]:
     definitions: list[tuple[str, str, JsonObject]] = [
         (
             "search",
-            "Lexical search over approved current Markdown/text documents. Snippets default to 400 characters; set snippet_chars (up to 1600) for more, or use get.",
+            "Lexical search over approved current Markdown/text documents. Matches words, not meaning: pass distinctive key terms and retry with synonyms. Snippets default to 400 characters; set snippet_chars (up to 1600) for more, or use get.",
             query_schema,
         ),
         (
             "query",
-            "Lexical query; accepts query or searches. No semantic models or embeddings.",
+            "Lexical query; accepts query or searches. No semantic models or embeddings, so pass key terms rather than a full sentence.",
             query_schema,
         ),
         (
@@ -426,7 +455,7 @@ def _tools() -> list[JsonObject]:
         ),
         (
             "multi_get",
-            "Read up to 10 approved document paths.",
+            "Read up to 10 approved document paths. One unavailable path fails the whole call and is named in the error.",
             {
                 "type": "object",
                 "properties": {

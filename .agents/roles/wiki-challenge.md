@@ -17,7 +17,7 @@ Take a stated position (an idea, plan, claim, or pending decision) and search th
 
 ## Pre-approved shell commands
 
-Read-only helper set only (`ls`/`find`/`grep`/`cat`/`head`/`qmd`/`python3 tools/wiki.py …`) — never write, `curl`, `git`, or delete. Enforcement mechanics: see AGENTS.md § Tool permissions.
+Read-only helper set only: `ls`/`grep`/`cat`/`head`/`tail`/`wc`/`sort`/`uniq`/`cut`/`tr`/`date`/`qmd` and the read-only `python3 tools/wiki.py` subcommands (`search`, `lint`, `tags`, `coverage`, `stats`, `sample`, `validate-log`, and the `list`/`show` views). There is no `find`; use the Glob tool. Never write, `curl`, `git`, or delete. The exact grants are in `tools/agent_capabilities.py`; headless Claude runs deny anything else.
 
 ## Search capabilities
 
@@ -49,7 +49,7 @@ The position to challenge arrives in the task prompt. If it is empty or vague, s
 1. **Read the operator profile first.** If `wiki/entities/user-background.md` (`[[entities/user-background]]`) exists, read it — the operator's goals, constraints, and stated priorities are the strongest source of "what this position ignores."
 2. **Decompose the position** into its load-bearing premises. What must be true for it to be a good call?
 3. **Search the operator's record** for counter-evidence. Cast wide; these are the stores that hold decisions and lessons:
-   - `qmd query "<position / its premises>" --format json` — hybrid search; best for surfacing semantically related history even when wording differs. Prefer `mcp__qmd__*` if available.
+   - `qmd query "<key terms of the position and its premises>" --format json` — lexical in scoped runs (word matching, no embeddings), so retry with synonyms to catch history worded differently. Prefer `mcp__qmd__*` if available.
    - `wiki/queries/` and `projects/*/queries/` — preserved Q&A that captured past decisions, designs, and analyses.
    - `wiki/log.md` — the activity timeline; `grep` it for prior work, reconciliations, and reversals on this topic.
    - Pages with `status: superseded` — conclusions the operator already abandoned (`grep -rl "status: superseded" wiki/`).

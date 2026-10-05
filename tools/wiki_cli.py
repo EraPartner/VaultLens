@@ -114,8 +114,8 @@ def build_parser() -> argparse.ArgumentParser:
         dest="from_json",
         help=(
             "Read fields from a JSON file with keys: operation, title, summary, "
-            "pages (list), sources (list), notes. Avoids shell-escaping issues "
-            "when titles/summaries contain `&`, `;`, `(...)`, etc."
+            "pages (list), sources (list), notes; use - to read stdin. Avoids "
+            "shell-escaping issues when titles/summaries contain `&`, `;`, `(...)`, etc."
         ),
     )
 
@@ -302,11 +302,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.from_json:
             json_path = Path(args.from_json)
             try:
-                payload = cast(
-                    "object", json.loads(json_path.read_text(encoding="utf-8"))
+                # "-" reads stdin, so sandboxed agents need no temporary file.
+                text = (
+                    sys.stdin.read()
+                    if args.from_json == "-"
+                    else json_path.read_text(encoding="utf-8")
                 )
+                payload = cast("object", json.loads(text))
             except (OSError, ValueError) as exc:
-                parser.error(f"--from-json {json_path}: {exc}")
+                parser.error(f"--from-json {args.from_json}: {exc}")
             fields = cast("dict[str, object]", payload) if isinstance(payload, dict) else {}
             texts = {
                 key: fields.get(key, "" if key == "notes" else None)

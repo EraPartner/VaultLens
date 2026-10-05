@@ -239,6 +239,8 @@ and Model Context Protocol (MCP) server search that corpus inside the same proce
 runtime does not reuse a shared vault index, host MCP configuration, or vector-model cache.
 Blocking an original file is insufficient if an index retains a copy; the isolated corpus prevents
 that leak. Hybrid full-vault qmd search remains an explicit operator workflow.
+Results rank by the share of query terms a document contains, weighted toward terms that few
+documents contain, so common words in a natural-language query do not outrank the distinctive ones.
 
 Each query searches every approved document (files over 1 MB are skipped and counted). The grants
 are rewalked per query, so new and edited files appear at once. A path approved once stays approved

@@ -981,6 +981,23 @@ def test_append_log_from_json_validation() -> None:
                     clean = False
             check(f"{name} fails cleanly, not with a traceback", clean, detail)
         check("no log written for bad payloads", not (root / "log.md").exists())
+        stdin_payload = (
+            '{"operation": "enhance", "title": "K&R2 (5.11)", "summary": "S", '
+            '"pages": ["wiki/concepts/a.md"]}'
+        )
+        with (
+            mock.patch.object(wiki_log, "WIKI_DIR", root),
+            mock.patch.object(wiki_log, "LOG_NOTES_DIR", root / "log"),
+            mock.patch.object(sys, "stdin", io.StringIO(stdin_payload)),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            rc = wiki_cli.main(["append-log", "--from-json", "-"])
+        log = (root / "log.md").read_text(encoding="utf-8") if (root / "log.md").exists() else ""
+        check(
+            "--from-json - reads the entry from stdin",
+            rc == 0 and "enhance | K&R2 (5.11)" in log,
+            f"rc={rc} log={log!r}",
+        )
 
 
 def test_inventory_rejects_frontmatter_injection() -> None:
