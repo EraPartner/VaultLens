@@ -410,6 +410,7 @@ class AccessProfileTests(unittest.TestCase):
         ):
             with self.subTest(variant=variant):
                 self.assertTrue(access.forbidden(self.root / variant, self.root))
+                self.assertFalse(scope.readable(self.root / variant))
         reader = self.resolve("wiki-read")
         for variant in ("wiki/Reports/agents/prior.md", "wiki/PRIVATE/hidden.md"):
             with self.subTest(variant=variant):
