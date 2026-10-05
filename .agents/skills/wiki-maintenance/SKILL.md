@@ -38,7 +38,7 @@ python3 tools/wiki.py inventory show question/how-x-works
 # Log
 python3 tools/wiki.py append-log ...             # append-only; headings "## [YYYY-MM-DD] operation | title"
 
-# Search index (qmd)
+# Search index (qmd) — operator-run only; scoped agent runs do not re-index
 qmd update                                       # re-index after content changes
 qmd embed                                        # refresh vector embeddings (host: Metal)
 qmd cleanup --dry-run                            # preview inactive docs/orphan cleanup

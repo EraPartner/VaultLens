@@ -7,8 +7,9 @@
 # "Default" to "Advanced") so that only this advanced configuration runs.
 # Running both at once produces a configuration error on the Analyze check.
 #
-# Only Python is analyzed (see the workflow matrix): the wiki tooling in tools/
-# is Python; the .devcontainer is Shell, which CodeQL has no analyzer for.
+# Python (the wiki tooling in tools/) and the GitHub Actions workflows are
+# analyzed (see the workflow matrix). The shell and fish scripts are not covered
+# (CodeQL has no analyzer for them).
 
 name: "VaultLens CodeQL"
 

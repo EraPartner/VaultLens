@@ -14,7 +14,7 @@ owns its structure; the user adds whatever else the project needs (`papers/`, `m
 ```bash
 python3 tools/wiki.py project list               # enumerate non-frozen projects
 python3 tools/wiki.py project list --include-frozen  # administrative full list
-python3 tools/wiki.py project new <slug>         # scaffold project.md + shims + queries/
+python3 tools/wiki.py project new <slug>         # scaffold project.md, AGENTS.md, TODO.md, AGENDA.md, queries/
 python3 tools/wiki.py project show <slug>        # details (--json for machine output)
 python3 tools/wiki.py project link <slug> concepts/some-page   # append wiki_ref + bump updated
 python3 tools/wiki.py project freeze <slug>      # remove from active-work surfaces

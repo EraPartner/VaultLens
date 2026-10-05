@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Brain vault pre-commit hook. Self-contained: needs only git + python3, no
-# network, no `pre-commit`/`ruff`/`pytest`. Runs identically on the host and
-# inside the egress-locked devcontainer (.git/config is shared, hooksPath is
-# relative). Installed by .githooks/install.sh.
+# network, no `pre-commit`/`ruff`/`pytest`. hooksPath is relative, so it works in
+# any checkout or worktree. Installed by .githooks/install.sh.
 #
 # Philosophy: block on real defects, warn on style, never mutate your files.
 # When a check needs an action, it prints the exact command to run.

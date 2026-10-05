@@ -64,8 +64,9 @@ jobs:
         run: ruff check tools/
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Test — syntax-compile the whole tooling tree, then run the stdlib unittest
-  # suites (no third-party deps, so no install step).
+  # Test — syntax-compile the whole tooling tree, check generated adapters and the
+  # context fixture baseline, then run the stdlib unittest suites (no
+  # third-party deps, so no install step).
   # ─────────────────────────────────────────────────────────────────────────────
   test:
     name: Test (tooling)
@@ -89,6 +90,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes fish
           command -v fish
+
+      - name: Generated provider adapters match canonical roles
+        run: python tools/agents/generate-adapters.py --check
+
+      - name: Context fixture baseline matches
+        run: python tools/context_evaluation.py --check
 
       - name: Run tooling test suite (stdlib unittest)
         # Each suite sets up its own sys.path and is run directly (they are not
