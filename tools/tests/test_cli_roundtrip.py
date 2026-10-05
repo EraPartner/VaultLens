@@ -185,5 +185,15 @@ class CliRoundTripTests(unittest.TestCase):
         self.assertEqual(self.wiki("index", "--rebuild").returncode, 0)
         self.assertTrue(manual.exists())
 
+    def test_append_log_names_non_ascii_titles_readably(self) -> None:
+        for title in ("Café résumé", "日本語のメモ"):
+            result = self.wiki(
+                "append-log", "--operation", "ingest", "--title", title, "--summary", "s"
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        names = sorted(p.name for p in (self.root / "wiki" / "log").glob("*-ingest-*.md"))
+        self.assertTrue(any(name.endswith("-ingest-cafe-resume.md") for name in names), names)
+        self.assertTrue(any(name.endswith("-ingest-日本語のメモ.md") for name in names), names)
+
 if __name__ == "__main__":
     unittest.main()
