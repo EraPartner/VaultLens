@@ -11,9 +11,10 @@ function __brain_project_root --description 'Resolve the nearest VaultLens vault
         set current (command dirname "$current")
     end
 
-    set -l fallback "/Users/computer/Library/Mobile Documents/iCloud~md~obsidian/Documents/Brain"
+    # No built-in default location: outside a vault checkout, BRAIN_HOME must name the vault.
+    set -l fallback ""
     set -q BRAIN_HOME; and set fallback "$BRAIN_HOME"
-    if not test -f "$fallback/AGENTS.md"; or not test -f "$fallback/tools/wiki.py"; or \
+    if test -z "$fallback"; or not test -f "$fallback/AGENTS.md"; or not test -f "$fallback/tools/wiki.py"; or \
             not test -f "$fallback/tools/agents/wiki-agent.py"
         printf 'brain: vault markers missing at %s (AGENTS.md, tools/wiki.py, tools/agents/wiki-agent.py)\n' "$fallback" >&2
         printf '  (set BRAIN_HOME to override the project root)\n' >&2

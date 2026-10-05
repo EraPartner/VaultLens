@@ -114,6 +114,25 @@ class RootDiscoveryTests(unittest.TestCase):
                 self.assertIn("vault markers missing", result.stderr)
                 self.assertIn("set BRAIN_HOME", result.stderr)
 
+    def test_unset_fallback_is_an_error_outside_a_vault(self) -> None:
+        assert FISH is not None
+        result = subprocess.run(
+            [
+                FISH,
+                "--no-config",
+                "-c",
+                f"source {shlex.quote(str(HELPER))}; __brain_project_root",
+            ],
+            cwd=self.unrelated,
+            env={"PATH": os.defpath},
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("set BRAIN_HOME", result.stderr)
+
     def test_vault_and_fallback_do_not_require_container_files(self) -> None:
         self.assertFalse((self.fallback / ".devcontainer").exists())
         self.assert_root(self.fallback, self.fallback)

@@ -12,12 +12,10 @@
   "executionEnvironments": [
     {
       "root": "tests",
-      "extraPaths": [".", "schedule", "runtime", "scripts"],
       "reportUninitializedInstanceVariable": false
     },
     {
-      "root": ".",
-      "extraPaths": [".", "schedule", "runtime", "scripts"]
+      "root": "."
     }
   ]
 }
