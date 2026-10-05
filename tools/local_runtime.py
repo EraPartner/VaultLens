@@ -500,6 +500,14 @@ def _transfer_auth(
                 contents = stream.read(1024 * 1024 + 1)
             if len(contents) > 1024 * 1024:
                 raise ValueError("Authentication state exceeds size limit")
+            # The run copy is agent-writable: refuse anything that is not a login
+            # document rather than persisting it into the private store.
+            try:
+                document = json.loads(contents)
+            except (UnicodeDecodeError, ValueError):
+                document = None
+            if not isinstance(document, dict):
+                raise ValueError("Authentication state must be a JSON object")
             try:
                 target = os.stat(name, dir_fd=destination_fd, follow_symlinks=False)
             except FileNotFoundError:
@@ -857,7 +865,9 @@ def prepared_run(
     quarantine = scope.root / CANCELLATION_GATE
     if cancellation_gate_present(scope.root):
         raise ValueError(
-            f"Previous tool cancellation is unconfirmed. Inspect {CANCELLATION_GATE} before another run."
+            f"Previous tool cancellation is unconfirmed. Inspect {CANCELLATION_GATE} before another run. "
+            "After confirming the process group is gone, delete the run_directory it names "
+            "(it holds a provider login copy) and then the marker."
         )
     executable = runtime_executable(scope.root)
     if require_verification:

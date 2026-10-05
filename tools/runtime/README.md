@@ -223,7 +223,9 @@ excludes that reserved subtree from reads and search, so derived private context
 another agent's corpus through its report. Review a report before promoting its content into notes.
 Unconfirmed descendant cleanup writes `tools/runtime-state/cancellation-unconfirmed.json` and
 blocks further launches. An operator must verify that the recorded process group is gone before
-removing that marker. The runtime never clears it automatically.
+removing that marker. The marker names the kept `run_directory`; it holds a copy of the provider
+login and run scratch, so delete it once cleanup is confirmed. The runtime never clears either
+automatically.
 Job removal allows a bounded two-second wait for launchd to finish teardown. A repeated cleanup
 request preserves the original failure instead of replacing it after the guardian has stopped.
 Raw PDFs are extracted to private scratch storage. Agent preprocessing does not modify raw files
