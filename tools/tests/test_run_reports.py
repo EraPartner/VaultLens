@@ -151,6 +151,29 @@ class ReportTests(unittest.TestCase):
         self.assertIn("was truncated", body)
         self.assertTrue(recorder.eof)
 
+    def test_templater_commands_in_output_are_never_published_live(self) -> None:
+        # Obsidian Templater executes `<%*` blocks in new notes outside the sandbox.
+        recorder = self.recorder()
+        recorder.consume(
+            io.StringIO("ok <%* require('child_process') %> <%tp.date.now()%>\n"),
+            io.StringIO(),
+        )
+        path = recorder.finish(0)
+        raw = path.read_text(encoding="utf-8")
+        self.assertNotIn("<%", raw)
+        self.assertIn("&lt;%* require('child_process') %>", raw)
+        self.assertFalse(self.metadata(path)[0]["output_truncated"])
+
+    def test_escaping_that_overflows_the_limit_is_truncated(self) -> None:
+        recorder = self.recorder(max_bytes=METADATA_BYTES + 100)
+        recorder.consume(io.StringIO("<%" * 50), io.StringIO())
+        path = recorder.finish(0)
+        metadata, body = self.metadata(path)
+        self.assertNotIn("<%", body)
+        self.assertTrue(metadata["output_truncated"])
+        self.assertEqual(metadata["status"], "draft")
+        self.assertLessEqual(path.stat().st_size, METADATA_BYTES + 100)
+
     def test_failed_child_is_saved_as_partial_draft(self) -> None:
         recorder = self.recorder()
         recorder.consume(io.StringIO("Public failed-run fixture.\n"), io.StringIO())

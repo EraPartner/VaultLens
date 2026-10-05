@@ -36,6 +36,8 @@ class MaintenanceTests(unittest.TestCase):
         (self.root / "tools/runtime/macos-process-guard.mjs").write_text(
             f"const VERSION = '{version}';"
         )
+        for name in ("package.json", "package-lock.json"):
+            shutil.copyfile(TOOLS / "runtime" / name, self.root / "tools/runtime" / name)
         processes = mock.patch.object(maintenance, "check_process_records")
         processes.start()
         self.addCleanup(processes.stop)
@@ -116,6 +118,35 @@ class MaintenanceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "pins disagree"):
                 maintenance.maintain(self.root)
             run.assert_not_called()
+
+    def test_unlocked_or_mismatched_dependency_tree_stops_installation(self) -> None:
+        lock = self.root / "tools/runtime/package-lock.json"
+        locked = json.loads(lock.read_text(encoding="utf-8"))
+        locked["packages"]["node_modules/@anthropic-ai/sandbox-runtime"]["version"] = "9.9.9"
+        for content in (json.dumps(locked), "not json", None):
+            with self.subTest(content=content and content[:10]):
+                if content is None:
+                    lock.unlink()
+                else:
+                    lock.write_text(content, encoding="utf-8")
+                with mock.patch.object(maintenance.subprocess, "run") as run:
+                    with self.assertRaisesRegex(ValueError, "pins disagree"):
+                        maintenance.maintain(self.root)
+                    run.assert_not_called()
+
+    def test_tracked_lockfile_pins_every_package_with_integrity(self) -> None:
+        lock = json.loads((TOOLS / "runtime/package-lock.json").read_text(encoding="utf-8"))
+        packages = {key: value for key, value in lock["packages"].items() if key}
+        self.assertIn("node_modules/@anthropic-ai/sandbox-runtime", packages)
+        for name, entry in packages.items():
+            with self.subTest(package=name):
+                self.assertTrue(entry["integrity"].startswith("sha512-"))
+                self.assertTrue(
+                    entry["resolved"].startswith("https://registry.npmjs.org/")
+                )
+        installer = (TOOLS / "runtime/install.sh").read_text(encoding="utf-8")
+        self.assertIn("npm ci", installer)
+        self.assertNotIn("npm install", installer)
 
     def test_installer_names_the_missing_tool(self) -> None:
         installer = self.root / "tools/runtime/install.sh"

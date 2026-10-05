@@ -207,11 +207,12 @@ def _tool(name: str, *fallbacks: str) -> str:
 PYTHON = sys.executable or _tool("python3", "/opt/homebrew/bin/python3")
 QMD = _tool("qmd", str(HOME / ".bun" / "bin" / "qmd"))
 NC = _tool("nc", "/opt/homebrew/bin/nc", "/usr/bin/nc")
-PMSET = _tool("pmset", "/usr/bin/pmset")
+# The sudoers rule names /usr/bin/pmset; never resolve these through PATH.
+PMSET = "/usr/bin/pmset"
 OSASCRIPT = _tool("osascript", "/usr/bin/osascript")
 BRCTL = _tool("brctl", "/usr/bin/brctl")
 IOREG = _tool("ioreg", "/usr/sbin/ioreg")
-SUDO = _tool("sudo", "/usr/bin/sudo")
+SUDO = "/usr/bin/sudo"
 
 
 # --------------------------------------------------------------------------- #
@@ -322,8 +323,15 @@ def load_ledger() -> Ledger:
     return data
 
 
+def ensure_state_dir() -> None:
+    """Create ~/.brain owner-only: it holds logs and copies of private projects."""
+    STATE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not STATE_DIR.is_symlink():
+        STATE_DIR.chmod(0o700)
+
+
 def save_ledger(ledger: Ledger) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_state_dir()
     tmp = STATE_FILE.with_suffix(".json.tmp")
     with tmp.open("w", encoding="utf-8") as output:
         output.write(json.dumps(ledger, indent=2, sort_keys=True))
@@ -655,6 +663,7 @@ def _snapshot_project(
         )
         return None
     try:
+        ensure_state_dir()
         dst.parent.mkdir(parents=True, exist_ok=True)
         # Only publish a complete copy. A failed cp can leave a partial tree,
         # which must never count as the next invocation's undo snapshot.
@@ -1930,6 +1939,7 @@ def sleep_now(log: Callable[[str], None]) -> None:
 
 
 def make_logger() -> Callable[[str], None]:
+    ensure_state_dir()
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     logf = LOG_DIR / f"schedule-{now_local():%Y-%m-%d}.log"
 
@@ -1946,7 +1956,7 @@ def make_logger() -> Callable[[str], None]:
 
 
 def acquire_lock() -> TextIO | None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_state_dir()
     fh = open(LOCK_FILE, "w")
     try:
         fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)

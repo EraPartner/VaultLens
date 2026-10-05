@@ -291,7 +291,7 @@ class ProviderRegressionTests(unittest.TestCase):
         with mock.patch.object(self.agent, "ROOT", self.root):
             self.assertEqual(self.agent._inbox_source("raw/inbox/article.md"), note.resolve())
             prompt = self.agent.build_prompt("ingest", "", str(note.resolve()), "")
-            self.assertIn("at exactly this path: raw/inbox/article.md", prompt)
+            self.assertIn("at exactly this path: \"raw/inbox/article.md\"", prompt)
             for citation, expected in (
                 ("[[raw/inbox/article]]", True),
                 ("[[raw/inbox/article.md]]", True),

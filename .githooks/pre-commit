@@ -35,10 +35,10 @@ info() { printf '   %s%s%s\n'             "$DIM" "$*" "$RST"     >&2; }
 
 MAX_FILE_BYTES="${MAX_FILE_BYTES:-1048576}"
 
-# --- staged files (added/copied/modified), NUL-safe ---------------------------
+# --- staged files (added/copied/modified/renamed/type-changed), NUL-safe ---
 staged=()
 while IFS= read -r -d '' f; do staged+=("$f"); done \
-  < <(git diff --cached --name-only -z --diff-filter=ACM)
+  < <(git diff --cached --name-only -z --diff-filter=ACMRT)
 
 # Nothing in the index to inspect (e.g. a merge or --allow-empty).
 [ "${#staged[@]}" -eq 0 ] && exit 0
