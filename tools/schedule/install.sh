@@ -72,6 +72,7 @@ trap 'rm -f "$PREPARED"' EXIT
 
 echo "==> creating ~/.brain/logs"
 mkdir -p "$HOME/.brain/logs"
+chmod 700 "$HOME/.brain"   # logs and project snapshots are private
 
 echo "==> installing $DEST"
 mkdir -p "$HOME/Library/LaunchAgents"
