@@ -85,6 +85,13 @@ class RoleCommandTests(unittest.TestCase):
         self.assertTrue(_allowed("wc -l wiki/concepts/a.md", rules))
         self.assertFalse(_allowed("python3 -c print(1)", rules))
         self.assertFalse(_allowed("find wiki -name x", rules))
+        read_rules = [
+            tool[len("Bash(") : -1]
+            for tool in claude_tools(profile_capabilities("read-shell"))
+            if tool.startswith("Bash(")
+        ]
+        self.assertTrue(_allowed("python3 tools/wiki.py lint --json --strict", read_rules))
+        self.assertFalse(_allowed("python3 tools/wiki.py lint --fix", read_rules))
         self.assertEqual(
             _commands('ls wiki/ | grep -iE "a|b"  # note'),
             ["ls wiki/", "grep -iE a|b"],
