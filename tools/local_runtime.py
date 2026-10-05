@@ -895,8 +895,14 @@ def prepared_run(
     *,
     snapshot: bool = True,
     require_verification: bool = True,
+    qmd: Path | None = None,
 ) -> Generator[tuple[Path, Path, dict[str, str]], None, None]:
-    """Prepare private per-run state, scope search, and recoverable writer changes."""
+    """Prepare private per-run state, scope search, and recoverable writer changes.
+
+    `qmd` forces the host-side qmd bridge with that executable instead of the
+    one found on PATH. The isolation probe uses it so every receipt covers the
+    bridge boundary, whether or not the host has qmd installed.
+    """
     check_process_records(scope.root)
     quarantine = scope.root / CANCELLATION_GATE
     if cancellation_gate_present(scope.root):
@@ -920,7 +926,8 @@ def prepared_run(
         )
         review_queue: list[dict[str, str | int]] = []
         manifest["review_queue"] = review_queue
-        qmd = qmd_executable(scope, run)
+        if qmd is None:
+            qmd = qmd_executable(scope, run)
         bridge = (
             None
             if qmd is None

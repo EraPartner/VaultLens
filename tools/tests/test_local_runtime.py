@@ -992,6 +992,26 @@ class RuntimeTests(unittest.TestCase):
             "qmd-bridge", [thread.name for thread in threading.enumerate()]
         )
 
+    def test_prepared_run_qmd_argument_forces_the_bridge_without_path_lookup(
+        self,
+    ) -> None:
+        with (
+            mock.patch.object(
+                runtime, "runtime_executable", return_value=Path("/public-runtime/srt")
+            ),
+            mock.patch.object(runtime, "qmd_executable", return_value=None) as lookup,
+        ):
+            with runtime.prepared_run(
+                self.scope, None, snapshot=False, qmd=Path("/usr/bin/false")
+            ) as (_executable, run, _env):
+                self.assertTrue((run / "qmd-bridge/requests").is_dir())
+                settings = json.loads((run / "settings.json").read_text())
+                self.assertIn(
+                    str(run / "qmd-bridge/responses"),
+                    settings["filesystem"]["denyWrite"],
+                )
+        lookup.assert_not_called()
+
     def test_writer_lock_serializes_overlapping_scopes_and_releases_after_exit(
         self,
     ) -> None:
