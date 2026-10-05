@@ -773,6 +773,13 @@ def main() -> int:
         "handoff target+task parsed",
         hos[0]["target"] == "vision" and hos[0]["task"].startswith("Bump"),
     )
+    bulleted = dispatch.parse_handoffs(
+        "Handoffs: 1\n- handoff:: beta | Review the draft | projects/alpha/notes/x.md\n"
+    )
+    check(
+        "bulleted handoff (runner stdout contract) is parsed",
+        len(bulleted) == 1 and bulleted[0]["target"] == "beta",
+    )
 
     print("routing guard (anti-loop / cap):")
     g = dispatch.RoutingGuard(cap=2)

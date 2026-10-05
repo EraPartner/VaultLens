@@ -479,6 +479,8 @@ def _ingested_raw_references() -> set[str]:
     references: set[str] = set()
     srcdir = ROOT / "wiki" / "sources"
     if srcdir.is_dir() and not srcdir.is_symlink():
+        # `<...>` destinations run to the closing `>`: they exist for names holding `]`.
+        angle = re.compile(r"<(?:\./|\.\./)*(raw/(?:sources|inbox)/[^<>\n]+)>")
         pat = re.compile(r"raw/(?:sources|inbox)/[^\]|>)\n]+")
         for page in srcdir.glob("*.md"):
             if page.is_symlink() or not page.is_file():
@@ -487,9 +489,10 @@ def _ingested_raw_references() -> set[str]:
                 text = page.read_text(encoding="utf-8")
             except (OSError, UnicodeError):
                 continue
+            references.update(unquote(match.group(1).strip()) for match in angle.finditer(text))
             references.update(
                 unquote(match.group().strip().strip("'\"`"))
-                for match in pat.finditer(text)
+                for match in pat.finditer(angle.sub("", text))
             )
     return references
 
@@ -1598,10 +1601,11 @@ def notify(title: str, msg: str) -> None:
 # real opted-in project is left advisory (logged), not force-filed somewhere.
 
 
-# The routed-work-item grammar: `<keyword>:: <target-project> | <imperative task> | <why-or-ref>`.
+# The routed-work-item grammar: `<keyword>:: <target-project> | <imperative task> | <why-or-ref>`,
+# optionally as a markdown list item (the runner's stdout contract shows `- handoff:: ...`).
 def _routed_re(keyword: str) -> re.Pattern[str]:
     return re.compile(
-        rf"^\s*{keyword}::\s*(?P<target>[^|]+?)\s*\|\s*(?P<task>[^|]+?)\s*\|\s*(?P<why>.+?)\s*$"
+        rf"^\s*(?:[-*+]\s+)?{keyword}::\s*(?P<target>[^|]+?)\s*\|\s*(?P<task>[^|]+?)\s*\|\s*(?P<why>.+?)\s*$"
     )
 
 
