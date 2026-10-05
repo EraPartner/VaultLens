@@ -77,7 +77,7 @@ requires a separate operator-approved workflow.
 - Run `python3 tools/wiki.py index --rebuild` so the headless `_index.md` mirrors include the new pages
 - Run `python3 tools/wiki.py links --fix --write` to add portable markdown mirrors to the wikilinks you wrote (the tool computes correct relative paths — never hand-write the `([Title](path.md))` mirror)
 - Append log entry
-- **Do not move the source PDF yourself.** You are sandboxed with only `wiki/` writable, so `mv` against `raw/` will fail. When the source came from `raw/inbox/`, the launcher promotes it to `raw/sources/` automatically after you finish successfully (and re-points the extracted sibling's `source_pdf:` header). `raw/sources/` is the canonical home; `raw/inbox/` is staging only.
+- **Do not move or copy the source.** Raw files are immutable and stay where they are, including in `raw/inbox/`; nothing promotes them afterwards. Cite the source at the path you were given (see `## Sources` below). The launcher accepts an inbox ingest only when a new or updated source page cites that exact `raw/inbox/` path, and the scheduler re-queues any inbox file no source page cites.
 
 ## Source-type specific extraction
 
@@ -175,6 +175,9 @@ Rules:
 - If a raw filename contains `[` or `]` (Obsidian wikilinks cannot contain `]`),
   use an angle-bracket markdown link instead:
   `- Source text: [Label](<../../raw/sources-text/<name>.md>)`.
+- **Inbox sources:** when the source you were given is in `raw/inbox/`, cite it there
+  with its full filename, extension included, instead of a `raw/sources/` path:
+  `- Source file: [[raw/inbox/<filename>]]` (angle-bracket link if the name contains `]`).
 - Keep any genuine extra provenance (citation, DOI, edition, "PDF encrypted")
   as additional bullets **below** the two file links.
 

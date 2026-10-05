@@ -235,7 +235,7 @@ class ProviderRegressionTests(unittest.TestCase):
 
                 result, promotions, error = self.run_ingest_fixture(provider)
                 self.assertEqual((result, promotions), (2, 0))
-                self.assertIn("PDF remains in raw/inbox/", error)
+                self.assertIn("source remains in raw/inbox/", error)
 
     def test_ingest_provider_failure_never_promotes(self) -> None:
         result, promotions, error = self.run_ingest_fixture(lambda *_a, **_kw: 1)
@@ -279,6 +279,29 @@ class ProviderRegressionTests(unittest.TestCase):
                 before = self.agent._source_page_snapshot()
                 page.write_text(content)
                 self.assertTrue(self.agent._verify_ingest_result(self.root / "raw/inbox" / name, before))
+
+    def test_inbox_note_ingest_is_verified_and_prompted_with_its_path(self) -> None:
+        sources = self.root / "wiki" / "sources"
+        sources.mkdir()
+        inbox = self.root / "raw" / "inbox"
+        inbox.mkdir(parents=True)
+        note = inbox / "article.md"
+        note.write_text("note")
+        page = sources / "src-2026-10-03-001.md"
+        with mock.patch.object(self.agent, "ROOT", self.root):
+            self.assertEqual(self.agent._inbox_source("raw/inbox/article.md"), note.resolve())
+            prompt = self.agent.build_prompt("ingest", "", str(note.resolve()), "")
+            self.assertIn("at exactly this path: \"raw/inbox/article.md\"", prompt)
+            for citation, expected in (
+                ("[[raw/inbox/article]]", True),
+                ("[[raw/inbox/article.md]]", True),
+                ("[[raw/sources-text/article]]", False),
+            ):
+                with self.subTest(citation=citation):
+                    page.write_text(
+                        self.source_page().replace("[[raw/inbox/example.pdf]]", citation)
+                    )
+                    self.assertIs(self.agent._verify_ingest_result(note.resolve(), {}), expected)
 
     def test_ingest_code_examples_do_not_certify_a_pdf_citation(self) -> None:
         sources = self.root / "wiki" / "sources"

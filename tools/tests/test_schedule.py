@@ -222,8 +222,11 @@ def main() -> int:
     weekly = steps["contradict"]
     led6 = fresh_ledger()
     check("weekly due when never run", dispatch.step_due(weekly, led6, now) is True)
-    led6["jobs"]["contradict"] = {"last_ok": dispatch.iso(now - timedelta(days=2))}
-    check("weekly not due 2 days later", dispatch.step_due(weekly, led6, now) is False)
+    led6["jobs"]["contradict"] = {"last_ok": dispatch.iso(now)}
+    check(
+        "weekly not due 2 days after its Sunday run",
+        dispatch.step_due(weekly, led6, now + timedelta(days=2)) is False,
+    )
     led6["jobs"]["contradict"] = {"last_ok": dispatch.iso(now - timedelta(days=9))}
     weekday = now + timedelta(days=3)  # a Wednesday, age >= 8 -> catch up
     check(
@@ -262,6 +265,18 @@ def main() -> int:
             weekly, led7, (sunday_ran + timedelta(days=8)).replace(hour=1, minute=30)
         )
         is True,
+    )
+    # A Monday catch-up must not push the next run off Sunday.
+    monday_catch_up = (sunday_ran + timedelta(days=8)).replace(hour=1, minute=45)
+    led7["jobs"]["contradict"] = {"last_ok": dispatch.iso(monday_catch_up)}
+    following_sunday = (sunday_ran + timedelta(days=14)).replace(hour=1, minute=30)
+    check(
+        "after a Monday catch-up the next Sunday is due again",
+        dispatch.step_due(weekly, led7, following_sunday) is True,
+    )
+    check(
+        "after a Monday catch-up the Saturday before is not due",
+        dispatch.step_due(weekly, led7, following_sunday - timedelta(days=1)) is False,
     )
 
     print("ledger timestamps are validated:")

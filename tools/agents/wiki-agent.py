@@ -656,7 +656,11 @@ def build_prompt(
         # Paths can come from inbox file names; quote them so a crafted name stays data.
         "quality": f"Analyze the wiki page at: {json.dumps(page)}",
         "verify": f"Verify claims in the wiki source page: {json.dumps(source)}",
-        "ingest": f"Process new source material: {json.dumps(source)}",
+        "ingest": (
+            f"Process new source material: {json.dumps(source)}. "
+            f"Cite it in the source page's ## Sources at exactly this path: "
+            f"{json.dumps(_vault_relative(source))}"
+        ),
         "contradict": "Find potential contradictions across wiki pages",
         "search": f"Search the wiki for: {source if source else page}",
         "enhance": (
@@ -875,10 +879,21 @@ def build_cli_command(
     return build_provider_command(cli, request, executable=_selected_executable(cli))
 
 
-def _inbox_pdf(source: str) -> Path | None:
-    """Identify immutable inbox PDFs requiring a verified source citation."""
+def _vault_relative(source: str) -> str:
+    """The vault-relative form of a source path (the scheduler passes absolute ones)."""
+    path = Path(source)
+    if not path.is_absolute():
+        return path.as_posix()
+    try:
+        return path.resolve().relative_to(ROOT.resolve()).as_posix()
+    except ValueError:
+        return source
+
+
+def _inbox_source(source: str) -> Path | None:
+    """Identify immutable inbox files requiring a verified source citation."""
     path = (ROOT / source).resolve()
-    if path.suffix.lower() != ".pdf" or not path.is_file():
+    if not path.is_file():
         return None
     try:
         path.relative_to((ROOT / "raw" / "inbox").resolve())
@@ -895,7 +910,7 @@ def _source_page_snapshot() -> dict[Path, bytes]:
 
 
 def _verify_ingest_result(pdf: Path, before: dict[Path, bytes]) -> bool:
-    """Require a changed, structurally valid source page citing this canonical PDF.
+    """Require a changed, structurally valid source page citing this inbox file.
 
     This verifies an output artifact, not the accuracy of the model's summary.
     Citations must name the actual immutable input path.
@@ -981,7 +996,8 @@ def _verify_ingest_result(pdf: Path, before: dict[Path, bytes]) -> bool:
                 # Outside the vault, or an undecodable link such as an embedded
                 # NUL from "%00": not a citation, and not a reason to fail the run.
                 continue
-        if target in citations:
+        # Wikilinks drop a trailing `.md`, so `[[raw/inbox/note]]` cites note.md.
+        if target in citations or target.removesuffix(".md") in citations:
             return True
     return False
 
@@ -1075,11 +1091,11 @@ def run_agent(args: argparse.Namespace, strategy: str | None = None) -> int:
             print(f"Error: live context could not be prepared: {exc}", file=sys.stderr)
             return 2
 
-    inbox_pdf = (
-        _inbox_pdf(source) if args.agent == "ingest" and not args.debug else None
+    inbox_source = (
+        _inbox_source(source) if args.agent == "ingest" and not args.debug else None
     )
     try:
-        source_pages_before = _source_page_snapshot() if inbox_pdf else {}
+        source_pages_before = _source_page_snapshot() if inbox_source else {}
     except OSError as exc:
         print(
             f"Error: cannot snapshot source pages before ingestion: {exc}",
@@ -1101,18 +1117,18 @@ def run_agent(args: argparse.Namespace, strategy: str | None = None) -> int:
     )
 
     if args.agent == "ingest" and rc == 0 and args.source and not args.debug:
-        if inbox_pdf:
+        if inbox_source:
             try:
-                verified = _verify_ingest_result(inbox_pdf, source_pages_before)
+                verified = _verify_ingest_result(inbox_source, source_pages_before)
             except (OSError, UnicodeError) as exc:
                 print(f"Error: cannot verify ingestion output: {exc}", file=sys.stderr)
                 return 2
             if not verified:
                 print(
                     "Error: ingestion returned success without a new or updated valid "
-                    f"source page citing {inbox_pdf.relative_to(ROOT.resolve())}. "
-                    "The PDF remains in raw/inbox/. Complete the source page metadata "
-                    "and canonical PDF citation, then retry ingestion.",
+                    f"source page citing {inbox_source.relative_to(ROOT.resolve())}. "
+                    "The source remains in raw/inbox/. Complete the source page metadata "
+                    "and its raw/inbox/ citation, then retry ingestion.",
                     file=sys.stderr,
                 )
                 return 2
