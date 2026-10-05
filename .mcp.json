@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "qmd": {
-      "command": "qmd",
-      "args": ["mcp"],
-      "type": "stdio"
-    }
-  }
-}
