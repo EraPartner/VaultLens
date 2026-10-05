@@ -159,9 +159,9 @@ opt-in. Scheduling, recovery, gates, provider selection, and installation are de
 **All search-using agents prefer the scoped qmd tools when available.** In agent runs they search
 only the approved files. `python3 tools/wiki.py search "<query>"` is the substring fallback inside
 the same boundary. Full-vault setup and re-indexing (`tools/scripts/setup-qmd.sh`, `qmd update`)
-are explicit operator actions. A session started without the `brain-*` launchers loads the
-unscoped `qmd mcp` server from `.mcp.json` / `.codex/config.toml` and searches the full vault; use a
-launcher for scoped runs. Engine design: `README.md` (Scoped search).
+are explicit operator actions. No qmd MCP server is checked in, so a session started without the
+`brain-*` launchers has no search MCP tools; use a launcher for scoped search, or the substring
+fallback. Engine design: `README.md` (Scoped search).
 
 
 ## Obsidian skills

@@ -45,9 +45,8 @@ AGENTS.md       ← the provider-neutral operating schema that governs all of it
 - `projects/` — application workspaces that consume the wiki
 - `tools/` — the `wiki.py` CLI (lint, search, ingest, index, links, projects…) plus the
   scheduled-agent dispatcher in `tools/schedule/`
-- `.mcp.json` and `.codex/config.toml` — register [qmd](https://www.npmjs.com/package/@tobilu/qmd) for hybrid search.
-  A plain `claude` or `codex` session started from the repo runs this unscoped, full-vault qmd server;
-  runs launched through the `brain-*` wrappers search only the files their access profile approves
+- `.codex/config.toml` — shared Codex settings. No qmd MCP server is checked in: search MCP tools exist only
+  in runs launched through the `brain-*` wrappers, which search just the files their access profile approves
 - `tools/local_runtime.py` and `tools/access-profiles.json` — local process isolation and versioned privacy policy
 - `.gitignore` — excludes your data, keeps the system
 

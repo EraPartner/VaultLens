@@ -32,8 +32,5 @@
       "Bash(qmd collection list*)",
       "Bash(qmd collection show*)"
     ]
-  },
-  "enabledMcpjsonServers": [
-    "qmd"
-  ]
+  }
 }
