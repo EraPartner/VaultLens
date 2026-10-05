@@ -69,7 +69,7 @@ class ProviderRegressionTests(unittest.TestCase):
                 role = load_role(self.roles / filename)
                 perms = profile_capabilities(role.permission_profile)
                 self.assertEqual(self.agent._agent_permissions(name), perms)
-                allowed = self.agent._build_allowed_tools(perms)
+                allowed = claude_tools(perms)
                 native = claude_tools(perms, scoped_shell=False)
                 self.assertIn("mcp__qmd__*", allowed)
                 self.assertIn("mcp__qmd__*", native)
@@ -299,6 +299,66 @@ class ProviderRegressionTests(unittest.TestCase):
                     self.agent._verify_ingest_result(self.root / "raw/inbox/example.pdf", {})
                 )
 
+    def test_ingest_verification_ignores_citation_links_that_cannot_resolve(self) -> None:
+        sources = self.root / "wiki" / "sources"
+        sources.mkdir()
+        page = sources / "src-2026-10-03-001.md"
+
+        def provider(*_args: object, **_kwargs: object) -> int:
+            # "%00" decodes to an embedded NUL, which Path.resolve() rejects.
+            page.write_text(self.source_page() + "\nSee [broken](%00).\n")
+            return 0
+
+        self.assertEqual(self.run_ingest_fixture(provider), (0, 0, ""))
+
+    def test_launch_boundary_failure_returns_status_not_traceback(self) -> None:
+        for failure in (
+            "Runtime scope belongs to another vault",
+            "Native provider executable handoff is missing or mismatched",
+        ):
+            with (
+                self.subTest(failure=failure),
+                mock.patch.object(self.agent, "ROOT", self.root),
+                mock.patch.object(self.agent, "AGENTS_DIR", self.roles),
+                mock.patch.object(
+                    self.agent, "build_cli_command", side_effect=ValueError(failure)
+                ),
+                mock.patch.object(self.agent, "_run_agent_command") as run,
+                contextlib.redirect_stderr(io.StringIO()) as error,
+            ):
+                result = self.agent.invoke_agent(
+                    "quality", "claude", "sonnet", "medium", "PROMPT", "", []
+                )
+            self.assertEqual(result, 2)
+            run.assert_not_called()
+            self.assertIn(failure, error.getvalue())
+
+    def test_usage_errors_are_reported_before_the_runtime_is_entered(self) -> None:
+        for argv in (
+            ["quality"],
+            ["verify"],
+            ["search"],
+            ["connect", "--source", "only-one-domain"],
+            ["project-run"],
+            ["enhance"],
+            ["enhance", "--page", "wiki/concepts/x.md", "--iterations", "0"],
+        ):
+            with (
+                self.subTest(argv=argv),
+                mock.patch.object(
+                    self.agent, "_enter_runtime", side_effect=AssertionError("entered")
+                ),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(self.agent.main(argv), 1)
+        with mock.patch.object(
+            self.agent, "_enter_runtime", return_value=7
+        ) as enter:
+            self.assertEqual(
+                self.agent.main(["quality", "--page", "wiki/concepts/x.md"]), 7
+            )
+        enter.assert_called_once()
+
     def test_adapters_ignore_operator_local_model_pins(self) -> None:
         def manifests() -> list[str]:
             return [
@@ -327,7 +387,6 @@ class ProviderRegressionTests(unittest.TestCase):
         self.assertEqual(with_local_config, tracked)
         self.assertFalse(any("pin-" in text for text in with_local_config))
 
-
     def test_local_models_are_an_export_only_option(self) -> None:
         (self.root / "tools" / "llm.local.json").write_text(
             json.dumps({"profiles": {"claude": {"standard": "pin-std", "deep": "pin-deep"}}})
@@ -350,7 +409,6 @@ class ProviderRegressionTests(unittest.TestCase):
             )
         exported = "".join(p.read_text() for p in (output / ".claude" / "agents").iterdir())
         self.assertIn('model: "pin-std"', exported)
-
 
     def test_export_roundtrip_checks_without_deployed_provider_access(self) -> None:
         output = self.root / "export"

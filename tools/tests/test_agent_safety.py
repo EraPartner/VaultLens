@@ -25,9 +25,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "schedule"))
 
 import dispatch  # noqa: E402
+from agent_capabilities import claude_tools  # noqa: E402
 from context_budget import CONSENT, gather_context, select_context  # noqa: E402
 from context_evaluation import BASELINE, TODAY, evaluate, load_agent, write_fixture  # noqa: E402
 from local_access import RunScope  # noqa: E402
+from process_control import signal_group  # noqa: E402
 
 # The dispatcher keeps these helpers module-private; the tests exercise them directly, so
 # each is bound once here instead of silencing every call site.
@@ -136,7 +138,7 @@ class ProviderPermissionsTests(AgentUnitTests):
             "python_shell": True,
             "network_access": True,
         }
-        allowed = agent._build_allowed_tools(perms)
+        allowed = claude_tools(perms)
         self.assertNotIn("Bash(python3 *)", allowed)
         command = agent.build_cli_command("codex", "", None, "ROLE", "TASK", perms)
         self.assertNotIn("sandbox_workspace_write.network_access=true", command)
@@ -362,6 +364,74 @@ class ContextTests(AgentUnitTests):
             self.assertNotIn("broken.md", bounded)
             self.assertNotIn("excluded.md", bounded)
             self.assertNotIn("PUBLIC_EXCLUDED_SENTINEL", bounded)
+
+    def test_empty_review_queue_is_not_reported_as_missing(self) -> None:
+        agent = self.fixture_agent()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            for directory in ("wiki", "raw/inbox", "raw/review-inbox"):
+                (root / directory).mkdir(parents=True)
+            with patch.object(agent, "ROOT", root):
+                context = agent._gather_cos_context("brief", None)
+                self.assertIn("raw/review-inbox/ (0 files)", context)
+                self.assertNotIn("review-inbox/ — directory not found", context)
+                (root / "raw/review-inbox").rmdir()
+                context = agent._gather_cos_context("brief", None)
+                self.assertIn("review-inbox/ — directory not found", context)
+
+    def test_review_queue_comes_from_the_manifest_only_when_permitted(self) -> None:
+        agent = self.fixture_agent()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            manifest = root / "scope.json"
+            for directory in ("wiki", "raw/inbox"):
+                (root / directory).mkdir(parents=True)
+
+            def scope(metadata: bool) -> RunScope:
+                return RunScope(
+                    root, "fixture", (root / "wiki",), (), (), (), root / "reports", metadata
+                )
+
+            with patch.dict(os.environ, {"VAULTLENS_RUNTIME_MANIFEST": str(manifest)}):
+                manifest.write_text(
+                    json.dumps({"review_queue": [{"name": "ask.md", "size": 12}]})
+                )
+                self.assertEqual(
+                    agent._review_queue(scope(True)), [{"name": "ask.md", "size": 12}]
+                )
+                self.assertEqual(agent._review_queue(scope(False)), [])
+                self.assertEqual(agent._review_queue(None), [])
+                with (
+                    patch.object(agent, "ROOT", root),
+                    patch.object(agent, "active_scope", return_value=scope(True)),
+                ):
+                    listed = agent._gather_cos_context("brief", None)
+                self.assertIn("raw/review-inbox/ (1 files)", listed)
+                self.assertIn("- ask.md (12B)", listed)
+                manifest.write_text(json.dumps({"review_queue": []}))
+                with (
+                    patch.object(agent, "ROOT", root),
+                    patch.object(agent, "active_scope", return_value=scope(True)),
+                ):
+                    self.assertIn(
+                        "raw/review-inbox/ (0 files)",
+                        agent._gather_cos_context("brief", None),
+                    )
+                with (
+                    patch.object(agent, "ROOT", root),
+                    patch.object(agent, "active_scope", return_value=scope(False)),
+                ):
+                    self.assertIn(
+                        "not listed by this access profile",
+                        agent._gather_cos_context("brief", None),
+                    )
+                for broken in ("{bad", "[1]", '{"review_queue": 3}', '{"review_queue": [{"name": "x"}]}'):
+                    manifest.write_text(broken)
+                    with (
+                        self.subTest(manifest=broken),
+                        self.assertRaisesRegex(ValueError, "Invalid review queue"),
+                    ):
+                        agent._review_queue(scope(True))
 
     def test_unselected_inbox_is_not_enumerated(self) -> None:
         from local_access import RunScope
@@ -613,7 +683,7 @@ class TimeoutTests(AgentUnitTests):
                 ) as probe,
             ):
                 self.assertEqual(
-                    agent._signal_agent_group(process, agent_signal.SIGKILL), expected
+                    signal_group(process, agent_signal.SIGKILL), expected
                 )
                 self.assertEqual(probe.call_args.args[0], ["ps", "-eo", "pgid=,stat="])
         with (
@@ -625,7 +695,7 @@ class TimeoutTests(AgentUnitTests):
             ),
             self.assertRaisesRegex(agent.AgentCleanupError, "denied for live"),
         ):
-            agent._signal_agent_group(process, agent_signal.SIGKILL)
+            signal_group(process, agent_signal.SIGKILL)
         with (
             patch.object(agent.os, "killpg", side_effect=PermissionError(1, "denied")),
             patch.object(
@@ -633,7 +703,7 @@ class TimeoutTests(AgentUnitTests):
             ),
             self.assertRaisesRegex(agent.AgentCleanupError, "cannot verify"),
         ):
-            agent._signal_agent_group(process, agent_signal.SIGKILL)
+            signal_group(process, agent_signal.SIGKILL)
 
     def test_cleanup_failure_returns_unconfirmed_cancellation(self) -> None:
         agent = self.fixture_agent()

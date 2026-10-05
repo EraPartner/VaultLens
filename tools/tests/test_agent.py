@@ -28,6 +28,8 @@ wa = load_module(
     "wiki_agent", Path(__file__).resolve().parents[1] / "agents" / "wiki-agent.py"
 )
 
+from agent_capabilities import claude_tools  # noqa: E402  # wiki-agent.py put tools/ on sys.path
+
 # Parsed TOML documents are dynamically typed; callers index them with string keys.
 TomlDocument = dict[str, Any]  # pyright: ignore[reportExplicitAny] -- see comment above
 
@@ -74,8 +76,8 @@ def main() -> int:
         help="Skip installed adapter drift when permissions prevent regeneration; generation fixtures still run",
     )
     options = parser.parse_args()
-    print("_build_allowed_tools:")
-    ro = wa._build_allowed_tools({"shell": False, "write": False})
+    print("claude_tools:")
+    ro = claude_tools({"shell": False, "write": False})
     check(
         "read-only agent still gets Read+Grep+Glob (B7)",
         ro == ["Read", "Grep", "Glob", "mcp__qmd__*"],
@@ -85,7 +87,7 @@ def main() -> int:
         not any(t.startswith(("Bash(", "Edit", "Write", "NotebookEdit")) for t in ro),
     )
 
-    sh = wa._build_allowed_tools({"shell": True, "write": False})
+    sh = claude_tools({"shell": True, "write": False})
     bash_rules = [t for t in sh if t.startswith("Bash(")]
     check("shell agent gets Bash rules", len(bash_rules) > 0)
     check(
@@ -126,7 +128,7 @@ def main() -> int:
         ),
     )
 
-    wr = wa._build_allowed_tools({"shell": True, "write": True})
+    wr = claude_tools({"shell": True, "write": True})
     check("write agent gets Edit/Write", all(t in wr for t in ("Edit", "Write")))
     check(
         "write agent gets no NotebookEdit (markdown vault, no notebooks)",
@@ -144,7 +146,7 @@ def main() -> int:
         "ordinary wiki writer has no arbitrary Python rule",
         "Bash(python3 *)" not in wr,
     )
-    runner_tools = wa._build_allowed_tools(wa._agent_permissions("project-run"))
+    runner_tools = claude_tools(wa._agent_permissions("project-run"))
     check(
         "project runner permits Python scripts and HTTP research",
         "Bash(python3 *)" in runner_tools,
