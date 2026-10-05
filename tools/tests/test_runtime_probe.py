@@ -29,13 +29,11 @@ probe = load_module("runtime_probe", SCRIPT)
 class ProbeHarnessTests(unittest.TestCase):
     """Mocks validate control flow, never the sandbox's OS behavior."""
 
-    def __init__(self, methodName: str = "runTest") -> None:
-        super().__init__(methodName)
-        self.directory: tempfile.TemporaryDirectory[str]
-        self.base: Path
-        self.source: Path
-        self.unrelated: Path
-        self.fixture_base: Path
+    directory: tempfile.TemporaryDirectory[str]
+    base: Path
+    source: Path
+    unrelated: Path
+    fixture_base: Path
 
     def setUp(self) -> None:
         for name, value in (

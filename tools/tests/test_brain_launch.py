@@ -29,10 +29,8 @@ Captured = dict[str, Any]  # pyright: ignore[reportExplicitAny] -- see comment a
 
 
 class PlannerTests(unittest.TestCase):
-    def __init__(self, methodName: str = "runTest") -> None:
-        super().__init__(methodName)
-        self.fixture: tempfile.TemporaryDirectory[str]
-        self.root: Path
+    fixture: tempfile.TemporaryDirectory[str]
+    root: Path
 
     def setUp(self) -> None:
         self.fixture = tempfile.TemporaryDirectory()
@@ -354,12 +352,10 @@ class PlannerTests(unittest.TestCase):
 
 @unittest.skipUnless(FISH is not None, "fish must be installed to test shell wrappers")
 class FishWrapperTests(unittest.TestCase):
-    def __init__(self, methodName: str = "runTest") -> None:
-        super().__init__(methodName)
-        self.fixture: tempfile.TemporaryDirectory[str]
-        self.root: Path
-        self.wrappers: Path
-        self.capture: Path
+    fixture: tempfile.TemporaryDirectory[str]
+    root: Path
+    wrappers: Path
+    capture: Path
 
     def setUp(self) -> None:
         self.fixture = tempfile.TemporaryDirectory(prefix="brain launch ")
