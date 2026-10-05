@@ -221,6 +221,8 @@ another agent's corpus through its report. Review a report before promoting its 
 Unconfirmed descendant cleanup writes `tools/runtime-state/cancellation-unconfirmed.json` and
 blocks further launches. An operator must verify that the recorded process group is gone before
 removing that marker. The runtime never clears it automatically.
+An interrupted run (SIGINT/SIGTERM) also writes it. To stop a headless loop without
+interrupting a run, send `kill -USR1 <pid>`; the launcher exits after the current run.
 Job removal allows a bounded two-second wait for launchd to finish teardown. A repeated cleanup
 request preserves the original failure instead of replacing it after the guardian has stopped.
 Raw PDFs are extracted to private scratch storage. Agent preprocessing does not modify raw files

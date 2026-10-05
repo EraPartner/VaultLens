@@ -781,6 +781,44 @@ class TimeoutTests(AgentUnitTests):
                     process.wait()
                 self._cleanup_tool(root)
 
+    def test_usr1_lets_the_active_run_finish_then_stops(self) -> None:
+        agent = self.fixture_agent()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            ready = root / "ready"
+            tool = [
+                sys.executable,
+                "-c",
+                f"import pathlib, time; pathlib.Path({str(ready)!r}).touch(); time.sleep(1)",
+            ]
+            script = (
+                "import importlib.util, sys\n"
+                f"spec = importlib.util.spec_from_file_location('agent', {agent.__file__!r})\n"
+                "agent = importlib.util.module_from_spec(spec)\n"
+                "spec.loader.exec_module(agent)\n"
+                "agent._install_signal_handlers()\n"
+                f"rc = agent._run_agent_command({tool!r}, cwd=agent.ROOT, timeout=60)\n"
+                "print('stop', agent._STOP_REQUESTED)\n"
+                "sys.exit(rc)\n"
+            )
+            process = subprocess.Popen(
+                [sys.executable, "-c", script], stdout=subprocess.PIPE, text=True
+            )
+            try:
+                deadline = time.monotonic() + 5
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(ready.exists())
+                process.send_signal(agent_signal.SIGUSR1)
+                stdout, _ = process.communicate(timeout=10)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+            # The run completed normally (no interrupt, so no cancellation gate).
+            self.assertEqual(process.returncode, 0)
+            self.assertIn("stop True", stdout)
+
     def test_completed_step_is_persisted_before_later_crash(self) -> None:
         now = dt.datetime(2026, 9, 5, 2, tzinfo=dt.timezone.utc)
         ledger: dispatch.Ledger = {"jobs": {}, "accounts": {}}
