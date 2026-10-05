@@ -452,7 +452,10 @@ Examples:
   python3 tools/agents/wiki-agent.py enhance --background &
   disown
   tail -f wiki/log/bg-enhance-*.log     # follow progress
-  kill <pid printed at startup>         # stop it
+  kill -USR1 <pid printed at startup>   # stop after the current iteration
+  kill <pid printed at startup>         # stop now; interrupting a run blocks later
+                                        # runs until cleanup is verified (see
+                                        # tools/runtime/README.md)
 """,
     )
 
@@ -1139,12 +1142,19 @@ _STOP_REQUESTED = False  # mutable flag; tests and handlers use this name
 
 
 def _install_signal_handlers() -> None:
-    """Stop between iterations, or cancel the owned process group during a run."""
+    """Stop between iterations, or cancel the owned process group during a run.
+
+    SIGUSR1 is the graceful stop: the current run finishes, so nothing is
+    interrupted and no cancellation gate is written. SIGINT/SIGTERM stop now.
+    """
 
     def _handler(signum: int, _frame: FrameType | None) -> None:
         global _STOP_REQUESTED
         _STOP_REQUESTED = True  # pyright: ignore[reportConstantRedefinition]
         name = signal.Signals(signum).name
+        if signum == signal.SIGUSR1:
+            print(f"\n[wiki-agent] {name} received; stopping after the current run.")
+            return
         if _ACTIVE_AGENT_PROCESS is not None:
             print(f"\n[wiki-agent] {name} received; stopping agent and its tools.")
             # _run_agent_command catches this and cleans up before propagating.
@@ -1153,6 +1163,7 @@ def _install_signal_handlers() -> None:
 
     signal.signal(signal.SIGINT, _handler)
     signal.signal(signal.SIGTERM, _handler)
+    signal.signal(signal.SIGUSR1, _handler)
 
 
 def _redirect_output_to_log(log_path: Path) -> bool:
@@ -1323,7 +1334,10 @@ def main(argv: list[str] | None = None) -> int:
             log_path = ROOT / log_path
         if _redirect_output_to_log(log_path):
             print(f"[wiki-agent] {_ts()} pid={os.getpid()} logging to {log_path}")
-            print(f"[wiki-agent] stop with: kill {os.getpid()}")
+            print(
+                f"[wiki-agent] stop after this iteration: kill -USR1 {os.getpid()} "
+                f"(plain kill interrupts the run and sets the cancellation gate)"
+            )
 
     _install_signal_handlers()
 
