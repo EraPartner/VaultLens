@@ -1230,6 +1230,100 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(failure.exception.group_id, 12345)
         cleanup.assert_called_once_with(child, grace=6.0)
 
+    def test_malformed_inner_cancellation_evidence_fails_closed(self) -> None:
+        # The sandboxed agent controls this file, so bad content must still
+        # raise ProcessCleanupError (which writes the gate), never a parse error.
+        evidence = self.run_dir / "scratch/inner-cancellation.json"
+        evidence.parent.mkdir()
+        for content, group in (
+            ("{bad", None),
+            ("[1, 2]", None),
+            ('{"group_id": "x"}', None),
+            ('{"group_id": true}', None),
+            ('{"group_id": 12345}', 12345),
+        ):
+            with self.subTest(content=content):
+                evidence.write_text(content)
+                child = mock.Mock(pid=23456)
+                child.wait.return_value = 125
+                with (
+                    mock.patch.object(subprocess, "Popen", return_value=child),
+                    mock.patch.object(signal, "signal"),
+                    mock.patch.object(runtime, "terminate_group"),
+                ):
+                    with self.assertRaises(process_control.ProcessCleanupError) as failure:
+                        _execute_prepared(
+                            ["public-workload"],
+                            Path("/public-runtime/srt"),
+                            self.run_dir,
+                            self.env,
+                            self.root,
+                        )
+                self.assertEqual(failure.exception.group_id, group)
+
+    def test_dangling_symlink_gate_still_blocks_runs(self) -> None:
+        state = self.root / "tools/runtime-state"
+        state.mkdir(parents=True, exist_ok=True)
+        gate = state / "cancellation-unconfirmed.json"
+        gate.symlink_to(self.root / "missing-target")
+        self.assertFalse(runtime.runtime_available(self.root))
+        with (
+            mock.patch.object(
+                runtime, "runtime_executable", return_value=Path("/public-runtime/srt")
+            ),
+            self.assertRaisesRegex(ValueError, "Previous tool cancellation"),
+        ):
+            with runtime.prepared_run(self.scope, None, snapshot=False):
+                self.fail("A symlinked gate must still block the run")
+
+    def test_snapshots_keep_only_the_newest_ten(self) -> None:
+        scope = access.resolve_scope(self.root, "writer", capability="wiki-write")
+        for index in range(13):
+            _snapshot(scope, f"20260101T0000{index:02d}-run{index}")
+        kept = sorted(
+            path.name for path in (self.root / "tools/runtime-state/backups").iterdir()
+        )
+        self.assertEqual(len(kept), 10)
+        self.assertEqual(kept[0], "20260101T000003-run3")
+        self.assertEqual(kept[-1], "20260101T000012-run12")
+
+    def test_snapshot_pruning_never_follows_or_removes_symlinks(self) -> None:
+        scope = access.resolve_scope(self.root, "writer", capability="wiki-write")
+        backups = self.root / "tools/runtime-state/backups"
+        backups.mkdir(parents=True)
+        outside = self.root / "outside-keep"
+        outside.mkdir()
+        (outside / "file.txt").write_text("keep\n")
+        (backups / "00000000T000000-link").symlink_to(outside)
+        for index in range(11):
+            _snapshot(scope, f"20260101T0000{index:02d}-run{index}")
+        self.assertTrue((outside / "file.txt").exists())
+
+    def test_terminal_probe_failure_does_not_leak_the_child(self) -> None:
+        child = mock.Mock(pid=23456, handles_terminal=False)
+        child.wait.return_value = 0
+        with (
+            mock.patch.object(runtime, "launch_supervised", return_value=child),
+            mock.patch.object(sys.stdin, "isatty", return_value=True),
+            mock.patch.object(sys.stdin, "fileno", return_value=0),
+            mock.patch.object(os, "tcgetpgrp", side_effect=OSError("public no tty")),
+            mock.patch.object(signal, "signal") as handler,
+            mock.patch.object(runtime, "terminate_group") as cleanup,
+        ):
+            with self.assertRaises(OSError):
+                _execute_prepared(
+                    ["public-workload"],
+                    Path("/public-runtime/srt"),
+                    self.run_dir,
+                    self.env,
+                    self.root,
+                    interactive=True,
+                )
+        cleanup.assert_called_once_with(child, grace=6.0)
+        # No handler may be left installed when the child was never handed the terminal.
+        for call in handler.call_args_list:
+            self.assertNotEqual(call.args[1], signal.SIG_IGN)
+
     def test_interactive_provider_uses_model_effort_project_cwd_and_prompt_delimiter(
         self,
     ) -> None:

@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import urllib.request
+from typing import cast
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -38,7 +39,13 @@ def latest_release() -> str:
         payload = response.read(64 * 1024 + 1)
     if len(payload) > 64 * 1024:
         raise ValueError("Registry metadata exceeds size limit")
-    version = json.loads(payload)["version"]
+    metadata: object = json.loads(payload)
+    # json.loads objects always have str keys; isinstance only narrows to dict[Unknown, Unknown].
+    version = (
+        cast("dict[str, object]", metadata).get("version")
+        if isinstance(metadata, dict)
+        else None
+    )
     if not isinstance(version, str) or not VERSION.fullmatch(version):
         raise ValueError("Registry returned an invalid release version")
     return version
@@ -74,7 +81,7 @@ def maintain(root: Path, *, check: bool = False) -> None:
         return
     with runtime_lock(root, exclusive=True):
         check_process_records(root)
-        if (root / "tools/runtime-state/cancellation-unconfirmed.json").exists():
+        if local_runtime.cancellation_gate_present(root):
             raise ValueError("Unconfirmed cleanup must be resolved before maintenance")
         install = needs_install(root)
         if not install:

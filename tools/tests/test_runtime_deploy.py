@@ -85,25 +85,6 @@ class DeploymentTests(unittest.TestCase):
     def deployed(self) -> JsonObject:
         return deploy.apply_deployment(self.plan())
 
-    def retirement_plan(self) -> JsonObject:
-        export = self.root / "retired-container"
-        records: list[JsonObject] = []
-        for relative in sorted(deploy.RETIRE_FILES):
-            source = export / "source" / relative
-            self.write(source, "OLD CHECKOUT " + relative)
-            records.append(
-                {"path": relative, "action": "retire", "sha256": deploy._digest(source)}
-            )
-        path = export / "manifest.json"
-        path.write_text(json.dumps({"records": records}))
-        return deploy.plan_deployment(
-            self.source,
-            self.destination,
-            instruction_candidates=self.instructions,
-            adapter_candidates=self.adapters,
-            retirement_manifest=path,
-        )
-
     def tree(self, directory: Path) -> JsonObject:
         return {
             str(path.relative_to(directory)): (
@@ -389,67 +370,17 @@ class DeploymentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "regular source"):
             self.plan()
 
-    def test_retirement_is_staged_then_applied_only_by_explicit_operator_action(
-        self,
-    ) -> None:
-        dockerfile = self.destination / ".devcontainer/Dockerfile"
-        private_launcher = self.destination / deploy.PRIVATE_LAUNCHER
-        unrelated = self.destination / ".devcontainer/unrelated-local-file"
-        self.write(dockerfile, "DIFFERENT LIVE OLD IMAGE")
-        self.write(private_launcher, "LIVE PRIVATE LAUNCHER")
-        self.write(unrelated, "PRESERVED LOCAL FILE")
-        plan = self.retirement_plan()
-        result = deploy.apply_deployment(plan)
-        self.assertTrue(dockerfile.exists())
-        self.assertTrue(private_launcher.exists())
-        migration = Path(result["migration"])
-        applied = deploy.operator_apply(migration, retire_containers=True)
-        self.assertFalse(dockerfile.exists())
-        self.assertFalse(private_launcher.exists())
-        self.assertEqual(unrelated.read_text(), "PRESERVED LOCAL FILE\n")
-        self.assertEqual(applied["container_files_retired"], 2)
-        snapshot = Path(applied["snapshot"])
-        self.assertEqual(
-            (snapshot / "replaced/.devcontainer/Dockerfile").read_text(),
-            "DIFFERENT LIVE OLD IMAGE\n",
-        )
-        self.assertEqual(
-            (snapshot / "replaced" / deploy.PRIVATE_LAUNCHER).read_text(),
-            "LIVE PRIVATE LAUNCHER\n",
-        )
-
-    def test_retirement_changes_after_review_are_rejected(self) -> None:
-        dockerfile = self.destination / ".devcontainer/Dockerfile"
-        self.write(dockerfile, "LIVE OLD IMAGE")
-        plan = self.retirement_plan()
-        self.write(dockerfile, "LIVE EDIT AFTER REVIEW")
-        with self.assertRaisesRegex(ValueError, "retirement changed after review"):
-            deploy.apply_deployment(plan)
-        self.assertIn("PREVIOUS LIVE", self.old_tool.read_text())
-        result = deploy.apply_deployment(self.retirement_plan())
-        self.write(dockerfile, "LIVE EDIT AFTER STAGING")
-        with self.assertRaisesRegex(
-            ValueError, "Container target changed after review"
+    def test_removed_container_retirement_is_rejected_not_ignored(self) -> None:
+        for key, value in (
+            ("retirement_manifest", "/old/manifest.json"),
+            ("retirement", [{"target": ".devcontainer/Dockerfile"}]),
         ):
-            deploy.operator_apply(Path(result["migration"]), retire_containers=True)
-        self.assertEqual((self.destination / "AGENTS.md").read_text(), "OLD SCHEMA\n")
-
-    def test_retirement_source_and_targets_are_confined_to_the_known_bundle(
-        self,
-    ) -> None:
-        plan = self.retirement_plan()
-        manifest_path = Path(plan["retirement_manifest"])
-        manifest = json.loads(manifest_path.read_text())
-        manifest["records"][0]["path"] = ".devcontainer/../secrets.json"
-        manifest_path.write_text(json.dumps(manifest))
-        with self.assertRaisesRegex(
-            ValueError, "Unknown or duplicate retirement target"
-        ):
-            deploy._retirement_plan(manifest_path, self.destination)
-        with self.assertRaisesRegex(ValueError, "exact staged manifest"):
-            deploy.operator_apply(
-                Path(self.deployed()["migration"]), retire_containers=True
-            )
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(ValueError, "retirement was removed"):
+                    deploy.apply_deployment({**self.plan(), key: value})
+        self.assertFalse(hasattr(deploy, "RETIRE_FILES"))
+        with self.assertRaises(SystemExit):
+            deploy.main(["operator-apply", "--migration", "x", "--retire-containers"])
 
 
 if __name__ == "__main__":
