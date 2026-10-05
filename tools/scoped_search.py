@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import stat
@@ -233,7 +234,9 @@ class ScopedSearch:
             raise ValueError("Queries must contain searchable words")
         limit = _bounded_int(arguments.get("limit"), default=10, maximum=MAX_RESULTS)
         paths = self.scope.document_paths()
-        results: list[JsonObject] = []
+        matched: list[tuple[str, str, str, list[int]]] = []
+        document_frequency = [0] * len(terms)
+        scanned = 0
         consumed = 0
         truncated = len(paths) > MAX_DOCUMENTS
         skipped = 0
@@ -247,19 +250,35 @@ class ScopedSearch:
             if consumed > MAX_CORPUS_BYTES:
                 truncated = True
                 break
+            scanned += 1
             relative = path.relative_to(self.scope.root).as_posix()
-            lowered = text.casefold()
             title = _title(text, path)
-            corpus = f"{relative}\n{title}\n{lowered}".casefold()
+            corpus = f"{relative}\n{title}\n{text}".casefold()
             counts = [corpus.count(term) for term in terms]
-            matches = sum(count > 0 for count in counts)
-            if not matches:
-                continue
-            position = min(
-                (lowered.find(term) for term in terms if term in lowered), default=0
+            for index, count in enumerate(counts):
+                document_frequency[index] += count > 0
+            if any(counts):
+                matched.append((relative, title, text, counts))
+        # Weight terms by rarity so common words in a natural-language query
+        # cannot outrank the one page that has the distinctive terms.
+        weights = [
+            math.log(1 + scanned / max(frequency, 1)) for frequency in document_frequency
+        ]
+        total_weight = sum(weights) or 1.0
+        results: list[JsonObject] = []
+        for relative, title, text, counts in matched:
+            present = [index for index, count in enumerate(counts) if count]
+            score = sum(weights[index] for index in present) / total_weight + min(
+                sum(counts), 100
+            ) / 1000
+            lowered = text.casefold()
+            anchor = max(
+                (index for index in present if terms[index] in lowered),
+                key=lambda index: weights[index],
+                default=None,
             )
+            position = 0 if anchor is None else lowered.find(terms[anchor])
             start = max(0, position - 200)
-            score = matches / len(terms) + min(sum(counts), 100) / 1000
             results.append(
                 {
                     "file": relative,
@@ -313,10 +332,15 @@ class ScopedSearch:
         max_chars = _bounded_int(
             arguments.get("max_chars"), default=8192, maximum=MAX_GET_CHARS
         )
-        documents = [
-            self.get({"path": path, "max_chars": min(8192, max_chars)})
-            for path in paths
-        ]
+        documents: list[JsonObject] = []
+        for path in paths:
+            try:
+                documents.append(
+                    self.get({"path": path, "max_chars": min(8192, max_chars)})
+                )
+            except ValueError as exc:
+                # Name the caller's own path so it can drop it and retry.
+                raise ValueError(f"{exc}: {str(path)[:200]!r}") from exc
         return {"documents": documents, "mode": "lexical"}
 
     def status(self, _arguments: JsonObject | None = None) -> JsonObject:
@@ -369,12 +393,12 @@ def _tools() -> list[JsonObject]:
     definitions: list[tuple[str, str, JsonObject]] = [
         (
             "search",
-            "Lexical search over approved current Markdown/text documents.",
+            "Lexical search over approved current Markdown/text documents. Matches words, not meaning: pass distinctive key terms and retry with synonyms.",
             query_schema,
         ),
         (
             "query",
-            "Lexical query; accepts query or searches. No semantic models or embeddings.",
+            "Lexical query; accepts query or searches. No semantic models or embeddings, so pass key terms rather than a full sentence.",
             query_schema,
         ),
         (
@@ -396,7 +420,7 @@ def _tools() -> list[JsonObject]:
         ),
         (
             "multi_get",
-            "Read up to 10 approved document paths.",
+            "Read up to 10 approved document paths. One unavailable path fails the whole call and is named in the error.",
             {
                 "type": "object",
                 "properties": {
