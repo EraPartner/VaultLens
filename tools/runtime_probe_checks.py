@@ -64,6 +64,10 @@ CHECK_NAMES = (
     "search.selection",
     "search.cli",
     "search.mcp",
+    "qmd-bridge.request-write",
+    "qmd-bridge.response-python-write",
+    "qmd-bridge.response-shell-write",
+    "qmd-bridge.folder-write",
 )
 NETWORK_CHECKS = ("network.http", "network.direct-socket", "network.shell-http")
 MACOS_GUARD_CHECKS = (

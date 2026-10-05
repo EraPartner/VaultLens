@@ -350,6 +350,48 @@ class ProbeHarnessTests(unittest.TestCase):
                 )
                 self.assertEqual(actual | host_checks, set(probe._expected(case)))
 
+    def test_every_emitted_probe_check_is_in_the_receipt_check_set(self) -> None:
+        # A check the probe emits but the receipt does not expect fails
+        # receipt.record even when everything passed (270 passed, 1 failed).
+        root, metadata = self.fixture()
+        run = self.base / "run"
+        # run_case always prepares the bridge, as a host with qmd on PATH did.
+        (run / "qmd-bridge/requests").mkdir(parents=True)
+        (run / "qmd-bridge/responses").mkdir()
+        emitted = {"runtime.prerequisite", *probe.LIFECYCLE_CHECKS}
+        with mock.patch.dict(
+            os.environ, {"VAULTLENS_RUNTIME_MANIFEST": str(run / "scope.json")}
+        ):
+            for case in probe.CASE_NAMES:
+                scope = probe.resolve_scope(
+                    root,
+                    "probe-" + case,
+                    project="selected" if case == "project-write" else None,
+                )
+                emitted.update(
+                    case + "." + name
+                    for name, _operation in probe.child_checks(scope, metadata, case)
+                )
+                emitted.add(case + ".outside-content-unchanged")
+        if probe.sys.platform == "darwin":
+            emitted.add("selected-read.macos.job-absent")
+        self.assertEqual(emitted, set(probe.expected_checks()))
+        report = {
+            "os_isolation_verified": True,
+            "checks": [{"check": name, "status": "passed"} for name in emitted],
+        }
+        self.assertEqual(
+            probe.verification._checks(report, probe.expected_checks()),
+            sorted(emitted),
+        )
+
+    def test_probe_cases_force_the_qmd_bridge(self) -> None:
+        with mock.patch.object(
+            probe.local_runtime, "prepared_run", side_effect=ValueError("stop")
+        ) as prepared, self.assertRaises(ValueError):
+            probe.run_case(self.fixture()[0], "selected-read")
+        self.assertEqual(prepared.call_args.kwargs["qmd"], probe.PROBE_QMD)
+
     def test_permission_denial_helper_refuses_missing_paths_or_success(self) -> None:
         probe._denied(mock.Mock(side_effect=PermissionError(errno.EACCES, "denied")))
         with self.assertRaises(FileNotFoundError):
