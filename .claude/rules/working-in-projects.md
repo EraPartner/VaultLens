@@ -1,1 +1,0 @@
-../../projects/AGENTS.md

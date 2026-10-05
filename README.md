@@ -139,8 +139,8 @@ widen the process boundary. Writer runs retain recoverable snapshots for review 
 changes this preference, `brain-agent` starts the selected interactive CLI, and `brain-wiki` /
 `brain-cos` select it for headless work. `brain-claude` and `brain-codex` explicitly choose a CLI.
 `brain-shell` opens a shell through the same runtime. Root discovery requires `AGENTS.md`,
-`tools/wiki.py`, and `tools/agents/wiki-agent.py`; the nearest matching checkout wins. `BRAIN_HOME`
-provides the fallback vault. Container image markers and private container launchers are not used.
+`tools/wiki.py`, and `tools/agents/wiki-agent.py`; the nearest matching checkout wins. Outside a matching checkout, `BRAIN_HOME`
+must name the vault; there is no built-in default path. Container image markers and private container launchers are not used.
 Preview host wrapper updates with `python3 tools/scripts/repair-provider-host.py --vault /path/to/Brain`.
 Scheduled batches freeze their provider and model when they start. An explicitly pinned provider
 in an installed LaunchAgent overrides the shared preference; see `tools/schedule/SPEC.md`.

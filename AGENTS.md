@@ -67,7 +67,7 @@ unless the operator asks; see `tools/evals/README.md`.
 
 Wiki page frontmatter, link/citation format, change-quality rules, archiving, and index/log
 conventions live in `wiki/AGENTS.md`. When a task launched from the repository root will read or
-write `wiki/`, read that file before acting. Claude also loads it through `.claude/rules/`.
+write `wiki/`, read that file before acting.
 
 `projects/<slug>/project.md` needs: `wiki_refs` (the `[concepts/foo, topics/bar]` wikilinks the
 project depends on), plus first-class `tags` and `domain` (used to scope wiki search to the project).
