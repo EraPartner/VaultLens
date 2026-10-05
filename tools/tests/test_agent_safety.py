@@ -143,6 +143,24 @@ class ProviderPermissionsTests(AgentUnitTests):
         command = agent.build_cli_command("codex", "", None, "ROLE", "TASK", perms)
         self.assertNotIn("sandbox_workspace_write.network_access=true", command)
 
+    def test_parser_rejects_abbreviated_flags(self) -> None:
+        # brain_launch injects full --cli/--effort names; an abbreviation would lose to them.
+        agent = self.fixture_agent()
+        with patch("sys.stderr"), self.assertRaises(SystemExit):
+            agent.build_parser().parse_args(["quality", "--eff", "low"])
+
+    def test_missing_context_policy_is_an_error_not_a_traceback(self) -> None:
+        agent = self.fixture_agent()
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(agent, "ROOT", Path(temporary)),
+            patch.object(agent, "_run_agent_command") as run,
+            patch("sys.stdout"),
+        ):
+            rc = agent.invoke_agent("quality", "claude", "", "low", "TASK", "", [])
+        self.assertEqual(rc, 1)
+        run.assert_not_called()
+
     def test_explicit_native_model_and_unspecified_effort_are_forwarded(self) -> None:
         agent = self.fixture_agent()
         args = agent.build_parser().parse_args(["quality"])

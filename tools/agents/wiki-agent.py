@@ -427,7 +427,10 @@ def _resolve_strategy(strategy: str | None, iteration_index: int) -> str | None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    # No abbreviations: brain_launch matches full flag names when it injects
+    # --cli/--model/--effort, so `--eff low` would be silently overridden.
     parser = argparse.ArgumentParser(
+        allow_abbrev=False,
         description="Wiki agent wrapper - invoke AI agents with configurable CLI/model/effort",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -763,9 +766,12 @@ def invoke_agent(
         return 1
 
     system_text = _prepare_system_prompt(agent_file, system_addon)
-    system_text += "\n\n" + (ROOT / ".agents" / "context-policy.md").read_text(
-        encoding="utf-8"
-    )
+    policy_file = ROOT / ".agents" / "context-policy.md"
+    try:
+        system_text += "\n\n" + policy_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        print(f"Error: cannot read {policy_file.relative_to(ROOT)}: {exc}")
+        return 1
     system_text += "\n\nRuntime contract: Sources remain immutable at their actual paths, including raw/inbox. Use qmd for scoped lexical search; global indexes and hosted web tools are unavailable. Mark tasks needing unapproved endpoints as blocked. Reports and edits must stay in the approved scope."
     perms = _agent_permissions(agent)
     task_prompt = prompt
