@@ -55,7 +55,7 @@ the scoped runtime only after these gates pass; see the [runtime guide](../tools
 ### Required Plugins
 
 1. **Dataview** - Dynamic tables and queries from frontmatter
-2. **Templater** - Auto-fills templates when creating new pages in wiki folders
+2. **Templater** - Inserts page templates from `wiki/_templates/` on command
 
 ### Recommended Plugins
 
@@ -64,7 +64,10 @@ the scoped runtime only after these gates pass; see the [runtime guide](../tools
 
 ### Templater Setup
 
-Templater is pre-configured to auto-apply templates when you create files in wiki subdirectories. Creating a new file in `wiki/sources/` auto-fills the source template.
+Templater's "Trigger on new file creation" setting is off on purpose. With it on, Templater runs
+`<% %>` code in any newly created note, including pages an agent writes, outside the agent
+sandbox. Insert a template into a new page with Templater's "Insert template" command. Leave the
+trigger off unless no agent can write to this vault.
 
 ### Graph View
 

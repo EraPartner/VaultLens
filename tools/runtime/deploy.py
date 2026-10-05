@@ -74,6 +74,8 @@ DEPLOY_FILES = (
     "tools/schedule/brain-schedule.sudoers",
     "tools/schedule/SPEC.md",
     "tools/runtime/install.sh",
+    "tools/runtime/package.json",
+    "tools/runtime/package-lock.json",
     "tools/runtime/maintain.py",
     "tools/runtime/check_boundary.py",
     "tools/runtime/macos-process-guard.mjs",

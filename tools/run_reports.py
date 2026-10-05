@@ -23,6 +23,8 @@ from local_access import REPORT_SUBTREE, RunScope
 
 MAX_REPORT_BYTES = 4 * 1024 * 1024
 _METADATA_BYTES = 4096
+_TEMPLATER_OPEN = "<%"
+_TEMPLATER_ESCAPED = "&lt;%"
 _CHUNK_BYTES = 8192
 _DRAIN_SECONDS = 3.0
 _LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
@@ -322,6 +324,14 @@ class Recorder:
             text = bytes(self._body).decode("utf-8", errors="ignore")
             errors = tuple(self._errors)
             truncated = self.truncated
+        # Obsidian Templater runs `<%` commands in newly created notes, outside
+        # the sandbox. Agent output is untrusted, so never publish a live marker.
+        text = text.replace(_TEMPLATER_OPEN, _TEMPLATER_ESCAPED)
+        budget = self.max_bytes - _METADATA_BYTES
+        encoded = text.encode("utf-8")
+        if len(encoded) > budget:
+            text = encoded[:budget].decode("utf-8", errors="ignore")
+            truncated = True
         finished = datetime.now(timezone.utc)
         partial = bool(returncode or errors or truncated)
         summary = (

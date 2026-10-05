@@ -146,6 +146,45 @@ class SudoersTests(unittest.TestCase):
         )
         self.assertNotIn("@BRAIN_", text)
 
+    def test_sudoers_render_refuses_existing_or_linked_destination(self) -> None:
+        # Another account must not pre-create or redirect the file root installs.
+        script = str(SCHEDULE / "render_plist.py")
+        env = clean_environment()
+        env["LOGNAME"] = env["USER"] = "alice"  # getpass.getuser() reads these
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            existing = directory / "existing.sudoers"
+            existing.write_text("ALL ALL=(ALL) NOPASSWD: ALL\n", encoding="utf-8")
+            target = directory / "target"
+            link = directory / "link.sudoers"
+            link.symlink_to(target)
+            for destination in (existing, link):
+                with self.subTest(destination=destination.name):
+                    run = subprocess.run(
+                        [sys.executable, script, "--sudoers", str(SUDOERS), str(destination)],
+                        capture_output=True,
+                        text=True,
+                        env=env,
+                    )
+                    self.assertEqual(run.returncode, 2, run.stdout)
+                    self.assertIn("exists", run.stderr)
+            self.assertFalse(target.exists())
+            self.assertIn("NOPASSWD: ALL", existing.read_text(encoding="utf-8"))
+            fresh = directory / "fresh.sudoers"
+            run = subprocess.run(
+                [sys.executable, script, "--sudoers", str(SUDOERS), str(fresh)],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertEqual(fresh.stat().st_mode & 0o777, 0o600)
+
+    def test_installer_hint_uses_a_private_directory_for_sudoers(self) -> None:
+        text = (SCHEDULE / "install.sh").read_text(encoding="utf-8")
+        self.assertNotIn("/tmp/brain-schedule.sudoers", text)
+        self.assertIn('rule_dir="\\$(mktemp -d)"', text)
+
     def test_hostile_or_privileged_names_are_refused(self) -> None:
         template = SUDOERS.read_text(encoding="utf-8")
         for user in ("", "root", "a b", "x\nALL ALL=(ALL) NOPASSWD: ALL", "A", "x,y", "1abc"):

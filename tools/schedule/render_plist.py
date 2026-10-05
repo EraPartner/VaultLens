@@ -190,10 +190,18 @@ def main(argv: list[str] | None = None) -> int:
         if args.sudoers:
             if args.validate or args.destination is None:
                 parser.error("--sudoers needs a destination and excludes --validate")
-            args.destination.write_text(
-                render_sudoers(args.source.read_text(encoding="utf-8"), getpass.getuser()),
-                encoding="utf-8",
+            text = render_sudoers(
+                args.source.read_text(encoding="utf-8"), getpass.getuser()
             )
+            # The operator installs this file as root. Refuse an existing path or
+            # symlink so another account cannot pre-create or redirect it.
+            descriptor = os.open(
+                args.destination,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+            )
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(text)
             print(f"Rendered {args.destination} for {getpass.getuser()}")
             return 0
         data = plistlib.loads(args.source.read_bytes())

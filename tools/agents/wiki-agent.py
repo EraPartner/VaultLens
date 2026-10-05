@@ -26,6 +26,7 @@ from urllib.parse import unquote
 
 
 ROOT = Path(__file__).resolve().parents[2]
+BACKGROUND_LOG_DIR = ROOT / "tools" / "runtime-state" / "logs"
 AGENTS_DIR = ROOT / ".agents" / "roles"
 TOOLS_DIR = ROOT / "tools"
 sys.path.insert(0, str(TOOLS_DIR))
@@ -448,7 +449,7 @@ Examples:
   # Background enhancement loop (alternate strategies, never stop, survives errors)
   python3 tools/agents/wiki-agent.py enhance --background &
   disown
-  tail -f wiki/log/bg-enhance-*.log     # follow progress
+  tail -f tools/runtime-state/logs/bg-enhance-*.log   # follow progress
   kill <pid printed at startup>         # stop it
 """,
     )
@@ -523,7 +524,8 @@ Examples:
         help=(
             "Enhance mode: convenience flag that enables --continue-on-error, "
             "--forever (unless --iterations N is set), and auto-routes output to "
-            "wiki/log/bg-enhance-<timestamp>.log. Combine with shell `&` and "
+            "the private tools/runtime-state/logs/bg-enhance-<timestamp>.log, which "
+            "no agent can read. Combine with shell `&` and "
             "`disown`, or `nohup ... &`, to detach from your shell."
         ),
     )
@@ -648,9 +650,10 @@ def build_prompt(
         return cos_prompts.get(mode, cos_prompts["brief"])
 
     prompts = {
-        "quality": f"Analyze the wiki page at: {page}",
-        "verify": f"Verify claims in the wiki source page: {source}",
-        "ingest": f"Process new source material: {source}",
+        # Paths can come from inbox file names; quote them so a crafted name stays data.
+        "quality": f"Analyze the wiki page at: {json.dumps(page)}",
+        "verify": f"Verify claims in the wiki source page: {json.dumps(source)}",
+        "ingest": f"Process new source material: {json.dumps(source)}",
         "contradict": "Find potential contradictions across wiki pages",
         "search": f"Search the wiki for: {source if source else page}",
         "enhance": (
@@ -1141,8 +1144,13 @@ def _redirect_output_to_log(log_path: Path) -> bool:
     The run then continues with console output instead of crashing on EROFS.
     """
     try:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        fh = open(log_path, "a", buffering=1, encoding="utf-8")
+        log_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        descriptor = os.open(
+            log_path,
+            os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW,
+            0o600,
+        )
+        fh = os.fdopen(descriptor, "a", buffering=1, encoding="utf-8")
     except OSError as exc:
         sys.stderr.write(
             f"[wiki-agent] WARN: cannot write log file {log_path} ({exc}); "
@@ -1202,7 +1210,9 @@ def _normalize_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -
             args.forever = True
         if not args.log_file:
             stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-            args.log_file = str(ROOT / "wiki" / "log" / f"bg-enhance-{stamp}.log")
+            # Transcripts hold what a write-profile run read; keep them out of the
+            # vault so later read-only agents cannot see them.
+            args.log_file = str(BACKGROUND_LOG_DIR / f"bg-enhance-{stamp}.log")
 
     # Multi-iteration / forever runs without a concrete target default to alternating.
     has_concrete_target = bool(args.page or args.topic or args.source or args.pdf)
@@ -1248,6 +1258,16 @@ def main(argv: list[str] | None = None) -> int:
     replay.extend(["--cli", args.cli, "--model", args.model])
     if args.effort:
         replay.extend(["--effort", args.effort])
+    # Redirect in the trusted launcher, before the runtime starts: the confined
+    # child cannot write the private log directory, and its stdout reaches the log
+    # through the launcher's report capture.
+    if args.log_file and active_scope() is None:
+        log_path = Path(args.log_file).expanduser()
+        if not log_path.is_absolute():
+            log_path = ROOT / log_path
+        if _redirect_output_to_log(log_path):
+            print(f"[wiki-agent] {_ts()} pid={os.getpid()} logging to {log_path}")
+            print(f"[wiki-agent] stop with: kill {os.getpid()}")
     guard_rc = _enter_runtime(args, replay)
     if guard_rc is not None:
         return guard_rc
@@ -1294,14 +1314,6 @@ def main(argv: list[str] | None = None) -> int:
             f"{review_count} review item(s) requiring consent",
             file=sys.stderr,
         )
-
-    if args.log_file:
-        log_path = Path(args.log_file).expanduser()
-        if not log_path.is_absolute():
-            log_path = ROOT / log_path
-        if _redirect_output_to_log(log_path):
-            print(f"[wiki-agent] {_ts()} pid={os.getpid()} logging to {log_path}")
-            print(f"[wiki-agent] stop with: kill {os.getpid()}")
 
     _install_signal_handlers()
 

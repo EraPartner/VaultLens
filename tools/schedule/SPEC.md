@@ -433,6 +433,9 @@ pass. The dispatcher routes them through `_route_work_items` and one per-tick
 Items carry `[from:<source>]` provenance. A handoff only queues into an inbox
 picked up by an already-scheduled project run; it never triggers another ad-hoc
 agent run.
+Routed text is untrusted model output: the receiving runner's role files every
+`[from:<source>]` item as `needs-clarification`, so it runs only after operator approval.
+That gate is enforced by the role, not by code.
 
 Tested: successful-output selection, Chief of Staff proposal stripping (the proposal
 parser and router were removed with the unused routing path),
