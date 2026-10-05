@@ -212,6 +212,27 @@ def main() -> int:
         check("T3 -> done", t3b.status == "done")
         check("T3 next_due cleared", t3b.next_due is None)
 
+    print("complete refuses non-clear tasks and malformed schedules:")
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "AGENDA.md"
+        p.write_text(SAMPLE, encoding="utf-8")
+        try:
+            agenda.complete(p, "T2", today)
+            refused = False
+        except ValueError:
+            refused = True
+        check("needs-clarification task is refused", refused)
+        check("refused complete leaves the file unchanged", p.read_text(encoding="utf-8") == SAMPLE)
+        bad = SAMPLE.replace("schedule:: weekly:Mon", "schedule:: every:2 weeks")
+        p.write_text(bad, encoding="utf-8")
+        try:
+            agenda.complete(p, "T1", today)
+            refused = False
+        except ValueError:
+            refused = True
+        check("malformed recurring schedule is refused", refused)
+        check("malformed schedule keeps the task unchanged", p.read_text(encoding="utf-8") == bad)
+
     print("resolve (needs-clarification -> clear, questions + clar entry dropped):")
     with tempfile.TemporaryDirectory() as d:
         p = Path(d) / "AGENDA.md"

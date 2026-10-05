@@ -417,9 +417,14 @@ def list_projects() -> list[Project]:
     return projects
 
 
+def _render_list_item(item: str) -> str:
+    # Quote items with whitespace so `_split_inline_list` never splits them.
+    return f'"{item}"' if re.search(r"\s", item) else item
+
+
 def _render_frontmatter_value(value: str | list[str]) -> str:
     if isinstance(value, list):
-        return "[" + ", ".join(value) + "]"
+        return "[" + ", ".join(_render_list_item(item) for item in value) + "]"
     return str(value)
 
 

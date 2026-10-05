@@ -170,7 +170,9 @@ def inventory_list(kind: str, status: str, as_json: bool) -> int:
 
 
 def inventory_show(ref: str, as_json: bool) -> int:
-    raw_ref = ref if ref.endswith(".md") else f"{ref}.md"
+    # Accept the `inventory/<kind>/<slug>.md` paths that `list` and `new` print.
+    raw_ref = ref.removeprefix("inventory/")
+    raw_ref = raw_ref if raw_ref.endswith(".md") else f"{raw_ref}.md"
     path = INVENTORY_DIR / raw_ref
     try:
         path.resolve().relative_to(INVENTORY_DIR.resolve())

@@ -502,19 +502,25 @@ def _write_lines(path: Path, lines: list[str]) -> None:
 
 def complete(path: str | Path, task_id: str, today: dt.date | None = None) -> bool:
     """Advance a task after the runner executed it: stamp last_run, then either
-    mark `done` (one-shot) or compute the next `next_due` (recurring)."""
+    mark `done` (one-shot) or compute the next `next_due` (recurring).
+
+    Raises ValueError, changing nothing, when the task is not `clear` or its
+    schedule is malformed."""
     today = today or dt.date.today()
     p = Path(path)
     _, tasks = parse_agenda(p)
     task = next((t for t in tasks if t.id == task_id), None)
     if task is None:
         return False
+    if task.status != "clear":
+        raise ValueError(
+            f"task {task_id} has status {task.status!r}; only a clear task can be completed"
+        )
+    # A malformed schedule raises here, before anything is written, so a broken
+    # recurring task is not silently ended as a one-shot.
+    nxt = compute_next_due(task.schedule, today)
     lines = p.read_text(encoding="utf-8").split("\n")
     _set_task_field(lines, task_id, "last_run", today.isoformat())
-    try:
-        nxt = compute_next_due(task.schedule, today)
-    except ValueError:
-        nxt = None
     if nxt is None:
         _set_task_field(lines, task_id, "status", "done")
         _set_task_field(lines, task_id, "next_due", "—")

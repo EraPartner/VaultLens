@@ -60,7 +60,13 @@ def _write_log_note(
         "pages": [page.strip().removesuffix(".md") for page in pages],
         "sources": list(sources),
     }
-    note_path = LOG_NOTES_DIR / f"{date}-{_slug(operation)}-{_slug(title)}.md"
+    stem = f"{date}-{_slug(operation)}-{_slug(title)}"
+    note_path = LOG_NOTES_DIR / f"{stem}.md"
+    suffix = 2
+    # Same-day entries with the same slug get their own note, not an overwrite.
+    while note_path.exists():
+        note_path = LOG_NOTES_DIR / f"{stem}-{suffix}.md"
+        suffix += 1
     body = f"# {title}\n\n{summary}\n"
     if notes:
         body += f"\nNotes: {notes}\n"
