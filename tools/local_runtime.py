@@ -177,7 +177,9 @@ def runtime_executable(root: Path = ROOT) -> Path:
         or not executable.is_file()
         or not os.access(executable, os.X_OK)
     ):
-        raise ValueError(f"Sandbox runtime must be the reviewed version {SRT_VERSION}")
+        raise ValueError(
+            f"Sandbox runtime must be the reviewed version {SRT_VERSION}; run bash tools/runtime/install.sh"
+        )
     if sys.platform == "darwin":
         if not Path("/usr/bin/sandbox-exec").is_file():
             raise ValueError("macOS Seatbelt is unavailable")
