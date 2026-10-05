@@ -192,6 +192,18 @@ class AccessProfileTests(unittest.TestCase):
         scope = self.resolve("writer", capability="wiki-write")
         self.assertTrue(scope.writable(self.root / "wiki/concepts/new.md"))
 
+    def test_writable_rejects_traversal_out_of_a_write_grant(self) -> None:
+        # wiki-write may read raw/sources but only write wiki/.
+        scope = self.resolve("wiki-write", capability="wiki-write")
+        self.assertTrue(scope.writable(self.root / "wiki/concepts/new.md"))
+        self.assertTrue(scope.readable(self.root / "raw/sources/approved.txt"))
+        for escape in (
+            "wiki/../raw/sources/approved.txt",
+            "wiki/concepts/../../raw/sources/approved.txt",
+        ):
+            with self.subTest(escape=escape):
+                self.assertFalse(scope.writable(self.root / escape))
+
     def test_writers_are_restricted_to_the_selected_layer_and_project(self) -> None:
         scope = self.resolve(
             "project-write", project="alpha", capability="project-write"

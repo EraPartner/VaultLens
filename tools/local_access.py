@@ -253,6 +253,11 @@ class RunScope:
         )
 
     def writable(self, path: Path) -> bool:
+        path = Path(path)
+        # readable() resolves the path but the grant comparison below is lexical,
+        # so wiki/../raw/x would pass both checks. Reject traversal outright.
+        if ".." in path.parts:
+            return False
         if path.name in PROTECTED_NAMES or not self.readable(path):
             return False
         return any(
