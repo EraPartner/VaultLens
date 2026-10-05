@@ -78,6 +78,13 @@ class InitTests(unittest.TestCase):
         self.assertIs(config["enable_system_commands"], False)
         self.assertEqual(config["startup_templates"], [""])
 
+    def test_plain_claude_sessions_ask_before_reading_the_consent_queue(self) -> None:
+        # The blanket Read allow must not pre-approve raw/review-inbox.
+        settings = json.loads(
+            (REPO_ROOT / ".claude/settings.json").read_text(encoding="utf-8")
+        )
+        self.assertIn("Read(**/raw/review-inbox/**)", settings["permissions"]["ask"])
+
     def test_operator_profile_is_an_optional_link_target(self) -> None:
         self.assertIn("entities/user-background", wiki.SPECIAL_LINK_TARGETS)
         home = (REPO_ROOT / "wiki/home.md").read_text(encoding="utf-8")

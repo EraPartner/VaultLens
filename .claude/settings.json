@@ -31,6 +31,9 @@
       "Bash(qmd ls*)",
       "Bash(qmd collection list*)",
       "Bash(qmd collection show*)"
+    ],
+    "ask": [
+      "Read(**/raw/review-inbox/**)"
     ]
   }
 }
