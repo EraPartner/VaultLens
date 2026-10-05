@@ -137,7 +137,7 @@ Extraction can be missing or fail; the launcher may attach the original PDF inst
 - Read the attached `raw/sources-text/*.md` with the Read tool. Treat it as ground truth.
 - If extraction is unavailable and the current tools support PDF input, read the original PDF directly. Otherwise report the missing extraction and request preprocessing for source-dependent work.
 - Do not materialize `raw/sources-text/` yourself: your write scope is `wiki/` only, and `raw/` is read-only in the sandbox. Pre-extraction is an operator or authorized ingest-setup step (`python3 tools/wiki.py preprocess --pdf …`).
-- Layout artifacts (page-number lines, broken paragraphs, table noise) are expected — read past them. Do not write extracts, scratch files, or outputs anywhere outside the project tree — the one sanctioned exception is the transient log-entry JSON written under `/tmp/` in step 7 (Maintenance).
+- Layout artifacts (page-number lines, broken paragraphs, table noise) are expected — read past them. Do not write extracts, scratch files, or outputs anywhere outside the project tree. The log entry in step 7 (Maintenance) goes through stdin, so it needs no scratch file.
 
 **Source identification when the page lists none** (`requires: []`, no `## Sources`): infer from the page title and tags. Then search across all raw sources:
 ```bash
@@ -206,10 +206,12 @@ After enhancing, update the source page (`wiki/sources/src-*.md`):
   ls wiki/concepts/ | grep -iE "fragment-of-broken-name"
   ```
 - Run `python3 tools/wiki.py links --fix --write` to add portable markdown mirrors to any new wikilinks (the tool computes relative paths; never hand-write the `([Title](path.md))` mirror), then `python3 tools/wiki.py index --rebuild` if you added or removed pages.
-- Record the enhancement in `wiki/log.md`. **Always use the JSON-file path** — never put title/summary directly on the command line: shell-special characters (`&`, `;`, `(...)`), common in titles like "K&R2" or chapter refs like "(5.11)", break command parsing and allowlist matching.
+- Record the enhancement in `wiki/log.md`. **Always pass the entry as JSON on stdin** — never put title/summary in command-line flags: shell-special characters (`&`, `;`, `(...)`), common in titles like "K&R2" or chapter refs like "(5.11)", break command parsing and allowlist matching.
 
-  1. Write the entry to a temp JSON file (e.g. `/tmp/wiki-log.json`):
-     ```json
+  Run one command with a quoted heredoc (`'EOF'` stops shell expansion); `-` makes
+  `--from-json` read stdin, so no temporary file is written:
+     ```text
+     python3 tools/wiki.py append-log --from-json - <<'EOF'
      {
        "operation": "enhance",
        "title": "<source or topic name>",
@@ -218,8 +220,8 @@ After enhancing, update the source page (`wiki/sources/src-*.md`):
        "sources": ["raw/sources/some.pdf"],
        "notes": ""
      }
+     EOF
      ```
-  2. Append it: `python3 tools/wiki.py append-log --from-json /tmp/wiki-log.json`
 
 **Good log summary**: name the specific sections added and key content — e.g. *"Added Huffman trie construction algorithm, Proposition T/U optimality proofs, and LZW worked example from Sedgewick §5.5; expanded Variants to cover adaptive Huffman and DEFLATE."*
 
