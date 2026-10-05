@@ -213,9 +213,12 @@ def native_executable(cli: str) -> Path:
     raise ValueError(f"Native CLI {cli!r} is not installed")
 
 
+CANCELLATION_GATE = "tools/runtime-state/cancellation-unconfirmed.json"
+
+
 def cancellation_gate_present(root: Path) -> bool:
     """True if the gate exists, including as a dangling symlink (exists() follows links)."""
-    gate = root / "tools/runtime-state/cancellation-unconfirmed.json"
+    gate = root / CANCELLATION_GATE
     return gate.is_symlink() or gate.exists()
 
 
@@ -780,6 +783,9 @@ def verify_active_boundary() -> RunScope:
     return scope
 
 
+SNAPSHOT_KEEP = 10
+
+
 def _snapshot(scope: RunScope, run_id: str) -> Path | None:
     if not scope.write_paths:
         return None
@@ -796,7 +802,22 @@ def _snapshot(scope: RunScope, run_id: str) -> Path | None:
                     "node_modules", "__pycache__", ".git", ".claude", ".codex"
                 ),
             )
+    _prune_snapshots(backup.parent)
     return backup
+
+
+def _prune_snapshots(backups: Path, keep: int = SNAPSHOT_KEEP) -> None:
+    """Keep the newest ``keep`` snapshots; run ids start with a UTC timestamp."""
+    try:
+        runs = sorted(
+            path
+            for path in backups.iterdir()
+            if path.is_dir() and not path.is_symlink()
+        )
+        for stale in runs[:-keep]:
+            shutil.rmtree(stale)
+    except OSError as exc:
+        print(f"Snapshot pruning skipped: {exc}", file=sys.stderr)
 
 
 @contextlib.contextmanager
@@ -827,10 +848,10 @@ def prepared_run(
 ) -> Generator[tuple[Path, Path, dict[str, str]], None, None]:
     """Prepare private per-run state, scope search, and recoverable writer changes."""
     check_process_records(scope.root)
-    quarantine = scope.root / "tools/runtime-state/cancellation-unconfirmed.json"
+    quarantine = scope.root / CANCELLATION_GATE
     if cancellation_gate_present(scope.root):
         raise ValueError(
-            "Previous tool cancellation is unconfirmed. Inspect tools/runtime-state/cancellation-unconfirmed.json before another run."
+            f"Previous tool cancellation is unconfirmed. Inspect {CANCELLATION_GATE} before another run."
         )
     executable = runtime_executable(scope.root)
     if require_verification:
@@ -1095,13 +1116,14 @@ def _execute_prepared(
         # Annotated so a stdin typed as Any cannot widen the narrowed type back to int | None.
         stdin_fd: int = sys.stdin.fileno()
         terminal = stdin_fd
-        foreground = os.tcgetpgrp(terminal)
-        previous[signal.SIGTTOU] = signal.signal(signal.SIGTTOU, signal.SIG_IGN)
         try:
+            foreground = os.tcgetpgrp(terminal)
+            previous[signal.SIGTTOU] = signal.signal(signal.SIGTTOU, signal.SIG_IGN)
             os.tcsetpgrp(terminal, child.pid)
         except OSError:
             terminate_group(child, grace=6.0)
-            signal.signal(signal.SIGTTOU, previous[signal.SIGTTOU])
+            if signal.SIGTTOU in previous:
+                signal.signal(signal.SIGTTOU, previous[signal.SIGTTOU])
             raise
 
     def stop(signum: int, _frame: FrameType | None) -> None:

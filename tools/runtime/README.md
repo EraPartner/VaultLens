@@ -212,8 +212,9 @@ credential files. Runtime report and recovery directories are separate from note
 The trusted parent records headless stdout in the profile's report folder and echoes it live.
 Each report has private permissions, run provenance, and a four MiB limit. Failed, truncated,
 or incomplete capture is marked partial. Agent file tools do not gain a report write grant.
-Writer runs retain snapshots under `tools/runtime-state/backups/`; inspect the reported snapshot
-and resulting diff before accepting automated changes.
+Writer runs retain snapshots under `tools/runtime-state/backups/`, and only the newest ten are
+kept (older ones are removed after each new snapshot); inspect the reported snapshot and
+resulting diff before accepting automated changes.
 Automatic reports stay under `wiki/reports/agents/`, with optional nested folders. Every run
 excludes that reserved subtree from reads and search, so derived private context does not enter
 another agent's corpus through its report. Review a report before promoting its content into notes.

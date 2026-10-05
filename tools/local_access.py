@@ -220,8 +220,15 @@ def _inside(path: Path, root: Path) -> Path:
 def _expand(root: Path, value: str, project: str | None) -> tuple[Path, ...]:
     relative = _relative(value, project)
     if any(character in relative for character in "*?["):
-        paths = sorted(root.glob(relative))
-        return tuple(_inside(path, root) for path in paths)
+        found: list[Path] = []
+        for path in sorted(root.glob(relative)):
+            try:
+                found.append(_inside(path, root))
+            except ValueError:
+                # A glob never grants an alias, protected or external match; one
+                # bad match must not fail every launch. Explicit selections still raise.
+                continue
+        return tuple(found)
     return (_inside(root / relative, root),)
 
 
