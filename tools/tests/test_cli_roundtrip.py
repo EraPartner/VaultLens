@@ -66,6 +66,26 @@ class CliRoundTripTests(unittest.TestCase):
         self.assertIn("[[concepts/my page]]", shown)
         self.assertNotIn("[[page]]", shown)
 
+    def test_block_list_frontmatter_is_read_and_rewritten(self) -> None:
+        # Obsidian's Properties UI writes lists one item per line.
+        self.assertEqual(self.wiki("project", "new", "demo").returncode, 0)
+        self.page("concepts/my page.md", "Body.", title="My Page")
+        project_md = self.root / "projects" / "demo" / "project.md"
+        text = project_md.read_text(encoding="utf-8")
+        start = text.index("wiki_refs:")
+        end = text.index("\n", start)
+        project_md.write_text(
+            text[:start] + "wiki_refs:\n  - concepts/my page" + text[end:], encoding="utf-8"
+        )
+        self.assertIn("[[concepts/my page]]", self.wiki("project", "show", "demo").stdout)
+        self.assertEqual(self.wiki("project", "link", "demo", "home").returncode, 0)
+        rewritten = project_md.read_text(encoding="utf-8")
+        self.assertIn('wiki_refs: ["concepts/my page", home]', rewritten)
+        self.assertNotIn("  - concepts/my page", rewritten)
+        shown = self.wiki("project", "show", "demo").stdout
+        self.assertIn("[[concepts/my page]]", shown)
+        self.assertIn("[[home]]", shown)
+
     def test_project_views_rebuild_with_the_running_interpreter(self) -> None:
         # A broken `python3` earlier on PATH must not half-create the project.
         shim = self.root / "shim"
