@@ -359,7 +359,7 @@ def due_projects(projects_dir: str | Path, today: dt.date) -> list[str]:
         try:
             if project_is_due(agenda_path, today):
                 out.append(agenda_path.parent.name)
-        except Exception:
+        except (OSError, ValueError):  # unreadable or undecodable agenda
             continue
     return out
 

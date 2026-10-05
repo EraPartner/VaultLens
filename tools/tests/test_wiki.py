@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import io
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -23,6 +24,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import wiki  # noqa: E402
+import wiki_cli  # noqa: E402
 import wiki_index  # noqa: E402
 import wiki_inventory  # noqa: E402
 import wiki_lint  # noqa: E402
@@ -687,8 +689,8 @@ def test_source_id_stats_and_sampling() -> None:
 
 
 def test_bounded_cli_output_defaults() -> None:
-    parsed_lint = wiki.build_parser().parse_args(["lint"])
-    parsed_tags = wiki.build_parser().parse_args(["tags"])
+    parsed_lint = wiki_cli.build_parser().parse_args(["lint"])
+    parsed_tags = wiki_cli.build_parser().parse_args(["tags"])
     check("lint uses a bounded human-output default", parsed_lint.limit is None)
     check("tags selects its output-aware default at runtime", parsed_tags.limit is None)
 
@@ -898,6 +900,109 @@ def test_append_log_matches_validate() -> None:
         check("no stray log note files for refused entries", len(list((root / "log").glob("*.md"))) == 1)
 
 
+def test_script_entry_point() -> None:
+    """`python3 tools/wiki.py` still dispatches through the CLI module and keeps exit codes."""
+    script = Path(wiki.__file__).resolve()
+    next_id = subprocess.run(
+        [sys.executable, str(script), "next-id"], capture_output=True, text=True, timeout=60
+    )
+    check(
+        "script entry runs a command",
+        next_id.returncode == 0 and next_id.stdout.startswith("src-"),
+        next_id.stderr,
+    )
+    no_command = subprocess.run(
+        [sys.executable, str(script)], capture_output=True, text=True, timeout=60
+    )
+    check(
+        "script entry reports a missing command with exit 2",
+        no_command.returncode == 2 and "wiki.py" in no_command.stderr,
+        no_command.stderr,
+    )
+
+
+def test_append_log_from_json_validation() -> None:
+    print("append-log --from-json payload errors:")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "wiki"
+        root.mkdir()
+        bad_payloads = {
+            "missing key": '{"operation": "ingest", "title": "T"}',
+            "not an object": "[1, 2]",
+            "pages not a list": '{"operation": "ingest", "title": "T", "summary": "S", "pages": "a"}',
+            "invalid JSON": "{bad",
+        }
+        for name, payload in bad_payloads.items():
+            path = Path(tmp) / "payload.json"
+            path.write_text(payload, encoding="utf-8")
+            with (
+                mock.patch.object(wiki_log, "WIKI_DIR", root),
+                mock.patch.object(wiki_log, "LOG_NOTES_DIR", root / "log"),
+                contextlib.redirect_stderr(io.StringIO()),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                try:
+                    rc = wiki_cli.main(["append-log", "--from-json", str(path)])
+                    detail = f"returned {rc}"
+                    clean = rc != 0
+                except SystemExit as exc:
+                    detail = f"exit {exc.code}"
+                    clean = exc.code not in (0, None)
+                except Exception as exc:  # noqa: BLE001 - the point is to catch a raw traceback
+                    detail = f"{type(exc).__name__}: {exc}"
+                    clean = False
+            check(f"{name} fails cleanly, not with a traceback", clean, detail)
+        check("no log written for bad payloads", not (root / "log.md").exists())
+
+
+def test_inventory_rejects_frontmatter_injection() -> None:
+    print("inventory --title/--summary injection:")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "wiki"
+        make_clean_wiki(root)
+        use_wiki(root)
+        with (
+            mock.patch.object(wiki_inventory, "INVENTORY_DIR", root / "inventory"),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            rc_title = wiki_inventory.inventory_new(
+                "task", "evil", "Nice\nstatus: archived", "proposed", "p2", ""
+            )
+            rc_summary = wiki_inventory.inventory_new(
+                "task", "evil2", "", "proposed", "p2", "ok\npriority: p0"
+            )
+            rc_ok = wiki_inventory.inventory_new("task", "fine", "Fine", "proposed", "p2", "ok")
+        check("newline in title is refused", rc_title == 1)
+        check("newline in summary is refused", rc_summary == 1)
+        check("no record file written for refused input", not (root / "inventory/task/evil.md").exists())
+        check("a normal record is still created", rc_ok == 0)
+
+
+def test_due_projects_only_swallows_expected_errors() -> None:
+    print("agenda due_projects error handling:")
+    import agenda
+
+    with tempfile.TemporaryDirectory() as tmp:
+        projects = Path(tmp)
+        for slug in ("good", "badbytes"):
+            (projects / slug).mkdir()
+            (projects / slug / "project.md").write_text("---\nstatus: active\n---\n")
+        today = dt.date(2026, 6, 28)
+        (projects / "good" / "AGENDA.md").write_text(
+            "---\nenabled: true\n---\n\n## Inbox\n- loose item\n", encoding="utf-8"
+        )
+        (projects / "badbytes" / "AGENDA.md").write_bytes(b"---\nenabled: true\n---\n\xff\xfe\n")
+        check("unreadable agenda is skipped, others still due", agenda.due_projects(projects, today) == ["good"])
+        with mock.patch.object(agenda, "project_is_due", side_effect=RuntimeError("bug")):
+            try:
+                agenda.due_projects(projects, today)
+            except RuntimeError:
+                surfaced = True
+            else:
+                surfaced = False
+        check("an unexpected error is not swallowed", surfaced)
+
+
 def main() -> int:
     test_golden()
     test_reports_excluded()
@@ -917,6 +1022,7 @@ def main() -> int:
     test_search_uses_body_words()
     test_source_id_stats_and_sampling()
     test_bounded_cli_output_defaults()
+    test_script_entry_point()
     test_log_frontmatter_is_stdlib_and_yaml_safe()
     test_search_limit_zero_returns_all()
     test_inventory_records_pass_lint()
@@ -924,6 +1030,9 @@ def main() -> int:
     test_index_nested_links()
     test_project_slug_validation()
     test_append_log_matches_validate()
+    test_append_log_from_json_validation()
+    test_inventory_rejects_frontmatter_injection()
+    test_due_projects_only_swallows_expected_errors()
     print(f"\n{passed} passed, {failed} failed")
     return 1 if failed else 0
 
