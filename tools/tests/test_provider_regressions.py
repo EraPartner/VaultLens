@@ -94,7 +94,7 @@ class ProviderRegressionTests(unittest.TestCase):
                 )
                 available = command[command.index("--tools") + 1].split(",")
                 allowed = command[command.index("--allowedTools") + 1].split(",")
-                expected = ["Read", "Grep", "Glob"]
+                expected = ["Read"]
                 if perms["shell"]:
                     expected.append("Bash")
                 if perms["write"]:

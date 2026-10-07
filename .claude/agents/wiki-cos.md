@@ -1,7 +1,7 @@
 ---
 name: wiki-cos
 description: "Chief of Staff for the Second Brain. Synthesises across all active projects and the wiki to produce daily briefs, status reports, commitment surfaces, and inbox triage. Read-only; advises, never writes to the vault."
-tools: Read, Grep, Glob, mcp__qmd__*, Bash
+tools: Read, mcp__qmd__*, Bash
 disallowedTools: Agent, Task
 model: "opus"
 effort: high

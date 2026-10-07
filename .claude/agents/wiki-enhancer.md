@@ -1,7 +1,7 @@
 ---
 name: wiki-enhancer
 description: "Enhance existing wiki pages by re-reading original source material into a canonical, dense reference structure. Strengthens cross-topic interlinking, expands sparse coverage, discovers topics present in sources but missing from the wiki, and supports iterative loop mode (sparse coverage, source-gap discovery, random page, shallowest stub, or agent-chosen) for periodic continuous improvement."
-tools: Read, Grep, Glob, mcp__qmd__*, Bash, Edit, Write
+tools: Read, mcp__qmd__*, Bash, Edit, Write
 disallowedTools: Agent, Task
 model: "opus"
 effort: xhigh

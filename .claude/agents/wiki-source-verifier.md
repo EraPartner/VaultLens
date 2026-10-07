@@ -1,7 +1,7 @@
 ---
 name: wiki-source-verifier
 description: "Cross-check a wiki page's claims against its original raw source material to verify accuracy, completeness, and context preservation. Read-only \u2014 does not modify files."
-tools: Read, Grep, Glob, mcp__qmd__*
+tools: Read, mcp__qmd__*, Bash
 disallowedTools: Agent, Task
 model: "sonnet"
 effort: high

@@ -17,7 +17,7 @@ Take two domains/topics, locate the wiki pages that constitute each, trace struc
 
 ## Pre-approved shell commands
 
-Read-only helper set only: `ls`/`grep`/`cat`/`head`/`tail`/`wc`/`sort`/`uniq`/`cut`/`tr`/`date`/`qmd` and the read-only `python3 tools/wiki.py` subcommands (`search`, `lint`, `tags`, `coverage`, `stats`, `sample`, `validate-log`, and the `list`/`show` views). There is no `find`; use the Glob tool. Never write, `curl`, `git`, or delete. The exact grants are in `tools/agent_capabilities.py`; headless Claude runs deny anything else.
+Read-only helper set only: `ls`/`grep`/`cat`/`head`/`tail`/`wc`/`sort`/`uniq`/`cut`/`tr`/`date`/`qmd` and the read-only `python3 tools/wiki.py` subcommands (`search`, `lint`, `tags`, `coverage`, `stats`, `sample`, `validate-log`, and the `list`/`show` views). There is no `find`; list files with `ls` (for example `ls wiki/concepts`) and search contents with `grep -rl`. Never write, `curl`, `git`, or delete. The exact grants are in `tools/agent_capabilities.py`; headless Claude runs deny anything else.
 
 ## Search capabilities
 

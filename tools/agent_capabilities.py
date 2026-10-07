@@ -90,8 +90,12 @@ def profile_capabilities(profile: str) -> Capabilities:
 
 
 def claude_tools(perms: Mapping[str, object], *, scoped_shell: bool = True) -> list[str]:
-    """Grant qmd explicitly; native manifests list tools, CLI grants shell rules."""
-    tools = ["Read", "Grep", "Glob", QMD_TOOLS]
+    """Grant qmd explicitly; native manifests list tools, CLI grants shell rules.
+
+    Claude's native macOS and Linux builds ship without Grep and Glob, so file
+    search goes through the read-only shell helpers (`ls`, `grep`).
+    """
+    tools = ["Read", QMD_TOOLS]
     if perms["shell"]:
         if not scoped_shell:
             tools.append("Bash")

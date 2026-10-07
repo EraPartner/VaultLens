@@ -1,7 +1,7 @@
 ---
 name: wiki-idea-discovery
 description: "Rank 3\u20135 next-direction candidates from vault material \u2014 open questions, ungraduated ideas, orphan research, and sparse pages \u2014 to answer \"what is worth working on next.\" Read-only: never writes. Shell is limited to the read-only helper set listed in the body."
-tools: Read, Grep, Glob, mcp__qmd__*, Bash
+tools: Read, mcp__qmd__*, Bash
 disallowedTools: Agent, Task
 model: "opus"
 effort: high

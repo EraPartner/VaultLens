@@ -1,7 +1,7 @@
 ---
 name: wiki-connect
 description: "Bridge two unrelated domains using the wiki's link graph to generate novel, non-obvious ideas at their intersection. Read-only: never writes. Shell is limited to the read-only helper set listed in the body."
-tools: Read, Grep, Glob, mcp__qmd__*, Bash
+tools: Read, mcp__qmd__*, Bash
 disallowedTools: Agent, Task
 model: "opus"
 effort: high

@@ -131,7 +131,7 @@ class ProviderCommandsTests(unittest.TestCase):
         self.assertEqual(option(command, "--permission-mode"), "dontAsk")
         self.assertEqual(option(command, "--permission-prompts"), "none")
         self.assertIn("--no-session-persistence", command)
-        self.assertEqual(option(command, "--tools"), "Read,Grep,Glob")
+        self.assertEqual(option(command, "--tools"), "Read")
         self.assertNotIn("--model", command)
         self.assertNotIn("--effort", command)
         self.assertEqual(command[-1], "TASK")

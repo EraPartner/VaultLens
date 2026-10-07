@@ -1,7 +1,7 @@
 ---
 name: wiki-emerge
 description: "Surface unnamed patterns from recent vault activity \u2014 recurring themes, hidden through-lines, and unstated conclusions the operator has not articulated. Read-only: never writes. Shell is limited to the read-only helper set listed in the body."
-tools: Read, Grep, Glob, mcp__qmd__*, Bash
+tools: Read, mcp__qmd__*, Bash
 disallowedTools: Agent, Task
 model: "opus"
 effort: high

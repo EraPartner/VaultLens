@@ -1,7 +1,7 @@
 ---
 name: wiki-ingest
 description: "Process raw source material into the wiki. Use for ingesting PDFs, articles, books, and other sources from raw/sources/ into structured wiki pages."
-tools: Read, Grep, Glob, mcp__qmd__*, Bash, Edit, Write
+tools: Read, mcp__qmd__*, Bash, Edit, Write
 disallowedTools: Agent, Task
 model: "sonnet"
 effort: high
