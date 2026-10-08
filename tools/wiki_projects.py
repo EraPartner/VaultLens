@@ -11,12 +11,15 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import TypedDict
 
 import agenda
+from local_access import SLUG as RUNTIME_SLUG
 from project_state import is_frozen_project
 
 from wiki import (
@@ -211,7 +214,9 @@ def _rebuild_projects_todo() -> None:
     refreshes the frozen-project exclusions in `projects/deadlines.md`.
     """
     script = ROOT / "tools" / "scripts" / "rebuild-projects-todo.sh"
-    subprocess.run([str(script)], check=True)
+    # Run the script's CLI calls with this interpreter, not whatever `python3` is on PATH.
+    env = {**os.environ, "BRAIN_PYTHON": os.environ.get("BRAIN_PYTHON") or sys.executable}
+    subprocess.run([str(script)], check=True, env=env)
     _rebuild_deadlines()
 
 
@@ -260,6 +265,13 @@ def _project_new(slug: str) -> int:
     cleaned = slug.strip().strip("/")
     if not _valid_slug(cleaned):
         print(f"Invalid project slug: {slug!r}")
+        return 1
+    # New projects must also be launchable: the runtime only accepts these slugs.
+    if not RUNTIME_SLUG.match(cleaned):
+        print(
+            f"Invalid project slug: {slug!r} (use letters, digits, '-' or '_', "
+            "starting with a letter or digit)"
+        )
         return 1
     project_dir = PROJECTS_DIR / cleaned
     if project_dir.exists():
@@ -471,6 +483,11 @@ def _project_agenda(
         print(f"Invalid project slug: {proj!r}")
         return 1
 
+    if sub in ("complete", "resolve", "new-id", "ack") and proj:
+        if not _agenda_path(proj).is_file():
+            print(f"No AGENDA.md for '{proj}' — run: project agenda scaffold-all")
+            return 1
+
     if sub == "scaffold-all":
         created = agenda.scaffold_all(PROJECTS_DIR, today)
         if created:
@@ -595,7 +612,11 @@ def _project_agenda(
             print(f"Error: project agenda {sub} <slug> <task-id> requires both")
             return 1
         fn = agenda.complete if sub == "complete" else agenda.resolve
-        ok = fn(_agenda_path(proj), item_id, today)
+        try:
+            ok = fn(_agenda_path(proj), item_id, today)
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            return 1
         if not ok:
             print(f"Task '{item_id}' not found in project '{proj}'")
             return 1

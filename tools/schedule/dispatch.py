@@ -435,14 +435,12 @@ def step_due(step: "Step", ledger: Ledger, now: datetime) -> bool:
     if step.period == "weekly":
         if last_dt is None:
             return True  # first run on the first eligible nightly window
-        # Calendar days, not elapsed 24h blocks: a tick earlier in the day than
-        # the previous success would otherwise count 6 days and slip a weekday.
-        age = (now.date() - last_dt.date()).days
-        if age < 7:
-            return False
-        if now.weekday() == 6:  # prefer Sunday
-            return True
-        return age >= 8  # missed Sunday -> catch up the next eligible night
+        # Anchor to the most recent Sunday (local calendar date): due until a run
+        # succeeds on or after it. A missed Sunday catches up on the next eligible
+        # night, and the following Sunday runs again, so the cadence never drifts.
+        today = now.date()
+        last_sunday = today - timedelta(days=(today.weekday() + 1) % 7)
+        return last_dt.date() < last_sunday
     return False
 
 
@@ -487,6 +485,8 @@ def _ingested_raw_references() -> set[str]:
     references: set[str] = set()
     srcdir = ROOT / "wiki" / "sources"
     if srcdir.is_dir() and not srcdir.is_symlink():
+        # `<...>` destinations run to the closing `>`: they exist for names holding `]`.
+        angle = re.compile(r"<(?:\./|\.\./)*(raw/(?:sources|inbox)/[^<>\n]+)>")
         pat = re.compile(r"raw/(?:sources|inbox)/[^\]|>)\n]+")
         for page in srcdir.glob("*.md"):
             if page.is_symlink() or not page.is_file():
@@ -495,9 +495,10 @@ def _ingested_raw_references() -> set[str]:
                 text = page.read_text(encoding="utf-8")
             except (OSError, UnicodeError):
                 continue
+            references.update(unquote(match.group(1).strip()) for match in angle.finditer(text))
             references.update(
                 unquote(match.group().strip().strip("'\"`"))
-                for match in pat.finditer(text)
+                for match in pat.finditer(angle.sub("", text))
             )
     return references
 
@@ -529,6 +530,8 @@ def _ingest_targets() -> list[list[str]]:
             and not p.is_symlink()
             and not p.name.startswith(".")
             and f"raw/inbox/{p.name}" not in ingested
+            # Wikilinks drop `.md`: `[[raw/inbox/note]]` cites note.md.
+            and not (p.suffix == ".md" and f"raw/inbox/{p.stem}" in ingested)
         ]
     srcs = ROOT / "raw" / "sources"
     if srcs.is_dir() and not srcs.is_symlink():
@@ -553,22 +556,46 @@ def _project_runner_targets() -> list[list[str]]:
     projects stay due and are caught up on the next eligible night.
     """
     today = now_local().date()
-    out: list[list[str]] = []
+    candidates: list[tuple[str, str]] = []  # (last_run sort key, slug)
     projects = ROOT / "projects"
     if not projects.is_dir() or projects.is_symlink():
-        return out
+        return []
+    state = agenda.load_runner_state()
     for project in sorted(projects.iterdir()):
         slug = project.name
         selected = resolve_proposal_dest(slug)
         if selected is None or agenda.is_paused_for_review(slug):
+            continue
+        last_run = _runner_last_run(state, slug)
+        # A retry tick (another project failed) must not re-run a project that
+        # already succeeded tonight.
+        if last_run is not None and last_run.date() == today:
             continue
         try:
             if not agenda.project_is_due(selected, today):
                 continue
         except (OSError, UnicodeError, ValueError):
             continue
-        out.append(["project-run", "--project", slug])
-    return out[:MAX_PROJECTS_PER_NIGHT]
+        candidates.append((last_run.isoformat() if last_run else "", slug))
+    # Least recently run first, so projects past the cap are caught up next night
+    # instead of losing their slot to the same alphabetical leaders every night.
+    candidates.sort()
+    return [
+        ["project-run", "--project", slug]
+        for _, slug in candidates[:MAX_PROJECTS_PER_NIGHT]
+    ]
+
+
+def _runner_last_run(state: agenda.RunnerState, slug: str) -> datetime | None:
+    record = state.get(slug)
+    raw = record.get("last_run") if isinstance(record, dict) else None
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return parsed.astimezone() if parsed.tzinfo else parsed
 
 
 def _runner_slug(args: list[str]) -> str | None:
@@ -733,6 +760,37 @@ def _prune_logs(
     return removed
 
 
+def _accumulate_rollup(
+    now: datetime, slugs: list[str], chunks: list[str]
+) -> tuple[list[str], list[str]]:
+    """Merge this tick's project-runner output into tonight's host-owned record."""
+    record = SNAPSHOT_DIR / f"{now:%Y-%m-%d}" / ".rollup.json"
+    previous_slugs: list[str] = []
+    previous_chunks: list[str] = []
+    try:
+        data = json.loads(record.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        data = None
+    except (OSError, ValueError):
+        data = None  # unreadable record: keep tonight's output rather than fail
+    if isinstance(data, dict):
+        # json.loads returns untyped values; each field is narrowed below.
+        stored_slugs = cast(dict[str, object], data).get("slugs")
+        stored_chunks = cast(dict[str, object], data).get("chunks")
+        if isinstance(stored_slugs, list) and isinstance(stored_chunks, list):
+            previous_slugs = [s for s in cast(list[object], stored_slugs) if isinstance(s, str)]
+            previous_chunks = [c for c in cast(list[object], stored_chunks) if isinstance(c, str)]
+    merged_slugs = previous_slugs + [s for s in slugs if s not in previous_slugs]
+    merged_chunks = previous_chunks + chunks
+    record.parent.mkdir(parents=True, exist_ok=True)
+    temporary = record.with_name(f".rollup-{secrets.token_hex(8)}.json")
+    temporary.write_text(
+        json.dumps({"slugs": merged_slugs, "chunks": merged_chunks}), encoding="utf-8"
+    )
+    temporary.replace(record)
+    return merged_slugs, merged_chunks
+
+
 def _project_runner_header(slugs: list[str], now: datetime) -> str:
     """Host-built preamble for the roll-up: the per-project restore command for the
     apply-don't-commit snapshots (projects/ is gitignored, so this is the undo)."""
@@ -754,8 +812,8 @@ def _project_runner_header(slugs: list[str], now: datetime) -> str:
         )
     lines.append("")
     lines.append(
-        "Once reviewed, resume a project's nightly runs with "
-        "`python3 tools/wiki.py project agenda ack <slug>`."
+        "A restore also pauses that project's nightly runs. Once reviewed, resume "
+        "them with `python3 tools/wiki.py project agenda ack <slug>`."
     )
     return "\n".join(lines)
 
@@ -1607,10 +1665,11 @@ def notify(title: str, msg: str) -> None:
 # real opted-in project is left advisory (logged), not force-filed somewhere.
 
 
-# The routed-work-item grammar: `<keyword>:: <target-project> | <imperative task> | <why-or-ref>`.
+# The routed-work-item grammar: `<keyword>:: <target-project> | <imperative task> | <why-or-ref>`,
+# optionally as a markdown list item (the runner's stdout contract shows `- handoff:: ...`).
 def _routed_re(keyword: str) -> re.Pattern[str]:
     return re.compile(
-        rf"^\s*{keyword}::\s*(?P<target>[^|]+?)\s*\|\s*(?P<task>[^|]+?)\s*\|\s*(?P<why>.+?)\s*$"
+        rf"^\s*(?:[-*+]\s+)?{keyword}::\s*(?P<target>[^|]+?)\s*\|\s*(?P<task>[^|]+?)\s*\|\s*(?P<why>.+?)\s*$"
     )
 
 
@@ -2050,6 +2109,10 @@ def _run_steps(
         # step (project-runner) yields a single aggregated roll-up rather than each
         # invocation overwriting the last. Single-invocation report steps are
         # unaffected (one chunk -> identical output).
+        if step.name == "project-runner" and report_chunks:
+            # Retry ticks add to tonight's roll-up instead of replacing it, so
+            # earlier projects keep their report and restore command.
+            ran_slugs, report_chunks = _accumulate_rollup(now, ran_slugs, report_chunks)
         if step.report and report_chunks:
             body = "\n\n---\n\n".join(c.strip() for c in report_chunks)
             if step.name == "project-runner":

@@ -181,10 +181,8 @@ Day-to-day core — everything else lives in the per-operation runbooks under
 python3 tools/wiki.py lint                       # fast health check (links, metadata, staleness)
 python3 tools/wiki.py search "term"              # substring search (qmd preferred — see Search)
 qmd search "<keywords>"                          # scoped lexical search in agent runs
+qmd query "<question>"                           # scoped; ranks with qmd's index when enabled
 qmd update                                       # full-vault re-index: explicit operator workflow
-ruff check tools/                                # lint (CI pins ruff 0.15.17)
-for t in tools/tests/test_*.py; do python3 "$t"; done   # tooling tests, as CI runs them
 ```
 
-Run each test file directly. `python -m unittest discover` finds nothing, because the suites are
-not an importable package. CI uses Python 3.12 and also runs `python -m compileall -q tools`.
+Changing the tooling itself (lint, typing, tests, CI) follows `tools/AGENTS.md`.

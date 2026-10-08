@@ -68,6 +68,7 @@ Check = tuple[str, Callable[[], object]]
 
 PUBLIC_HOST = "registry.npmjs.org"
 PUBLIC_URL = "https://" + PUBLIC_HOST + "/"
+PROBE_QMD = Path("/usr/bin/false")
 TRUSTED_FILES = (
     "tools/local_access.py",
     "tools/local_runtime.py",
@@ -80,6 +81,13 @@ TRUSTED_FILES = (
     "tools/run_reports.py",
     "tools/scoped_search.py",
     "tools/agents/wiki-agent.py",
+    "tools/agenda.py",
+    "tools/context_budget.py",
+    "tools/context_sources.py",
+    "tools/project_state.py",
+    "tools/wiki.py",
+    "tools/wiki_lint.py",
+    "tools/wiki_inventory.py",
     "tools/llm_provider.py",
     "tools/agent_profiles.py",
     "tools/agent_capabilities.py",
@@ -1101,6 +1109,26 @@ def child_checks(scope: RunScope, metadata: JsonObject, case: str) -> list[Check
         ),
         ("search.mcp", lambda: _search_mcp(root)),
     ]
+    # run_case always starts the host-side qmd bridge, so these checks are
+    # required: the sandbox may post requests, but must not forge the host's
+    # answers. A missing bridge folder fails them rather than dropping them.
+    bridge = run / "qmd-bridge"
+    request = bridge / "requests" / ("probe-" + case + ".txt")
+    response = bridge / "responses" / ("probe-" + case + ".txt")
+    checks.extend(
+        [
+            ("qmd-bridge.request-write", lambda: _scratch(request)),
+            ("qmd-bridge.response-python-write", lambda: _deny_write(response)),
+            (
+                "qmd-bridge.response-shell-write",
+                lambda: _shell(response, write=True, allowed=False),
+            ),
+            (
+                "qmd-bridge.folder-write",
+                lambda: _deny_write(bridge / ("probe-" + case + ".txt")),
+            ),
+        ]
+    )
     if case == "selected-read":
         checks.extend(
             [
@@ -1510,8 +1538,10 @@ def run_case(root: Path, case: str) -> list[CheckResult]:
         root, "probe-" + case, project="selected" if case == "project-write" else None
     )
     results: list[CheckResult] = []
+    # Force the qmd bridge so its write boundary is checked on every host. The
+    # probe never posts a valid request, so this executable is never run.
     with local_runtime.prepared_run(
-        scope, None, snapshot=False, require_verification=False
+        scope, None, snapshot=False, require_verification=False, qmd=PROBE_QMD
     ) as (
         executable,
         run,

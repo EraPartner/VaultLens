@@ -34,7 +34,8 @@ import re
 LINK_RE = re.compile(r"\[\[([^\]|#]+)(#[^\]|]+)?(\|[^\]]+)?\]\]")
 # A markdown mirror immediately following `]]` (with optional leading space):
 #   ([Name](path))  — used to detect links that are already dual-linked.
-MIRROR_RE = re.compile(r"^\s*\(\[[^\]]*\]\([^)]*\)\)")
+# The destination may be `<...>` or hold one level of balanced parentheses.
+MIRROR_RE = re.compile(r"^\s*\(\[[^\]]*\]\((?:<[^<>\n]*>|(?:[^()\n]|\([^()\n]*\))*)\)\)")
 # An inline code span: a backtick run closed by a run of the same length.
 CODE_SPAN_RE = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 
@@ -100,7 +101,10 @@ def _process_line(
         if not rewrite:
             continue
         display = match.group(3)[1:] if match.group(3) else target_page.title
-        mirror = f" ([{display}]({_relative_link(source, target_page)}))"
+        href = _relative_link(source, target_page)
+        if re.search(r"\s", href):
+            href = f"<{href}>"
+        mirror = f" ([{display}]({href}))"
         line = line[: match.end()] + mirror + line[match.end():]
     return line
 

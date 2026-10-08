@@ -21,6 +21,7 @@ from _loader import load_module
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "schedule"))
 import dispatch  # noqa: E402
 import agenda  # noqa: E402
+import restore_project as restore_cli  # noqa: E402
 from restore_project import restore_project  # noqa: E402
 
 # One alias per private name the suite exercises (tests legitimately touch internals).
@@ -29,6 +30,7 @@ _project_runner_targets = dispatch._project_runner_targets  # pyright: ignore[re
 _run_steps = dispatch._run_steps  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
 _snapshot_project = dispatch._snapshot_project  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
 _project_runner_header = dispatch._project_runner_header  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
+_accumulate_rollup = dispatch._accumulate_rollup  # pyright: ignore[reportPrivateUsage]  # tests exercise internals
 
 
 def _noop_log(_: str) -> None:
@@ -314,6 +316,36 @@ class SchedulerRecoveryTests(unittest.TestCase):
             for name, data in files.items():
                 self.assertEqual((inbox / name).read_bytes(), data)
 
+    def test_inbox_note_cited_without_extension_is_not_reingested(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inbox = root / "raw" / "inbox"
+            wiki_sources = root / "wiki" / "sources"
+            inbox.mkdir(parents=True)
+            wiki_sources.mkdir(parents=True)
+            (inbox / "article.md").write_text("note")
+            with patch.object(dispatch, "ROOT", root):
+                (wiki_sources / "article.md").write_text(
+                    "Source file: [[raw/inbox/article]]\n"
+                )
+                self.assertEqual(_ingest_targets(), [])
+
+    def test_angle_bracket_citation_with_square_brackets_marks_ingested(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sources = root / "raw" / "sources"
+            wiki_sources = root / "wiki" / "sources"
+            sources.mkdir(parents=True)
+            wiki_sources.mkdir(parents=True)
+            pdf = sources / "Smith [2024] Report.pdf"
+            pdf.write_bytes(b"fixture")
+            with patch.object(dispatch, "ROOT", root):
+                self.assertEqual(_ingest_targets(), [["ingest", "--source", str(pdf)]])
+                (wiki_sources / "smith.md").write_text(
+                    "Source: [PDF](<../../raw/sources/Smith [2024] Report.pdf>)\n"
+                )
+                self.assertEqual(_ingest_targets(), [])
+
     def test_handoff_routes_only_to_real_opted_in_projects(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -409,6 +441,45 @@ class SchedulerRecoveryTests(unittest.TestCase):
                     _project_runner_targets(),
                     [["project-run", "--project", "enabled"]],
                 )
+
+    def test_project_runner_skips_tonights_successes_and_rotates_past_the_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            slugs = ["pa", "pb", "pc", "pd", "pe", "pf"]
+            for slug in slugs:
+                project = root / "projects" / slug
+                project.mkdir(parents=True)
+                (project / "project.md").write_text("---\nstatus: active\n---\n")
+                (project / "AGENDA.md").write_text(
+                    "---\nenabled: true\n---\n\n## Inbox\n- Review the fixture\n"
+                )
+            state: agenda.RunnerState = {
+                "pa": {"unacked": 0, "last_run": self.now.isoformat()},  # ran tonight
+                "pb": {"unacked": 0, "last_run": "2026-10-02T03:00:00+00:00"},
+                "pc": {"unacked": 0, "last_run": "2026-10-01T03:00:00+00:00"},
+            }
+            with (
+                patch.object(dispatch, "ROOT", root),
+                patch.object(dispatch, "now_local", return_value=self.now),
+                patch.object(agenda, "is_paused_for_review", return_value=False),
+                patch.object(agenda, "load_runner_state", return_value=state),
+                patch.object(dispatch, "MAX_PROJECTS_PER_NIGHT", 4),
+            ):
+                selected = [args[2] for args in _project_runner_targets()]
+        # Never-run projects first, then least recently run; pa already ran tonight.
+        self.assertEqual(selected, ["pd", "pe", "pf", "pc"])
+
+    def test_project_runner_rollup_keeps_earlier_ticks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            snapshots = Path(temporary) / "snapshots"
+            with patch.object(dispatch, "SNAPSHOT_DIR", snapshots):
+                first = _accumulate_rollup(self.now, ["alpha"], ["alpha report"])
+                second = _accumulate_rollup(self.now, ["beta"], ["beta report"])
+                header = _project_runner_header(second[0], self.now)
+        self.assertEqual(first, (["alpha"], ["alpha report"]))
+        self.assertEqual(second, (["alpha", "beta"], ["alpha report", "beta report"]))
+        self.assertIn("- `alpha`:", header)
+        self.assertIn("- `beta`:", header)
 
     def test_host_reports_cannot_follow_directory_or_file_links(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1055,12 +1126,30 @@ class SchedulerRecoveryTests(unittest.TestCase):
             )
             arguments = shlex.split(command.split("`: `", 1)[1].removesuffix("`"))
             result = subprocess.run(
-                [sys.executable, *arguments[1:]], capture_output=True, text=True
+                [sys.executable, *arguments[1:]],
+                capture_output=True,
+                text=True,
+                env={**os.environ, "HOME": str(root / "home")},
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((project / "note").read_text(), "original")
             self.assertFalse((project / "created-by-run").exists())
             self.assertIn("previous contents preserved", result.stdout)
+
+    def test_restore_pauses_the_nightly_runner_until_ack(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            snapshot, project = self.fixture(root)
+            state = root / "runner-state.json"
+            with patch.object(agenda, "RUNNER_STATE_PATH", state):
+                self.assertFalse(agenda.is_paused_for_review(project.name))
+                rc = restore_cli.main(
+                    ["--snapshot", str(snapshot), "--project", str(project)]
+                )
+                self.assertEqual(rc, 0)
+                self.assertTrue(agenda.is_paused_for_review(project.name))
+                agenda.ack(project.name)
+                self.assertFalse(agenda.is_paused_for_review(project.name))
 
     def test_restore_copy_failure_keeps_current_tree(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

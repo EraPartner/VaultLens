@@ -7,6 +7,7 @@ import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 import shutil
+import sys
 import tempfile
 import uuid
 
@@ -69,7 +70,27 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
     print(f"Restored {args.project}; previous contents preserved at {backup}")
+    _pause_runner(Path(args.project).name)
     return 0
+
+
+def _pause_runner(slug: str) -> None:
+    """Keep the nightly runner from redoing the work this restore rejected."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    try:
+        import agenda
+    except ImportError:
+        print(
+            f"Warning: could not pause the nightly runner for {slug}; it may repeat "
+            "the restored tasks tonight.",
+            file=sys.stderr,
+        )
+        return
+    agenda.pause_for_review(slug)
+    print(
+        f"Paused the nightly runner for {slug}. Resume it with: "
+        f"python3 tools/wiki.py project agenda ack {slug}"
+    )
 
 
 if __name__ == "__main__":

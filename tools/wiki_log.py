@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
+import unicodedata
 
 from wiki import WIKI_DIR
 
@@ -35,7 +36,11 @@ def _render_frontmatter(frontmatter: dict[str, str | list[str]]) -> str:
 
 
 def _slug(text: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    # Fold accents ("Café" -> "cafe") and keep letters of other scripts, so a
+    # non-ASCII title still names its note instead of collapsing to "entry".
+    decomposed = unicodedata.normalize("NFKD", text.casefold())
+    folded = "".join(char for char in decomposed if not unicodedata.combining(char))
+    slug = re.sub(r"[\W_]+", "-", folded).strip("-")
     return slug or "entry"
 
 
@@ -60,7 +65,13 @@ def _write_log_note(
         "pages": [page.strip().removesuffix(".md") for page in pages],
         "sources": list(sources),
     }
-    note_path = LOG_NOTES_DIR / f"{date}-{_slug(operation)}-{_slug(title)}.md"
+    stem = f"{date}-{_slug(operation)}-{_slug(title)}"
+    note_path = LOG_NOTES_DIR / f"{stem}.md"
+    suffix = 2
+    # Same-day entries with the same slug get their own note, not an overwrite.
+    while note_path.exists():
+        note_path = LOG_NOTES_DIR / f"{stem}-{suffix}.md"
+        suffix += 1
     body = f"# {title}\n\n{summary}\n"
     if notes:
         body += f"\nNotes: {notes}\n"

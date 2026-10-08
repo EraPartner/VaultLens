@@ -79,8 +79,8 @@ def main() -> int:
     print("claude_tools:")
     ro = claude_tools({"shell": False, "write": False})
     check(
-        "read-only agent still gets Read+Grep+Glob (B7)",
-        ro == ["Read", "Grep", "Glob", "mcp__qmd__*"],
+        "read-only agent gets Read and qmd only; native builds lack Grep/Glob (B7)",
+        ro == ["Read", "mcp__qmd__*"],
     )
     check(
         "read-only agent gets no Bash/Edit/Write",

@@ -206,7 +206,9 @@ class ClaudeAdapter:
                 str(request.mcp_config) if request.mcp_config else '{"mcpServers":{}}',
                 "--disable-slash-commands",
                 "--no-chrome",
-                "--system-prompt",
+                # Headless roles replace the default prompt. An interactive
+                # session keeps Claude Code's own prompt and adds the boundary.
+                "--append-system-prompt" if request.interactive else "--system-prompt",
                 request.role_prompt,
                 "--tools",
                 ",".join(builtin_tools),
@@ -303,8 +305,16 @@ class CodexAdapter:
             overrides["sandbox_workspace_write.exclude_tmpdir_env_var"] = True
         for key, value in overrides.items():
             command.extend(["-c", f"{key}={_toml(value)}"])
+        if request.interactive:
+            # Deliver the boundary as standing instructions, so an interactive
+            # session with no task does not submit a turn on its own.
+            command.extend(["-c", f"developer_instructions={_toml(request.role_prompt)}"])
         if request.model:
             command.extend(["--model", request.model])
+        if request.interactive:
+            if request.task_prompt:
+                command.extend(["--", request.task_prompt])
+            return command
         prompt = f"{request.role_prompt}\n\n# Task\n\n{request.task_prompt}"
         command.extend(["--", prompt])
         return command

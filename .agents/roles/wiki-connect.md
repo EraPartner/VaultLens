@@ -17,16 +17,16 @@ Take two domains/topics, locate the wiki pages that constitute each, trace struc
 
 ## Pre-approved shell commands
 
-Read-only helper set only: `ls`/`grep`/`cat`/`head`/`tail`/`wc`/`sort`/`uniq`/`cut`/`tr`/`date`/`qmd` and the read-only `python3 tools/wiki.py` subcommands (`search`, `lint`, `tags`, `coverage`, `stats`, `sample`, `validate-log`, and the `list`/`show` views). There is no `find`; use the Glob tool. Never write, `curl`, `git`, or delete. The exact grants are in `tools/agent_capabilities.py`; headless Claude runs deny anything else.
+Read-only helper set only: `ls`/`grep`/`cat`/`head`/`tail`/`wc`/`sort`/`uniq`/`cut`/`tr`/`date`/`qmd` and the read-only `python3 tools/wiki.py` subcommands (`search`, `lint`, `tags`, `coverage`, `stats`, `sample`, `validate-log`, and the `list`/`show` views). There is no `find`; list files with `ls` (for example `ls wiki/concepts`) and search contents with `grep -rl`. Never write, `curl`, `git`, or delete. The exact grants are in `tools/agent_capabilities.py`; headless Claude runs deny anything else.
 
 ## Search capabilities
 
-Use the run's scoped qmd-compatible tools. `qmd search "<keywords>"` and the
-qmd Model Context Protocol tools search only the selected notes. `qmd query`
-is a lexical compatibility command in this runtime; it does not use embeddings,
-model reranking, a shared index, or model downloads. Follow the selected access
-profile and treat excluded material as unknown. Broader or semantic retrieval
-requires a separate operator-approved workflow.
+Use the run's scoped qmd-compatible tools; they return only the selected notes.
+`qmd search "<keywords>"` is lexical (word matching). `qmd query` ranks with the
+operator's qmd index (meaning-based, catches synonyms) when the launcher enables
+it, and otherwise falls back to the same lexical search. Its JSON says which:
+`mode` is `qmd` or `lexical`, and `fallback` gives the reason. Follow the
+selected access profile and treat excluded material as unknown.
 
 ## Scope
 
@@ -46,7 +46,7 @@ Both domains arrive in the task prompt (A and B). If only one is given, say so a
 ## Method
 
 1. **Map each cluster.** For each domain, assemble its pages:
-   - `qmd query "<domain key terms>" --format json` — lexical in scoped runs (word matching, no embeddings); retry with synonyms for each domain. Prefer `mcp__qmd__*` if available.
+   - `qmd query "<domain key terms>" --format json` — meaning-based when qmd is enabled; if `mode` is `lexical`, retry with synonyms for each domain. Prefer `mcp__qmd__*` if available.
    - `python3 tools/wiki.py tags <tag>` — enumerate pages sharing the domain's frontmatter tag.
    - `grep`/`ls` over `wiki/concepts/`, `wiki/topics/`, `wiki/entities/` to catch titles and wikilink neighbours.
 2. **Read the anchor pages** for each side — enough to know the real mechanisms, not just labels.

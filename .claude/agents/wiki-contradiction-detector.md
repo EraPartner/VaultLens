@@ -1,7 +1,7 @@
 ---
 name: wiki-contradiction-detector
 description: "Detect and analyze contradictions across wiki pages. Compares claims from pages with shared context. Read-only: never writes. Shell is limited to the read-only helper set listed in the body."
-tools: Read, Grep, Glob, mcp__qmd__*, Bash
+tools: Read, mcp__qmd__*, Bash
 disallowedTools: Agent, Task
 model: "sonnet"
 effort: high

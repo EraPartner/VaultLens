@@ -226,6 +226,9 @@ blocks further launches. An operator must verify that the recorded process group
 removing that marker. The marker names the kept `run_directory`; it holds a copy of the provider
 login and run scratch, so delete it once cleanup is confirmed. The runtime never clears either
 automatically.
+An interrupted headless run (SIGINT/SIGTERM) also writes the marker. To stop a headless loop without
+interrupting a run, send `kill -USR1 <pid>` to the launcher; it leaves `stop-requested` in the run's
+scratch and the loop exits after the current run.
 Job removal allows a bounded two-second wait for launchd to finish teardown. A repeated cleanup
 request preserves the original failure instead of replacing it after the guardian has stopped.
 Raw PDFs are extracted to private scratch storage. Agent preprocessing does not modify raw files
@@ -249,6 +252,33 @@ Blocking an original file is insufficient if an index retains a copy; the isolat
 that leak. Hybrid full-vault qmd search remains an explicit operator workflow.
 Results rank by the share of query terms a document contains, weighted toward terms that few
 documents contain, so common words in a natural-language query do not outrank the distinctive ones.
+
+Each query searches every approved document (files over 1 MB are skipped and counted). The grants
+are rewalked per query, so new and edited files appear at once. A path approved once stays approved
+for the run, but every read still refuses symbolic links and hard links. Each hit carries a
+400-character snippet by default; `snippet_chars` raises it to at most 1,600.
+
+### qmd bridge
+
+`qmd query` (CLI and MCP) can rank with the operator's qmd index without exposing it to the
+sandbox. When `qmd` is on the launcher's `PATH` and resolves outside the vault and the run, the
+launcher creates `<run>/qmd-bridge/` and records it in `scope.json` as `qmd_bridge`. The sandbox
+may write only `qmd-bridge/requests/`; `qmd-bridge/responses/` is in `denyWrite`.
+
+A launcher thread, outside the sandbox, reads each request (a 32-hex-digit `.json` name, a regular
+file without links, at most 64 KB) and runs `qmd query --format json --full-path -n <N> -- <query>`
+from `/`, so no vault-local qmd configuration applies. It resolves each returned file and keeps it
+only if it is a `.md` or `.txt` file inside the vault that the run's access profile may read and
+that is not a protected name. It answers with relative paths and scores only, never qmd's text,
+titles or snippets. Inside the sandbox, the search server checks and rereads each path under the
+same descriptor walk as `search` and builds the snippet from that text.
+
+If the bridge is off, qmd fails, or no answer arrives within 120 seconds, `query` returns lexical
+results with a `fallback` reason. `status` reports `query_mode`. `VAULTLENS_QMD_BRIDGE=off` turns
+the bridge off. The runtime probe always starts the bridge (with `/usr/bin/false` as its
+executable, never the operator's qmd) and requires checks that the sandbox can write `requests/`
+and cannot write `responses/` or the bridge folder, so every receipt covers the bridge boundary
+whether or not the host has qmd. It does not query a real qmd index.
 
 `tools/scripts/provider-smoke.py --root <vault> --profile wiki-read` checks the whole-process
 preflight and scoped lexical search without a model call. `--provider claude|codex --run-provider`

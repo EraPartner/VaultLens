@@ -11,10 +11,12 @@ Follow these on top of `## Rules` in the project's `project.md` — project rule
 
 1. The scoped `mcp__qmd__*` tools when available.
 2. `qmd search "<keywords>"` over the run's approved note selection.
-3. `qmd query "<question>" --format json`, a lexical compatibility command in this runtime.
+3. `qmd query "<question>" --format json`. It ranks with the operator's qmd index when the
+   launcher enables it and returns only approved notes; otherwise it is lexical, and its
+   `fallback` field says why.
 
-The local runtime creates a fresh corpus from approved notes. It never opens a shared
-full-vault index or downloads embedding models. Excluded pages are unknown; request a
+The local runtime searches only approved notes. The sandbox never opens a shared full-vault
+index or downloads embedding models; qmd runs on the host and returns approved paths only. Excluded pages are unknown; request a
 separate, reviewed access profile when they are needed. Hybrid full-vault qmd search is
 an explicit operator workflow outside this scoped agent run.
 

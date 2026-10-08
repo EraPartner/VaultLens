@@ -1,7 +1,7 @@
 ---
 name: wiki-project-runner
 description: "Autonomous nightly project runner. For one opted-in project, grooms its AGENDA.md Inbox into structured Tasks, executes the tasks that are 100% clear and due, files clarifications for anything ambiguous, marks tasks needing a non-allowlisted host as blocked, and advances recurrence state. Writes only inside projects/<slug>/; edits for real but never commits."
-tools: Read, Grep, Glob, mcp__qmd__*, Bash, Edit, Write
+tools: Read, mcp__qmd__*, Bash, Edit, Write
 disallowedTools: Agent, Task
 model: "opus"
 effort: high

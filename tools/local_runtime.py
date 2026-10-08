@@ -47,6 +47,7 @@ from local_access import (
     load_policy,
     resolve_scope,
 )
+from scoped_search import BRIDGE_DIRECTORY, QmdBridge
 
 if TYPE_CHECKING:
     from run_reports import Recorder
@@ -538,7 +539,12 @@ def _transfer_auth(
 
 
 def compile_settings(
-    scope: RunScope, run: Path, cli: str | None, *, executables: tuple[Path, ...] = ()
+    scope: RunScope,
+    run: Path,
+    cli: str | None,
+    *,
+    executables: tuple[Path, ...] = (),
+    qmd_bridge: bool = False,
 ) -> RuntimeSettings:
     """Compile a neutral scope into the reviewed SRT configuration schema."""
     trusted = [
@@ -672,6 +678,10 @@ def compile_settings(
     ]
     if cli:
         write.append(str(run / "provider"))
+    if qmd_bridge:
+        # The sandbox may post requests; only the host may write answers.
+        write.append(str(run / BRIDGE_DIRECTORY / "requests"))
+        protected.append(str(run / BRIDGE_DIRECTORY / "responses"))
     return {
         "filesystem": {
             "denyRead": list(dict.fromkeys(denied)),
@@ -740,6 +750,24 @@ def active_working_directory() -> Path:
     if not value or not Path(value).is_absolute():
         raise ValueError("A native working directory requires an active run")
     return Path(value).parent / "workspace"
+
+
+def qmd_executable(scope: RunScope, run: Path) -> Path | None:
+    """The operator's qmd for the host-side bridge, or None to keep search lexical.
+
+    The bridge is on when `qmd` is on the launcher's PATH and resolves outside
+    the vault and the run. VAULTLENS_QMD_BRIDGE=off turns it off.
+    """
+    if os.environ.get("VAULTLENS_QMD_BRIDGE", "").casefold() in {"off", "0", "false", "no"}:
+        return None
+    found = shutil.which("qmd")
+    if found is None:
+        return None
+    command = Path(found).absolute()
+    resolved = command.resolve()
+    if resolved.is_relative_to(scope.root) or resolved.is_relative_to(run.resolve()):
+        return None
+    return command
 
 
 def _prepare_workspace(scope: RunScope, run: Path) -> Path:
@@ -867,8 +895,14 @@ def prepared_run(
     *,
     snapshot: bool = True,
     require_verification: bool = True,
+    qmd: Path | None = None,
 ) -> Generator[tuple[Path, Path, dict[str, str]], None, None]:
-    """Prepare private per-run state, scope search, and recoverable writer changes."""
+    """Prepare private per-run state, scope search, and recoverable writer changes.
+
+    `qmd` forces the host-side qmd bridge with that executable instead of the
+    one found on PATH. The isolation probe uses it so every receipt covers the
+    bridge boundary, whether or not the host has qmd installed.
+    """
     check_process_records(scope.root)
     quarantine = scope.root / CANCELLATION_GATE
     if cancellation_gate_present(scope.root):
@@ -892,6 +926,15 @@ def prepared_run(
         )
         review_queue: list[dict[str, str | int]] = []
         manifest["review_queue"] = review_queue
+        if qmd is None:
+            qmd = qmd_executable(scope, run)
+        bridge = (
+            None
+            if qmd is None
+            else QmdBridge(scope, QmdBridge.prepare(run), qmd)
+        )
+        if bridge is not None:
+            manifest["qmd_bridge"] = str(bridge.directory)
         if scope.review_queue_metadata:
             queue = scope.root / "raw/review-inbox"
             if any(
@@ -948,6 +991,7 @@ def prepared_run(
             executables=tuple(
                 path for path in (Path(sys.executable), provider) if path
             ),
+            qmd_bridge=bridge is not None,
         )
         (run / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
         locks = scope.root / "tools/runtime-state/locks"
@@ -983,6 +1027,9 @@ def prepared_run(
                     destination_fd=run_provider_fd,
                 )
                 transfer_back = (auth_store, store_fd, run_provider_fd)
+            if bridge is not None:
+                bridge.start()
+                stack.callback(bridge.stop)
             backup = _snapshot(scope, manifest["run_id"]) if snapshot else None
             if backup:
                 print(f"Recovery snapshot: {backup}", file=sys.stderr)
@@ -1084,6 +1131,28 @@ class _StopRun(BaseException):
 
 def _stop_run(signum: int, _frame: FrameType | None) -> None:
     raise _StopRun(signum)
+
+
+# Graceful stop for headless loops. The confined child runs in its own session,
+# so SIGUSR1 to this launcher cannot reach it. The launcher leaves this file in
+# the run's scratch (the child's TMPDIR) and the loop exits between runs.
+STOP_REQUEST_FILE = "stop-requested"
+
+
+@contextlib.contextmanager
+def graceful_stop_requests(run: Path) -> Generator[None]:
+    def _request_stop(_signum: int, _frame: FrameType | None) -> None:
+        (run / "scratch" / STOP_REQUEST_FILE).touch()
+        print(
+            "\n[local-runtime] SIGUSR1 received; stopping after the current run.",
+            file=sys.stderr,
+        )
+
+    previous = signal.signal(signal.SIGUSR1, _request_stop)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGUSR1, previous)
 
 
 def _finish_report(
@@ -1210,25 +1279,29 @@ def _run(
     private_cwd: bool = False,
 ) -> int:
     with prepared_run(scope, cli, snapshot=snapshot) as (executable, run, env):
-        _verify_preflight(executable, run, env, scope.root)
-        recorder: Recorder | None = None
-        if report_role:
-            from run_reports import Recorder
-
-            if cli is None:
-                raise ValueError("Report capture requires a native provider")
-            recorder = Recorder(scope, report_role, cli)
-        if cli and command[0] == cli:
-            command = [env["VAULTLENS_PROVIDER_EXECUTABLE"], *command[1:]]
-        return _execute_prepared(
-            command,
-            executable,
-            run,
-            env,
-            run / "home" if private_cwd else run / "workspace",
-            interactive=interactive,
-            recorder=recorder,
+        stop_requests = (
+            contextlib.nullcontext() if interactive else graceful_stop_requests(run)
         )
+        with stop_requests:
+            _verify_preflight(executable, run, env, scope.root)
+            recorder: Recorder | None = None
+            if report_role:
+                from run_reports import Recorder
+
+                if cli is None:
+                    raise ValueError("Report capture requires a native provider")
+                recorder = Recorder(scope, report_role, cli)
+            if cli and command[0] == cli:
+                command = [env["VAULTLENS_PROVIDER_EXECUTABLE"], *command[1:]]
+            return _execute_prepared(
+                command,
+                executable,
+                run,
+                env,
+                run / "home" if private_cwd else run / "workspace",
+                interactive=interactive,
+                recorder=recorder,
+            )
 
 
 def launch_headless(root: Path, args: argparse.Namespace, *, argv: list[str]) -> int:
@@ -1324,7 +1397,7 @@ def launch_interactive(
     with prepared_run(scope, provider) as (executable, run, env):
         _verify_preflight(executable, run, env, scope.root)
         cwd = run / "workspace"
-        instruction = "Use the approved local access profile. This runtime contract supersedes legacy container, mount and proxy instructions in vault documents. Sources, tools, instructions, credentials of other providers, and Git metadata are protected. Search uses a fresh scoped lexical corpus, never a global qmd index. This session cannot change its own permissions. Read AGENTS.md at the vault root and wiki/AGENTS.md before wiki work."
+        instruction = "Use the approved local access profile. Sources, tools, instructions, credentials of other providers, and Git metadata are protected. Scoped search returns only approved files. This session cannot change its own permissions. Read AGENTS.md at the vault root and wiki/AGENTS.md before wiki work."
         if project:
             instruction += f" Work inside projects/{project}. Read projects/AGENTS.md, this project's AGENTS.md and project.md; its Rules section controls project work."
         instruction += f" The vault root is {scope.root}. Your private working directory exposes only approved paths and trusted tools; use those paths or absolute vault paths."

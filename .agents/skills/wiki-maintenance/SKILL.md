@@ -9,7 +9,7 @@ description: Wiki health and upkeep — lint, validate, rebuild indexes, fix wik
 # Lint / health (programmatic, fast)
 python3 tools/wiki.py lint                       # links, metadata, status/date validity, staleness, confidence/volatility
 python3 tools/wiki.py lint --strict              # + orphan pages
-python3 tools/wiki.py lint --json                # machine-readable report (errors/warnings split)
+python3 tools/wiki.py lint --json --limit 50     # JSON report, errors first; full counts, lists capped (`--limit 0` = all)
 python3 tools/wiki.py lint --fix                 # case-normalise confidence/volatility/status values
 python3 tools/wiki.py validate-log               # check wiki/log.md format
 python3 tools/tests/test_wiki.py                 # tooling test suite (golden + per-rule defect fixtures)

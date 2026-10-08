@@ -110,7 +110,7 @@ def rank_coverage(
     """
     rows: list[CoverageRow] = []
     for page in pages:
-        if page.category in COVERAGE_SKIP_CATEGORIES:
+        if page.category in COVERAGE_SKIP_CATEGORIES or page.is_archived:
             continue
         metrics = _page_metrics(page, inbound)
         word_count = metrics["words"]

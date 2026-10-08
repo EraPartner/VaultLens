@@ -275,6 +275,7 @@ class LintReport(TypedDict):
     error_count: int
     warning_count: int
     fixes_applied: NotRequired[list[str]]
+    omitted: NotRequired[int]
 
 
 def build_report(pages: list[Page], strict: bool) -> LintReport:
@@ -339,7 +340,7 @@ def build_report(pages: list[Page], strict: bool) -> LintReport:
 
 
 def _print_section(label: str, rows: list[str], remaining: int | None) -> int:
-    if rows:
+    if rows and remaining != 0:
         print(f"\n{label}:")
         shown = rows if remaining is None else rows[:remaining]
         for row in shown:
@@ -365,6 +366,14 @@ def run_lint(strict: bool, as_json: bool, fix: bool, limit: int | None = None) -
     omitted = max(0, finding_total - effective_limit) if effective_limit > 0 else 0
 
     if as_json:
+        if omitted:
+            # Counts stay complete; only the finding lists are capped, errors first.
+            remaining = effective_limit
+            for findings in (report["errors"], report["warnings"]):
+                for key, rows in findings.items():
+                    findings[key] = rows[:remaining]
+                    remaining -= len(findings[key])
+            report["omitted"] = omitted
         print(json.dumps(report, indent=2))
         return 1 if report["error_count"] else 0
 

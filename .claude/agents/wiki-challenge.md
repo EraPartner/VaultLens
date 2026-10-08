@@ -1,7 +1,7 @@
 ---
 name: wiki-challenge
 description: "Red-team a proposed idea, plan, or decision against the operator's own vault history \u2014 past decisions, reversed conclusions, superseded claims, and stated constraints. Read-only: never writes. Shell is limited to the read-only helper set listed in the body."
-tools: Read, Grep, Glob, mcp__qmd__*, Bash
+tools: Read, mcp__qmd__*, Bash
 disallowedTools: Agent, Task
 model: "opus"
 effort: high

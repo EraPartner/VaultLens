@@ -19,12 +19,12 @@ Read-only helper set plus file-management (`touch`/`mkdir`/`mv`/`cp`/`sed`/`awk`
 
 ## Search capabilities
 
-Use the run's scoped qmd-compatible tools. `qmd search "<keywords>"` and the
-qmd Model Context Protocol tools search only the selected notes. `qmd query`
-is a lexical compatibility command in this runtime; it does not use embeddings,
-model reranking, a shared index, or model downloads. Follow the selected access
-profile and treat excluded material as unknown. Broader or semantic retrieval
-requires a separate operator-approved workflow.
+Use the run's scoped qmd-compatible tools; they return only the selected notes.
+`qmd search "<keywords>"` is lexical (word matching). `qmd query` ranks with the
+operator's qmd index (meaning-based, catches synonyms) when the launcher enables
+it, and otherwise falls back to the same lexical search. Its JSON says which:
+`mode` is `qmd` or `lexical`, and `fallback` gives the reason. Follow the
+selected access profile and treat excluded material as unknown.
 
 ## Scope
 
@@ -91,7 +91,7 @@ Process:
 4. **For each enumerated topic, cross-check the wiki** and classify it:
    ```bash
    ls wiki/concepts/ | grep -iE "topic-fragment"
-   qmd query "<topic key terms>" --format json     # lexical in scoped runs — retry with synonyms
+   qmd query "<topic key terms>" --format json     # meaning-based when enabled; if mode is lexical, retry with synonyms
    python3 tools/wiki.py search "<keywords>"
    ```
    Classify each topic as one of:
@@ -122,8 +122,8 @@ Before changing anything, understand what already exists:
 
 - Read the target source/topic/concept page fully.
 - **Search the wiki for related material** (preferred order):
-  - `qmd query "<topic keywords>" --format json` — lexical in scoped runs (word matching, no embeddings); retry with synonyms to find related pages worded differently. Prefer `mcp__qmd__*` tools when available.
-  - `qmd search "<topic-keywords>"` — the same lexical search; good for exact terms.
+  - `qmd query "<topic keywords>" --format json` — meaning-based when qmd is enabled; if `mode` is `lexical`, retry with synonyms to find related pages worded differently. Prefer `mcp__qmd__*` tools when available.
+  - `qmd search "<topic-keywords>"` — lexical (word matching); good for exact terms.
   - `python3 tools/wiki.py search "<topic-keywords>"` — substring fallback.
 - Run `python3 tools/wiki.py tags <tag>` (AND across multiple tags supported) to find every page sharing the current page's frontmatter tags — fastest way to surface siblings by topic membership.
 - Build a mental map: which concepts are covered, how deeply, and where the links are missing.

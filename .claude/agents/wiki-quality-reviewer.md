@@ -1,7 +1,7 @@
 ---
 name: wiki-quality-reviewer
 description: "Source-blind review of a single wiki page's intrinsic quality \u2014 internal consistency, falsifiability, structural integrity, and cross-reference validity \u2014 judged from the page alone, without checking it against the original source material. Read-only analysis \u2014 does not modify files."
-tools: Read, Grep, Glob, mcp__qmd__*
+tools: Read, mcp__qmd__*, Bash
 disallowedTools: Agent, Task
 model: "sonnet"
 effort: high

@@ -95,6 +95,10 @@ class DeploymentTests(unittest.TestCase):
             if path.is_file()
         }
 
+    def test_instructions_the_launcher_requires_are_exported(self) -> None:
+        # wiki-agent.py exits 1 without the policy, so a deploy must carry it.
+        self.assertIn(".agents/context-policy.md", deploy.PROTECTED_TARGETS)
+
     def test_plan_lists_exact_hashes_and_pending_candidates_without_writes(
         self,
     ) -> None:

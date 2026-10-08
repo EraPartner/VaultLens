@@ -37,6 +37,7 @@ from agent_capabilities import Capabilities, profile_capabilities  # noqa: E402
 from context_budget import ReviewEntry, gather_context  # noqa: E402
 from context_sources import read_inbox_preview  # noqa: E402
 from local_runtime import (  # noqa: E402
+    STOP_REQUEST_FILE,
     active_scope,
     active_working_directory,
     launch_headless,
@@ -428,7 +429,10 @@ def _resolve_strategy(strategy: str | None, iteration_index: int) -> str | None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    # No abbreviations: brain_launch matches full flag names when it injects
+    # --cli/--model/--effort, so `--eff low` would be silently overridden.
     parser = argparse.ArgumentParser(
+        allow_abbrev=False,
         description="Wiki agent wrapper - invoke AI agents with configurable CLI/model/effort",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -450,7 +454,10 @@ Examples:
   python3 tools/agents/wiki-agent.py enhance --background &
   disown
   tail -f tools/runtime-state/logs/bg-enhance-*.log   # follow progress
-  kill <pid printed at startup>         # stop it
+  kill -USR1 <pid printed at startup>   # stop after the current iteration
+  kill <pid printed at startup>         # stop now; interrupting a run blocks later
+                                        # runs until cleanup is verified (see
+                                        # tools/runtime/README.md)
 """,
     )
 
@@ -653,7 +660,11 @@ def build_prompt(
         # Paths can come from inbox file names; quote them so a crafted name stays data.
         "quality": f"Analyze the wiki page at: {json.dumps(page)}",
         "verify": f"Verify claims in the wiki source page: {json.dumps(source)}",
-        "ingest": f"Process new source material: {json.dumps(source)}",
+        "ingest": (
+            f"Process new source material: {json.dumps(source)}. "
+            f"Cite it in the source page's ## Sources at exactly this path: "
+            f"{json.dumps(_vault_relative(source))}"
+        ),
         "contradict": "Find potential contradictions across wiki pages",
         "search": f"Search the wiki for: {source if source else page}",
         "enhance": (
@@ -766,9 +777,12 @@ def invoke_agent(
         return 1
 
     system_text = _prepare_system_prompt(agent_file, system_addon)
-    system_text += "\n\n" + (ROOT / ".agents" / "context-policy.md").read_text(
-        encoding="utf-8"
-    )
+    policy_file = ROOT / ".agents" / "context-policy.md"
+    try:
+        system_text += "\n\n" + policy_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        print(f"Error: cannot read {policy_file.relative_to(ROOT)}: {exc}")
+        return 1
     system_text += "\n\nRuntime contract: Sources remain immutable at their actual paths, including raw/inbox. Use qmd for scoped lexical search; global indexes and hosted web tools are unavailable. Mark tasks needing unapproved endpoints as blocked. Reports and edits must stay in the approved scope."
     perms = _agent_permissions(agent)
     task_prompt = prompt
@@ -869,10 +883,21 @@ def build_cli_command(
     return build_provider_command(cli, request, executable=_selected_executable(cli))
 
 
-def _inbox_pdf(source: str) -> Path | None:
-    """Identify immutable inbox PDFs requiring a verified source citation."""
+def _vault_relative(source: str) -> str:
+    """The vault-relative form of a source path (the scheduler passes absolute ones)."""
+    path = Path(source)
+    if not path.is_absolute():
+        return path.as_posix()
+    try:
+        return path.resolve().relative_to(ROOT.resolve()).as_posix()
+    except ValueError:
+        return source
+
+
+def _inbox_source(source: str) -> Path | None:
+    """Identify immutable inbox files requiring a verified source citation."""
     path = (ROOT / source).resolve()
-    if path.suffix.lower() != ".pdf" or not path.is_file():
+    if not path.is_file():
         return None
     try:
         path.relative_to((ROOT / "raw" / "inbox").resolve())
@@ -889,7 +914,7 @@ def _source_page_snapshot() -> dict[Path, bytes]:
 
 
 def _verify_ingest_result(pdf: Path, before: dict[Path, bytes]) -> bool:
-    """Require a changed, structurally valid source page citing this canonical PDF.
+    """Require a changed, structurally valid source page citing this inbox file.
 
     This verifies an output artifact, not the accuracy of the model's summary.
     Citations must name the actual immutable input path.
@@ -975,7 +1000,8 @@ def _verify_ingest_result(pdf: Path, before: dict[Path, bytes]) -> bool:
                 # Outside the vault, or an undecodable link such as an embedded
                 # NUL from "%00": not a citation, and not a reason to fail the run.
                 continue
-        if target in citations:
+        # Wikilinks drop a trailing `.md`, so `[[raw/inbox/note]]` cites note.md.
+        if target in citations or target.removesuffix(".md") in citations:
             return True
     return False
 
@@ -1069,11 +1095,11 @@ def run_agent(args: argparse.Namespace, strategy: str | None = None) -> int:
             print(f"Error: live context could not be prepared: {exc}", file=sys.stderr)
             return 2
 
-    inbox_pdf = (
-        _inbox_pdf(source) if args.agent == "ingest" and not args.debug else None
+    inbox_source = (
+        _inbox_source(source) if args.agent == "ingest" and not args.debug else None
     )
     try:
-        source_pages_before = _source_page_snapshot() if inbox_pdf else {}
+        source_pages_before = _source_page_snapshot() if inbox_source else {}
     except OSError as exc:
         print(
             f"Error: cannot snapshot source pages before ingestion: {exc}",
@@ -1095,18 +1121,18 @@ def run_agent(args: argparse.Namespace, strategy: str | None = None) -> int:
     )
 
     if args.agent == "ingest" and rc == 0 and args.source and not args.debug:
-        if inbox_pdf:
+        if inbox_source:
             try:
-                verified = _verify_ingest_result(inbox_pdf, source_pages_before)
+                verified = _verify_ingest_result(inbox_source, source_pages_before)
             except (OSError, UnicodeError) as exc:
                 print(f"Error: cannot verify ingestion output: {exc}", file=sys.stderr)
                 return 2
             if not verified:
                 print(
                     "Error: ingestion returned success without a new or updated valid "
-                    f"source page citing {inbox_pdf.relative_to(ROOT.resolve())}. "
-                    "The PDF remains in raw/inbox/. Complete the source page metadata "
-                    "and canonical PDF citation, then retry ingestion.",
+                    f"source page citing {inbox_source.relative_to(ROOT.resolve())}. "
+                    "The source remains in raw/inbox/. Complete the source page metadata "
+                    "and its raw/inbox/ citation, then retry ingestion.",
                     file=sys.stderr,
                 )
                 return 2
@@ -1119,13 +1145,30 @@ def run_agent(args: argparse.Namespace, strategy: str | None = None) -> int:
 _STOP_REQUESTED = False  # mutable flag; tests and handlers use this name
 
 
+def _stop_requested() -> bool:
+    """True after SIGUSR1/SIGINT/SIGTERM here, or a graceful stop from the launcher."""
+    if _STOP_REQUESTED:
+        return True
+    scratch = os.environ.get("TMPDIR")
+    return bool(
+        scratch and active_scope() is not None and (Path(scratch) / STOP_REQUEST_FILE).exists()
+    )
+
+
 def _install_signal_handlers() -> None:
-    """Stop between iterations, or cancel the owned process group during a run."""
+    """Stop between iterations, or cancel the owned process group during a run.
+
+    SIGUSR1 is the graceful stop: the current run finishes, so nothing is
+    interrupted and no cancellation gate is written. SIGINT/SIGTERM stop now.
+    """
 
     def _handler(signum: int, _frame: FrameType | None) -> None:
         global _STOP_REQUESTED
         _STOP_REQUESTED = True  # pyright: ignore[reportConstantRedefinition]
         name = signal.Signals(signum).name
+        if signum == signal.SIGUSR1:
+            print(f"\n[wiki-agent] {name} received; stopping after the current run.")
+            return
         if _ACTIVE_AGENT_PROCESS is not None:
             print(f"\n[wiki-agent] {name} received; stopping agent and its tools.")
             # _run_agent_command catches this and cleans up before propagating.
@@ -1134,6 +1177,7 @@ def _install_signal_handlers() -> None:
 
     signal.signal(signal.SIGINT, _handler)
     signal.signal(signal.SIGTERM, _handler)
+    signal.signal(signal.SIGUSR1, _handler)
 
 
 def _redirect_output_to_log(log_path: Path) -> bool:
@@ -1267,7 +1311,10 @@ def main(argv: list[str] | None = None) -> int:
             log_path = ROOT / log_path
         if _redirect_output_to_log(log_path):
             print(f"[wiki-agent] {_ts()} pid={os.getpid()} logging to {log_path}")
-            print(f"[wiki-agent] stop with: kill {os.getpid()}")
+            print(
+                f"[wiki-agent] stop after the current run: kill -USR1 {os.getpid()} "
+                f"(plain kill interrupts the run and sets the cancellation gate)"
+            )
     guard_rc = _enter_runtime(args, replay)
     if guard_rc is not None:
         return guard_rc
@@ -1355,7 +1402,8 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     for i in iter_source:
-        if _STOP_REQUESTED:
+        if _stop_requested():
+            print(f"[wiki-agent] {_ts()} stop requested; exiting between iterations.")
             break
         iter_count = i + 1
         per_iter_strategy = _resolve_strategy(args.strategy, i)

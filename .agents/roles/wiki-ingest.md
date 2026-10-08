@@ -21,12 +21,12 @@ Read-only helper set plus file-management (`touch`/`mkdir`/`mv`/`cp`/`sed`/`awk`
 
 ## Search capabilities
 
-Use the run's scoped qmd-compatible tools. `qmd search "<keywords>"` and the
-qmd Model Context Protocol tools search only the selected notes. `qmd query`
-is a lexical compatibility command in this runtime; it does not use embeddings,
-model reranking, a shared index, or model downloads. Follow the selected access
-profile and treat excluded material as unknown. Broader or semantic retrieval
-requires a separate operator-approved workflow.
+Use the run's scoped qmd-compatible tools; they return only the selected notes.
+`qmd search "<keywords>"` is lexical (word matching). `qmd query` ranks with the
+operator's qmd index (meaning-based, catches synonyms) when the launcher enables
+it, and otherwise falls back to the same lexical search. Its JSON says which:
+`mode` is `qmd` or `lexical`, and `fallback` gives the reason. Follow the
+selected access profile and treat excluded material as unknown.
 
 ## Scope
 
@@ -62,8 +62,8 @@ requires a separate operator-approved workflow.
 ### 3. Link and Update
 
 - **Find related existing pages** before creating new ones — search first:
-  - `qmd query "<concept or topic keywords>" --format json` — lexical in scoped runs (word matching, no embeddings); retry with synonyms to find related pages worded differently. Prefer `mcp__qmd__*` tools when available.
-  - `qmd search "<keywords>"` — the same lexical search; good for exact term lookups.
+  - `qmd query "<concept or topic keywords>" --format json` — meaning-based when qmd is enabled; if `mode` is `lexical`, retry with synonyms to find related pages worded differently. Prefer `mcp__qmd__*` tools when available.
+  - `qmd search "<keywords>"` — lexical (word matching); good for exact term lookups.
   - `python3 tools/wiki.py search "<query>"` — substring fallback when qmd is unavailable.
 - Create/update entity pages in `wiki/entities/`
 - Add to concept pages in `wiki/concepts/`
@@ -77,7 +77,7 @@ requires a separate operator-approved workflow.
 - Run `python3 tools/wiki.py index --rebuild` so the headless `_index.md` mirrors include the new pages
 - Run `python3 tools/wiki.py links --fix --write` to add portable markdown mirrors to the wikilinks you wrote (the tool computes correct relative paths — never hand-write the `([Title](path.md))` mirror)
 - Append log entry
-- **Do not move the source PDF yourself.** You are sandboxed with only `wiki/` writable, so `mv` against `raw/` will fail. When the source came from `raw/inbox/`, the launcher promotes it to `raw/sources/` automatically after you finish successfully (and re-points the extracted sibling's `source_pdf:` header). `raw/sources/` is the canonical home; `raw/inbox/` is staging only.
+- **Do not move or copy the source.** Raw files are immutable and stay where they are, including in `raw/inbox/`; nothing promotes them afterwards. Cite the source at the path you were given (see `## Sources` below). The launcher accepts an inbox ingest only when a new or updated source page cites that exact `raw/inbox/` path, and the scheduler re-queues any inbox file no source page cites.
 
 ## Source-type specific extraction
 
@@ -175,6 +175,9 @@ Rules:
 - If a raw filename contains `[` or `]` (Obsidian wikilinks cannot contain `]`),
   use an angle-bracket markdown link instead:
   `- Source text: [Label](<../../raw/sources-text/<name>.md>)`.
+- **Inbox sources:** when the source you were given is in `raw/inbox/`, cite it there
+  with its full filename, extension included, instead of a `raw/sources/` path:
+  `- Source file: [[raw/inbox/<filename>]]` (angle-bracket link if the name contains `]`).
 - Keep any genuine extra provenance (citation, DOI, edition, "PDF encrypted")
   as additional bullets **below** the two file links.
 
